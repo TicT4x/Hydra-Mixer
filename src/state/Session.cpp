@@ -46,6 +46,7 @@ bool Session::save (const juce::File& f) const
     app->setAttribute ("startInTray", prefs.startInTray);
     app->setAttribute ("uiScale", prefs.uiScale);
     app->setAttribute ("fontScale", prefs.fontScale);
+    app->setAttribute ("stripSplit", prefs.stripSplit);
 
     auto* rec = root.createNewChildElement ("RECORDER");
     rec->setAttribute ("folder", engine.recorder.folder.getFullPathName());
@@ -93,6 +94,7 @@ bool Session::load (const juce::File& f)
         prefs.startInTray = app->getBoolAttribute ("startInTray", prefs.startInTray);
         prefs.uiScale = juce::jlimit (0.5f, 3.0f, (float) app->getDoubleAttribute ("uiScale", 1.0));
         prefs.fontScale = juce::jlimit (0.5f, 2.0f, (float) app->getDoubleAttribute ("fontScale", 1.0));
+        prefs.stripSplit = juce::jlimit (-1.0f, 1.0f, (float) app->getDoubleAttribute ("stripSplit", -1.0));
     }
     prefsVersion.fetch_add (1);
 

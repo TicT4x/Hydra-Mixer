@@ -2,7 +2,8 @@
 #include "Strips.h"
 #include "Inspector.h"
 #include "Settings.h"
-#include "EqUndo.h"
+#include "LatencyView.h"
+#include "state/UndoHistory.h"
 
 namespace hydra
 {
@@ -63,7 +64,7 @@ public:
     /** Native hit-testing: what the point (local coordinates) is for the window (caption, buttons...). */
     WindowControlKind windowControlAt (juce::Point<float>) const;
 
-    Chip midiMap { "MIDI Map", theme::text }, learn { "MIDI Learn", theme::text };
+    Chip midiMap { "MIDI Map", theme::text }, learn { "MIDI Learn", theme::text }, latency { "Latency", theme::text };
     IconButton settings { IconButton::Kind::gear }, power { IconButton::Kind::power };
     IconButton minimiseBtn { IconButton::Kind::minimise }, maximiseBtn { IconButton::Kind::maximise }, closeBtn { IconButton::Kind::close };
 
@@ -109,6 +110,7 @@ public:
 
     void openSettings (int tab = 0);
     void openMidiMap();
+    void openLatencyFinder();
     void openEqWindow (int selectIndex, bool bringToFront = true);
     void refreshAll();
     /** Interface zoom (1 = 100 %): everything in the main window is drawn larger / smaller;
@@ -138,15 +140,17 @@ private:
     void meterFrame (double timestamp);
     void finishHotkeyCapture();
     void assignCapturedKey (const juce::KeyPress&);
+    bool handleUndoKey (const juce::KeyPress&);
+    ToolWindow& makeToolWindow (std::unique_ptr<ToolWindow>& slot, const juce::String& title, juce::Component* content,
+                                int w, int h, int buttons = juce::DocumentWindow::closeButton);
 
     UiContext ctx;
-    EqUndo eqUndo;
+    UndoHistory undo;
     TopBar top;
-    juce::Viewport stripView;
     StripArea strips;
     Inspector inspector;
     PanelHost panelHost;
-    std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow;
+    std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow, latencyWindow;
     int shownSelBus = -1;     // bus selected with SEL as shown by the input faders
     uint32_t shownLayout = 0; // engine channel layout the strips were built for
     float uiScale = 1.0f;

@@ -143,7 +143,7 @@ void IconButton::paint (juce::Graphics& g)
 TopBar::TopBar (UiContext& c) : ctx (c), recorder (c)
 {
     addAndMakeVisible (recorder);
-    for (auto* chip : { &midiMap, &learn })
+    for (auto* chip : { &midiMap, &learn, &latency })
     {
         addAndMakeVisible (chip);
         chip->showArrow = false;
@@ -160,6 +160,7 @@ TopBar::TopBar (UiContext& c) : ctx (c), recorder (c)
     learn.colour = theme::learn;
     learn.setTooltip ("Learn mode: click a control, then move a MIDI control to assign it. Esc to leave.");
     midiMap.setTooltip ("Show and edit all MIDI assignments");
+    latency.setTooltip ("Latency Finder: how much latency each device, denoiser and plugin adds to every signal path");
     settings.setTooltip ("Settings: audio engine, MIDI, plugins, monitoring, tray");
     power.setTooltip ("Shut down Hydra Mixer");
 }
@@ -287,6 +288,8 @@ void TopBar::resized()
     midiMap.setBounds (r.removeFromRight (96));
     r.removeFromRight (8);
     learn.setBounds (r.removeFromRight (110));
+    r.removeFromRight (8);
+    latency.setBounds (r.removeFromRight (84));
     r.removeFromRight (12);
     recorder.setBounds (r.removeFromRight (220));
     r.removeFromRight (12);
@@ -344,9 +347,9 @@ void PanelHost::resized()
 
 //==============================================================================
 MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys, Session& session)
-    : ctx { engine, midi, hotkeys, &session }, eqUndo (engine), top (ctx), strips (ctx), inspector (ctx)
+    : ctx { engine, midi, hotkeys, &session }, undo (engine.params), top (ctx), strips (ctx), inspector (ctx)
 {
-    ctx.eqUndo = &eqUndo;
+    ctx.undo = &undo;
     setOpaque (true);
     ctx.select = [this] (int i) { select (i); };
     ctx.learnModeChanged = [this] { top.update(); repaint(); };
@@ -368,11 +371,8 @@ MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys
     };
 
     addAndMakeVisible (top);
-    // Strips scroll horizontally when they do not fit (many channels or a large zoom).
-    stripView.setViewedComponent (&strips, false);
-    stripView.setScrollBarsShown (true, true); // each only while needed
-    stripView.setScrollBarThickness (10);
-    addAndMakeVisible (stripView);
+    // Inputs and outputs scroll sideways separately when they do not fit (many channels or a large zoom).
+    addAndMakeVisible (strips);
     shownLayout = engine.getLayoutVersion();
     addAndMakeVisible (inspector);
     addChildComponent (panelHost);
@@ -385,7 +385,7 @@ MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys
     };
     ctx.addChannel = [this] (int group) { addChannel (group); };
     ctx.removeChannel = [this] (int sel) { removeChannel (sel); };
-    inspector.onScanRequested = [this] { openSettings (2); };
+    inspector.onScanRequested = [this] { openSettings (3); }; // Plugins tab
     ctx.openEqWindow = [this] (int i) { openEqWindow (i); };
     ctx.prefsChanged = [this] { if (onPrefsChanged) onPrefsChanged(); };
     ctx.shutdown = [this]
@@ -413,6 +413,7 @@ MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys
                                       });
     };
     top.midiMap.onClick = [this] { openMidiMap(); };
+    top.latency.onClick = [this] { openLatencyFinder(); };
     top.learn.onClick = [this]
     {
         ctx.learnMode = ! ctx.learnMode;
@@ -458,6 +459,7 @@ MainComponent::~MainComponent()
     settingsWindow.reset();
     midiWindow.reset();
     eqWindow.reset();
+    latencyWindow.reset();
 }
 
 void MainComponent::select (int index)
@@ -506,11 +508,7 @@ void MainComponent::rebuildStrips()
 
 void MainComponent::scrollToChannel (int sel)
 {
-    const auto b = strips.stripBounds (sel);
-    if (b.isEmpty()) return;
-    const auto view = stripView.getViewArea();
-    if (b.getX() < view.getX())              stripView.setViewPosition (b.getX() - 8, 0);
-    else if (b.getRight() > view.getRight()) stripView.setViewPosition (b.getRight() + 8 - view.getWidth(), 0);
+    strips.scrollToChannel (sel);
 }
 
 void MainComponent::addChannel (int group)
@@ -568,7 +566,7 @@ void MainComponent::removeChannel (int sel)
             if (self.ctx.midi.hasMapping (p)) self.ctx.midi.removeMappingsFor (p);
             if (self.ctx.hotkeys.getKeyFor (p).isValid()) self.ctx.hotkeys.remove (p);
         }
-        if (auto* eq = self.ctx.eqFor (sel)) self.eqUndo.forget (*eq);
+        self.undo.forget (reset);
         self.rebuildStrips();
         self.showToast (channelCode (sel) + " removed", 2.0);
     });
@@ -600,7 +598,7 @@ void MainComponent::openEqWindow (int index, bool bringToFront)
     if (! isChannelShown (index)) return;
     const auto title = "Hydra Mixer - EQ " + channelCode (index);
     if (eqWindow == nullptr)
-        eqWindow = std::make_unique<ToolWindow> (title, editor, editor->getWidth(), editor->getHeight(), juce::DocumentWindow::allButtons);
+        makeToolWindow (eqWindow, title, editor, editor->getWidth(), editor->getHeight(), juce::DocumentWindow::allButtons);
     else
         eqWindow->replaceContent (editor, title);
     eqWindow->setResizeLimits (760, 520, 8000, 4000);
@@ -634,13 +632,13 @@ void MainComponent::openSettings (int tab)
         panel->onEngineChanged = [this] { refreshAll(); };
         panel->onSessionReplaced = [this]
         {
-            eqUndo.forgetAll();
+            undo.clear();
             refreshAll();
             panelHost.close();
             inspector.reload();
             showToast ("Settings loaded", 2.5);
         };
-        settingsWindow = std::make_unique<ToolWindow> ("Hydra Mixer - Settings", panel, 1040, 680);
+        makeToolWindow (settingsWindow, "Hydra Mixer - Settings", panel, 1040, 680);
     }
     if (auto* p = dynamic_cast<SettingsPanel*> (settingsWindow->getContentComponent()))
         p->showTab (tab);
@@ -651,9 +649,18 @@ void MainComponent::openSettings (int tab)
 void MainComponent::openMidiMap()
 {
     if (midiWindow == nullptr)
-        midiWindow = std::make_unique<ToolWindow> ("Hydra Mixer - MIDI Mapping", new MidiMapPanel (ctx), 1180, 560);
+        makeToolWindow (midiWindow, "Hydra Mixer - MIDI Mapping", new MidiMapPanel (ctx), 1180, 560);
     midiWindow->setVisible (true);
     midiWindow->toFront (true);
+}
+
+void MainComponent::openLatencyFinder()
+{
+    if (latencyWindow == nullptr)
+        makeToolWindow (latencyWindow, "Hydra Mixer - Latency Finder", new LatencyView (ctx), 1000, 640);
+    latencyWindow->setResizeLimits (640, 360, 8000, 4000);
+    latencyWindow->setVisible (true);
+    latencyWindow->toFront (true);
 }
 
 void MainComponent::assignCapturedKey (const juce::KeyPress& k)
@@ -671,6 +678,23 @@ void MainComponent::assignCapturedKey (const juce::KeyPress& k)
                            : registered ? "   (global)" : "   (taken by another app - only while Hydra has focus)"), 3.0);
 }
 
+bool MainComponent::handleUndoKey (const juce::KeyPress& k)
+{
+    // Ctrl+Z / Ctrl+Y: undo / redo the last change anywhere in the mixer (EQ, faders, routing, ...).
+    juce::String message;
+    if (! ctx.handleUndoKey (k, &message)) return false;
+    showToast (message, 1.5);
+    return true;
+}
+
+ToolWindow& MainComponent::makeToolWindow (std::unique_ptr<ToolWindow>& slot, const juce::String& title, juce::Component* content,
+                                           int w, int h, int buttons)
+{
+    slot = std::make_unique<ToolWindow> (title, content, w, h, buttons);
+    slot->onKey = [this] (const juce::KeyPress& k) { return handleUndoKey (k); };
+    return *slot;
+}
+
 bool MainComponent::keyPressed (const juce::KeyPress& k)
 {
     if (hotkeyTarget != nullptr)
@@ -683,13 +707,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
         assignCapturedKey (k);
         return true;
     }
-    // Ctrl+Z / Ctrl+Y: undo / redo the EQ of the selected channel.
-    juce::String undoMessage;
-    if (ctx.handleEqUndoKey (k, ctx.selected, &undoMessage))
-    {
-        if (undoMessage.isNotEmpty()) showToast (undoMessage, 1.5);
+    if (handleUndoKey (k))
         return true;
-    }
     if (k == juce::KeyPress::escapeKey && panelHost.isOpen() && ! ctx.learnMode)
     {
         panelHost.close();
@@ -768,15 +787,14 @@ void MainComponent::resized()
 {
     // Children are laid out in logical units and drawn scaled by uiScale.
     const auto scale = juce::AffineTransform::scale (uiScale);
-    for (juce::Component* c : { (juce::Component*) &top, (juce::Component*) &stripView, (juce::Component*) &inspector, (juce::Component*) &panelHost })
+    for (juce::Component* c : { (juce::Component*) &top, (juce::Component*) &strips, (juce::Component*) &inspector, (juce::Component*) &panelHost })
         c->setTransform (scale);
 
     auto r = juce::Rectangle<int> (0, 0, logicalWidth(), logicalHeight());
     top.setBounds (r.removeFromTop (54));
     r.removeFromTop (4);
     inspector.setBounds (r.removeFromBottom (236).reduced (8, 4));
-    stripView.setBounds (r);
-    strips.layoutFor (stripView.getWidth(), stripView.getHeight(), stripView.getScrollBarThickness());
+    strips.setBounds (r);
     if (panelHost.isOpen())
         panelHost.setTopLeftPosition (juce::jlimit (8, juce::jmax (8, logicalWidth() - panelHost.getWidth() - 8), panelHost.getX()),
                                       inspector.getY() - panelHost.getHeight() - 10);

@@ -627,8 +627,12 @@ void Engine::enforceExclusiveSelect()
     for (int b = 0; b < kMaxBuses; ++b)
         if (buses[(size_t) b].sel->isOn()) { ++count; if (b != selOwner || newest < 0) newest = b; }
     if (count > 1)
+    {
+        // Switched by MIDI: the buttons turned off here are part of that MIDI action (no undo step).
+        const bool external = buses[(size_t) newest].sel->isExternalChange();
         for (int b = 0; b < kMaxBuses; ++b)
-            if (b != newest) buses[(size_t) b].sel->set (0.0f);
+            if (b != newest) buses[(size_t) b].sel->set (0.0f, external);
+    }
     selOwner = count > 0 ? newest : -1;
 }
 

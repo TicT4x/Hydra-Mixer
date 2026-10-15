@@ -1,10 +1,10 @@
 #include "Widgets.h"
-#include "EqUndo.h"
+#include "state/UndoHistory.h"
 
 namespace hydra
 {
 //==============================================================================
-bool UiContext::handleEqUndoKey (const juce::KeyPress& key, int selectIndex, juce::String* message)
+bool UiContext::handleUndoKey (const juce::KeyPress& key, juce::String* message)
 {
     const auto mods = key.getModifiers();
     if (! mods.isCommandDown() || mods.isAltDown()) return false;
@@ -12,13 +12,12 @@ bool UiContext::handleEqUndoKey (const juce::KeyPress& key, int selectIndex, juc
     const bool isUndo = code == 'Z' && ! mods.isShiftDown();
     const bool isRedo = code == 'Y' || (code == 'Z' && mods.isShiftDown());
     if (! isUndo && ! isRedo) return false;
+    if (undo == nullptr) return true;
 
-    auto* eq = eqFor (selectIndex);
-    if (eq == nullptr || eqUndo == nullptr) return true;
-    const bool done = isUndo ? eqUndo->undo (*eq) : eqUndo->redo (*eq);
+    const auto what = isUndo ? undo->undo() : undo->redo();
     if (message != nullptr)
-        *message = (done ? juce::String (isUndo ? "EQ undo" : "EQ redo") : juce::String (isUndo ? "Nothing to undo" : "Nothing to redo"))
-                   + "   (" + channelCode (selectIndex) + " equalizer)";
+        *message = what.isNotEmpty() ? (isUndo ? "Undo:  " : "Redo:  ") + what
+                                     : juce::String (isUndo ? "Nothing to undo" : "Nothing to redo");
     return true;
 }
 
@@ -678,6 +677,49 @@ void Chip::paint (juce::Graphics& g)
     g.setFont (theme::font (12.0f));
     g.drawFittedText (text, tr.toNearestInt(), centred ? juce::Justification::centred : juce::Justification::centredLeft, 1, 0.8f);
 }
+//==============================================================================
+void TrashButton::drawIcon (juce::Graphics& g, juce::Rectangle<float> area, juce::Colour colour)
+{
+    // Trash can: lid with handle, tapered bin with three ribs.
+    const float s = juce::jmin (area.getWidth(), area.getHeight());
+    auto r = juce::Rectangle<float> (s * 0.8f, s).withCentre (area.getCentre());
+    const float stroke = juce::jmax (1.2f, s * 0.09f);
+    const juce::PathStrokeType pst (stroke, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+    juce::Path p;
+    const float lidY = r.getY() + r.getHeight() * 0.2f;
+    p.startNewSubPath (r.getX(), lidY);
+    p.lineTo (r.getRight(), lidY);
+    const float hw = r.getWidth() * 0.18f;
+    p.startNewSubPath (r.getCentreX() - hw, lidY);
+    p.lineTo (r.getCentreX() - hw, r.getY() + stroke * 0.5f);
+    p.lineTo (r.getCentreX() + hw, r.getY() + stroke * 0.5f);
+    p.lineTo (r.getCentreX() + hw, lidY);
+    const float top = lidY + stroke * 0.9f, bottom = r.getBottom() - stroke * 0.5f;
+    const float inset = r.getWidth() * 0.12f, taper = r.getWidth() * 0.06f;
+    p.startNewSubPath (r.getX() + inset, top);
+    p.lineTo (r.getX() + inset + taper, bottom);
+    p.lineTo (r.getRight() - inset - taper, bottom);
+    p.lineTo (r.getRight() - inset, top);
+    for (float f : { 0.36f, 0.5f, 0.64f })
+    {
+        const float x = r.getX() + r.getWidth() * f;
+        p.startNewSubPath (x, top + r.getHeight() * 0.14f);
+        p.lineTo (x, bottom - r.getHeight() * 0.14f);
+    }
+    g.setColour (colour);
+    g.strokePath (p, pst);
+}
+
+void TrashButton::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat().reduced (0.5f);
+    g.setColour (hover ? theme::mute.withAlpha (0.2f) : theme::panel2);
+    g.fillRoundedRectangle (r, 6.0f);
+    g.setColour (hover ? theme::mute.withAlpha (0.8f) : theme::outline);
+    g.drawRoundedRectangle (r, 6.0f, 1.0f);
+    drawIcon (g, r.withSizeKeepingCentre (14.0f, 14.0f), hover ? theme::mute : theme::textDim);
+}
+
 //==============================================================================
 void PlusButton::paint (juce::Graphics& g)
 {

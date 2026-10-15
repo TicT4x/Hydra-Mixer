@@ -116,7 +116,6 @@ public:
     ~EqEditor() override;
     void paint (juce::Graphics&) override;
     void resized() override;
-    bool keyPressed (const juce::KeyPress&) override;   // Ctrl+Z / Ctrl+Y: EQ undo / redo
     int getSelectIndex() const noexcept { return selectIndex; }
 
 private:
@@ -161,12 +160,8 @@ public:
     std::function<void()> onScanRequested;
 
 private:
-    juce::String latencyText() const;
-
     UiContext& ctx;
     int current = -1;
     std::unique_ptr<juce::Component> content;
-    juce::String shownLatency;
-    int tick = 0;
 };
 } // namespace hydra

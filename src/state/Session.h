@@ -51,6 +51,7 @@ public:
         bool startInTray = false;      // start hidden in the tray
         float uiScale = 1.0f;          // zoom of the main window (1 = 100 %)
         float fontScale = 1.0f;        // text size factor for all windows
+        float stripSplit = -1.0f;      // divider between inputs and outputs (share of the width), < 0 = default
         bool operator== (const AppPrefs&) const = default;
     };
 

@@ -7,6 +7,98 @@ namespace
 constexpr int kChunk = 4096;
 }
 
+//==============================================================================
+void Waveform::clear()
+{
+    const juce::ScopedLock sl (lock);
+    peaks.clear();
+    version.fetch_add (1);
+}
+
+void Waveform::append (const float* p, int n)
+{
+    if (n <= 0) return;
+    const juce::ScopedLock sl (lock);
+    peaks.insert (peaks.end(), p, p + n);
+    version.fetch_add (1);
+}
+
+void Waveform::copyFrom (const Waveform& other)
+{
+    std::vector<float> copy;
+    {
+        const juce::ScopedLock sl (other.lock);
+        copy = other.peaks;
+    }
+    const juce::ScopedLock sl (lock);
+    peaks = std::move (copy);
+    version.fetch_add (1);
+}
+
+double Waveform::getSeconds() const
+{
+    const juce::ScopedLock sl (lock);
+    return (double) peaks.size() / kPeaksPerSecond;
+}
+
+void Waveform::getColumns (double startSec, double endSec, float* out, int numColumns) const
+{
+    const juce::ScopedLock sl (lock);
+    const double first = startSec * kPeaksPerSecond;
+    const double per = (endSec - startSec) * kPeaksPerSecond / juce::jmax (1, numColumns);
+    for (int c = 0; c < numColumns; ++c)
+    {
+        const auto a = (size_t) juce::jmax (0.0, first + c * per);
+        const auto b = juce::jmin (peaks.size(), (size_t) juce::jmax ((double) a + 1.0, first + (c + 1) * per));
+        float m = 0.0f;
+        for (size_t i = a; i < b; ++i) m = juce::jmax (m, peaks[i]);
+        out[c] = m;
+    }
+}
+
+//==============================================================================
+/** Builds the overview of a loaded file in the background (long files take a moment to decode). */
+class Recorder::Scanner final : public juce::Thread
+{
+public:
+    Scanner (juce::File f, Waveform& w) : juce::Thread ("Hydra Waveform"), file (std::move (f)), wave (w)
+    {
+        startThread (juce::Thread::Priority::low);
+    }
+    ~Scanner() override { stopThread (4000); }
+
+    void run() override
+    {
+        juce::AudioFormatManager fm;
+        fm.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
+        if (reader == nullptr) return;
+        const int bucket = juce::jmax (1, juce::roundToInt (reader->sampleRate / Waveform::kPeaksPerSecond));
+        const int channels = (int) juce::jmin (2u, reader->numChannels);
+        juce::AudioBuffer<float> buf (channels, bucket * 256);
+        std::vector<float> peaks;
+        for (juce::int64 pos = 0; pos < reader->lengthInSamples && ! threadShouldExit();)
+        {
+            const int n = (int) juce::jmin ((juce::int64) buf.getNumSamples(), reader->lengthInSamples - pos);
+            reader->read (&buf, 0, n, pos, true, channels > 1);
+            peaks.clear();
+            for (int start = 0; start < n; start += bucket)
+            {
+                const int len = juce::jmin (bucket, n - start);
+                float m = 0.0f;
+                for (int c = 0; c < channels; ++c) m = juce::jmax (m, buf.getMagnitude (c, start, len));
+                peaks.push_back (m);
+            }
+            wave.append (peaks.data(), (int) peaks.size());
+            pos += n;
+        }
+    }
+
+private:
+    juce::File file;
+    Waveform& wave;
+};
+
 Recorder::Recorder() : juce::Thread ("Hydra Recorder")
 {
     formats.registerBasicFormats();
@@ -18,6 +110,7 @@ Recorder::Recorder() : juce::Thread ("Hydra Recorder")
 Recorder::~Recorder()
 {
     stopTimer();
+    scanner.reset();
     if (recording.load()) stopRecording();
     playing.store (false);
     stopThread (2000);
@@ -58,7 +151,7 @@ double Recorder::getPlayLengthSeconds() const { return (double) fileLength / juc
 
 double Recorder::getPlaySeconds() const
 {
-    const double t = (double) playFrames.load() / juce::jmax (1.0, playRate);
+    const double t = playBase.load() + (double) playFrames.load() / juce::jmax (1.0, playRate);
     const double len = getPlayLengthSeconds();
     return len > 0.0 ? std::fmod (t, len) : t;
 }
@@ -161,6 +254,9 @@ bool Recorder::startRecording()
         recFile = file;
         recRate = sr;
         recFrames.store (0);
+        recWave.clear();
+        recPeak = 0.0f;
+        recPeakFrames = 0;
         recording.store (true, std::memory_order_release);
     }
     lastError.clear();
@@ -177,6 +273,9 @@ void Recorder::stopRecording()
         const juce::ScopedLock sl (writerLock);
         drainRecording();
         writer.reset(); // finalises the WAV header
+        if (recPeakFrames > 0) recWave.append (&recPeak, 1);
+        recPeak = 0.0f;
+        recPeakFrames = 0;
     }
     lastRecording = recFile;
     recFile = juce::File();
@@ -200,6 +299,24 @@ void Recorder::drainRecording()
         const int got = recRing.read (ch, 2, kChunk);
         if (got <= 0) break;
         writer->writeFromFloatArrays (recScratch.getArrayOfReadPointers(), 2, got);
+
+        // Waveform overview of the take
+        const int bucket = juce::jmax (1, juce::roundToInt (recRate / Waveform::kPeaksPerSecond));
+        float peaks[kChunk / 32 + 2];
+        int numPeaks = 0;
+        const float* l = recScratch.getReadPointer (0);
+        const float* r = recScratch.getReadPointer (1);
+        for (int i = 0; i < got; ++i)
+        {
+            recPeak = juce::jmax (recPeak, std::abs (l[i]), std::abs (r[i]));
+            if (++recPeakFrames >= bucket)
+            {
+                if (numPeaks < (int) std::size (peaks)) peaks[numPeaks++] = recPeak;
+                recPeak = 0.0f;
+                recPeakFrames = 0;
+            }
+        }
+        recWave.append (peaks, numPeaks);
     }
 }
 
@@ -221,15 +338,54 @@ bool Recorder::loadFile (const juce::File& f, juce::String& error)
     }
     if (playing.load()) stopPlayback();
 
-    const juce::ScopedLock sl (writerLock);
-    resampler.reset();
-    fileRate = reader->sampleRate;
-    fileLength = reader->lengthInSamples;
-    readerSource = std::make_unique<juce::AudioFormatReaderSource> (reader.release(), true);
-    playFile = f;
-    playFrames.store (0);
+    {
+        const juce::ScopedLock sl (writerLock);
+        resampler.reset();
+        fileRate = reader->sampleRate;
+        fileLength = reader->lengthInSamples;
+        readerSource = std::make_unique<juce::AudioFormatReaderSource> (reader.release(), true);
+        playFile = f;
+        playFrames.store (0);
+        playBase.store (0.0);
+        startSeconds.store (0.0);
+    }
+    scanFile (f);
     changed();
     return true;
+}
+
+void Recorder::scanFile (const juce::File& f)
+{
+    scanner.reset();
+    playWave.clear();
+    // The take just recorded: its overview exists already.
+    if (f == lastRecording && ! recording.load() && recWave.getSeconds() > 0.0)
+        playWave.copyFrom (recWave);
+    else
+        scanner = std::make_unique<Scanner> (f, playWave);
+}
+
+void Recorder::seek (double seconds)
+{
+    seconds = juce::jlimit (0.0, juce::jmax (0.0, getPlayLengthSeconds()), seconds);
+    startSeconds.store (seconds);
+    if (playing.load())
+    {
+        const juce::ScopedLock sl (writerLock);
+        if (readerSource != nullptr && resampler != nullptr)
+        {
+            readerSource->setNextReadPosition ((juce::int64) (seconds * fileRate));
+            resampler->flushBuffers();
+            producerDone = false;
+            eof.store (false);
+            finished.store (false);
+            playBase.store (seconds);
+            playFrames.store (0);
+            flushPending.store (true, std::memory_order_release); // audio thread drops the old position's audio
+        }
+        notify();
+    }
+    changed();
 }
 
 bool Recorder::startPlayback()
@@ -250,7 +406,10 @@ bool Recorder::startPlayback()
 
     {
         const juce::ScopedLock sl (writerLock);
-        readerSource->setNextReadPosition (0);
+        // Start at the position set by clicking into the waveform (from the beginning if that is the end).
+        double start = startSeconds.load();
+        if (start >= getPlayLengthSeconds() - 0.05) start = 0.0;
+        readerSource->setNextReadPosition ((juce::int64) (start * fileRate));
         readerSource->setLooping (loop->isOn());
         resampler = std::make_unique<juce::ResamplingAudioSource> (readerSource.get(), false, 2);
         resampler->setResamplingRatio (fileRate / sr);
@@ -259,6 +418,7 @@ bool Recorder::startPlayback()
         producerDone = false;
         eof.store (false);
         finished.store (false);
+        playBase.store (start);
         playFrames.store (0);
         flushPending.store (true, std::memory_order_release); // audio thread drops stale frames first
         playing.store (true, std::memory_order_release);

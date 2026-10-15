@@ -62,6 +62,10 @@ public:
     }
     void closeButtonPressed() override { setVisible (false); }
 
+    /** Keys not used by the content (e.g. Ctrl+Z / Ctrl+Y: undo / redo, handled by the main window). */
+    std::function<bool (const juce::KeyPress&)> onKey;
+    bool keyPressed (const juce::KeyPress& k) override { return onKey != nullptr && onKey (k); }
+
     void activeWindowStatusChanged() override
     {
         juce::DocumentWindow::activeWindowStatusChanged();

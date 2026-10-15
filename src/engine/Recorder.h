@@ -4,6 +4,29 @@
 
 namespace hydra
 {
+/** Peak overview of a recording or a loaded file for the waveform display: one level (max |sample| of
+    both channels) per 1/kPeaksPerSecond s. Written by the recorder threads, read by the UI. */
+class Waveform
+{
+public:
+    static constexpr int kPeaksPerSecond = 200;
+
+    void clear();
+    void append (const float* peaks, int n);
+    double getSeconds() const;
+    /** Highest level per column for numColumns equal columns covering [startSec, endSec). */
+    void getColumns (double startSec, double endSec, float* out, int numColumns) const;
+    /** Bumped on every change (repaint the display). */
+    uint32_t getVersion() const noexcept { return version.load(); }
+    /** Takes over the peaks of another overview (the finished take becomes the loaded file). */
+    void copyFrom (const Waveform& other);
+
+private:
+    juce::CriticalSection lock;   // never taken by the audio thread
+    std::vector<float> peaks;
+    std::atomic<uint32_t> version { 1 };
+};
+
 /** Bus recorder + file player.
 
     Recording: the audio thread copies the selected virtual bus (B1-B8, post fader / limiter) into a
@@ -40,6 +63,16 @@ public:
     double getPlaySeconds() const;
     double getPlayLengthSeconds() const;
     int getRecordSourceBus() const noexcept;
+
+    /** Moves the playback position (like clicking into a DAW's timeline). While stopped, it sets
+        where the next PLAY starts. */
+    void seek (double seconds);
+    /** Where PLAY starts (set by seek, 0 for a new file). */
+    double getStartSeconds() const noexcept { return startSeconds.load(); }
+
+    /** Overview of the take being recorded / of the loaded file (also while it is still being scanned). */
+    const Waveform& getRecordWaveform() const noexcept { return recWave; }
+    const Waveform& getPlayWaveform() const noexcept   { return playWave; }
     /** Bumped whenever the shown state (file, recording, playing, error) changes. */
     std::atomic<uint32_t> stateVersion { 1 };
 
@@ -58,6 +91,7 @@ private:
     void ensureThread();
     void drainRecording();      // writerLock held
     void fillPlayback();        // writerLock held
+    void scanFile (const juce::File&);   // starts building playWave in the background
     void run() override;
     void timerCallback() override;
     void changed() { stateVersion.fetch_add (1); }
@@ -73,6 +107,9 @@ private:
     std::atomic<juce::int64> recFrames { 0 };
     double recRate = 48000.0;
     juce::AudioBuffer<float> recScratch { 2, 4096 };
+    Waveform recWave;
+    float recPeak = 0.0f;       // current (unfinished) waveform bucket
+    int recPeakFrames = 0;
 
     // playback
     SpscAudioRing playRing;
@@ -83,8 +120,12 @@ private:
     juce::int64 fileLength = 0;
     bool producerDone = false;
     std::atomic<bool> playing { false }, flushPending { false }, eof { false }, finished { false };
-    std::atomic<juce::int64> playFrames { 0 };
+    std::atomic<juce::int64> playFrames { 0 };     // played since playBase
+    std::atomic<double> playBase { 0.0 }, startSeconds { 0.0 };
     juce::AudioBuffer<float> playScratch { 2, 4096 };
+    Waveform playWave;
+    class Scanner;
+    std::unique_ptr<Scanner> scanner;
 
     std::atomic<double> sampleRate { 0.0 };
     juce::String lastError;

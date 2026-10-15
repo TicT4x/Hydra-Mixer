@@ -1,4 +1,5 @@
 #include "Strips.h"
+#include "state/Session.h"
 
 namespace hydra
 {
@@ -347,7 +348,7 @@ int InputStripView::minimumHeight (int numHw, int numVirt)
 {
     auto group = [] (int count) { const int rows = (count + 2) / 3; return count > 0 ? rows * 20 + (rows - 1) * 3 + 6 + 6 : 0; };
     return 16 + 28 + 4 + 24 + 15 + 54 + 10 + group (numHw) + group (numVirt) + 2
-         + 150 /* fader */ + 16 + 4 + 20 + 3 + 24;
+         + 90 /* fader */ + 16 + 4 + 20 + 3 + 24;
 }
 
 void InputStripView::mouseDown (const juce::MouseEvent& e)
@@ -614,9 +615,76 @@ void BusStripView::resized()
     fader.setBounds (r);
 }
 //==============================================================================
+StripPane::StripPane()
+{
+    view.setViewedComponent (&holder, false);
+    view.setScrollBarsShown (false, true);   // sideways only, and only while needed
+    view.setScrollBarThickness (kScrollBar);
+    view.setSingleStepSizes (24, 24);
+    view.moved = [this] { if (onScroll) onScroll(); };
+    holder.addAndMakeVisible (content);
+    addAndMakeVisible (view);
+}
+
+void StripPane::resized() { view.setBounds (getLocalBounds()); }
+
+void StripPane::setContentSize (int w, int h, float s)
+{
+    scale = s;
+    content.setTransform (juce::AffineTransform::scale (s));
+    content.setBounds (0, 0, w, h);
+    holder.setSize (juce::roundToInt ((float) w * s), juce::roundToInt ((float) h * s));
+    if (onScroll) onScroll();
+}
+
+float StripPane::getScrollX() const { return (float) view.getViewPositionX() / scale; }
+
+void StripPane::scrollToShow (juce::Rectangle<int> area)
+{
+    const auto a = area.toFloat().transformedBy (content.getTransform()).toNearestInt();
+    const auto v = view.getViewArea();
+    if (a.getX() < v.getX())              view.setViewPosition (a.getX() - 8, 0);
+    else if (a.getRight() > v.getRight()) view.setViewPosition (a.getRight() + 8 - v.getWidth(), 0);
+}
+
+//==============================================================================
+PaneDivider::PaneDivider()
+{
+    setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+    setTooltip ("Drag to give the inputs or the outputs more room.  Double-click: default position.");
+}
+
+void PaneDivider::paint (juce::Graphics& g)
+{
+    const float x = (float) getWidth() * 0.5f;
+    const bool active = hover || dragging;
+    g.setColour (active ? theme::accentIn.withAlpha (0.8f) : theme::outline.withAlpha (0.7f));
+    g.fillRect (juce::Rectangle<float> (x - (active ? 1.0f : 0.5f), 8.0f, active ? 2.0f : 1.0f, (float) getHeight() - 16.0f));
+    // Grip in the middle
+    auto grip = juce::Rectangle<float> (0.0f, 0.0f, 8.0f, 34.0f).withCentre ({ x, (float) getHeight() * 0.5f });
+    g.setColour (active ? theme::raised.brighter (0.1f) : theme::raised);
+    g.fillRoundedRectangle (grip, 4.0f);
+    g.setColour (active ? theme::text : theme::textFaint);
+    for (int k = 0; k < 3; ++k)
+        g.fillEllipse (x - 1.2f, grip.getY() + 9.0f + (float) k * 7.0f, 2.4f, 2.4f);
+}
+
+void PaneDivider::mouseDown (const juce::MouseEvent&)
+{
+    startCentre = getBounds().getCentreX();
+    dragging = true;
+    repaint();
+}
+
+void PaneDivider::mouseDrag (const juce::MouseEvent& e)
+{
+    if (onDrag) onDrag (startCentre + e.getDistanceFromDragStartX());
+}
+
+//==============================================================================
 namespace
 {
-constexpr int kMargin = 8, kSectionGap = 30, kBusGroupGap = 14, kPlusSize = 26;
+constexpr int kPad = 8, kBusGroupGap = 14, kPlusSize = 26, kMinPaneWidth = 120;
 juce::Font captionFont() { return theme::font (17.0f, true); }
 } // namespace
 
@@ -631,6 +699,14 @@ StripArea::StripArea (UiContext& c) : ctx (c)
     addIn.onClick   = [this] { if (ctx.addChannel) ctx.addChannel (0); };
     addHw.onClick   = [this] { if (ctx.addChannel) ctx.addChannel (1); };
     addVirt.onClick = [this] { if (ctx.addChannel) ctx.addChannel (2); };
+    for (auto* pane : { &inPane, &outPane })
+    {
+        addAndMakeVisible (pane);
+        pane->onScroll = [this] { layoutCaptions(); };
+    }
+    addAndMakeVisible (divider);
+    divider.onDrag = [this] (int x) { setSplit (x); };
+    divider.onReset = [this] { setSplit (-1); };
     for (auto* b : { &addIn, &addHw, &addVirt })
         addAndMakeVisible (b);
     rebuild();
@@ -646,13 +722,13 @@ void StripArea::rebuild()
         if (e.isInputActive (i))
         {
             inStrips.push_back (std::make_unique<InputStripView> (ctx, i));
-            addAndMakeVisible (*inStrips.back());
+            inPane.getContent().addAndMakeVisible (*inStrips.back());
         }
     for (int b = 0; b < kMaxBuses; ++b)
         if (e.isBusActive (b))
         {
             busStrips.push_back (std::make_unique<BusStripView> (ctx, b));
-            addAndMakeVisible (*busStrips.back());
+            outPane.getContent().addAndMakeVisible (*busStrips.back());
             ++(isHwBus (b) ? numHw : numVirt);
         }
     addIn.setVisible (e.numActiveInputs() < kMaxInputs);
@@ -666,112 +742,162 @@ void StripArea::rebuild()
     repaint();
 }
 
-int StripArea::sectionWidth (const Section& sec, int strips, int w) const
+int StripArea::groupWidth (const Section& sec, int strips, int w) const
 {
     // Wide enough for the caption and its "+" button even with a single (or no) strip.
     return juce::jmax (strips * w, sec.captionWidth + 10 + kPlusSize + 8);
 }
 
-int StripArea::totalWidth (int w) const
+int StripArea::inputsWidth (int w) const  { return 2 * kPad + groupWidth (inSec, (int) inStrips.size(), w); }
+int StripArea::outputsWidth (int w) const { return 2 * kPad + groupWidth (hwSec, numHw, w) + kBusGroupGap + groupWidth (virtSec, numVirt, w); }
+
+float StripArea::scaleFor (int paneHeight) const
 {
-    return 2 * kMargin + kSectionGap + kBusGroupGap + sectionWidth (inSec, (int) inStrips.size(), w)
-         + sectionWidth (hwSec, numHw, w) + sectionWidth (virtSec, numVirt, w);
+    // No vertical scrolling: below the strips' minimum height they are drawn smaller.
+    const int minHeight = InputStripView::minimumHeight (numHw, numVirt);
+    return juce::jlimit (0.4f, 1.0f, (float) paneHeight / (float) minHeight);
 }
 
-int StripArea::fitStripWidth (int viewWidth) const
+int StripArea::defaultSplit() const
 {
-    // Widest strips (up to kMaxStripWidth) that fit; sections with few strips are kept wide enough
-    // for their caption, which leaves less room for the others.
-    const int count[] = { (int) inStrips.size(), numHw, numVirt };
-    const Section* secs[] = { &inSec, &hwSec, &virtSec };
+    // Both panes get the same (widest possible) strip width. If even the narrowest strips do not
+    // fit, each pane gets a share proportional to what it needs, so both scroll alike.
+    const int avail = getWidth() - kDividerWidth;
+    const float s = scaleFor (getHeight() - kCaptionHeight);
+    auto fits = [&] (int w) { return (float) (inputsWidth (w) + outputsWidth (w)) * s <= (float) avail; };
     int w = kMaxStripWidth;
-    for (int pass = 0; pass < 3; ++pass)
-    {
-        int avail = viewWidth - 2 * kMargin - kSectionGap - kBusGroupGap, n = 0;
-        for (int k = 0; k < 3; ++k)
-        {
-            if (sectionWidth (*secs[k], count[k], w) > count[k] * w) avail -= sectionWidth (*secs[k], count[k], w);
-            else n += count[k];
-        }
-        w = n > 0 ? juce::jlimit (kMinStripWidth, kMaxStripWidth, avail / n) : kMaxStripWidth;
-    }
-    while (w > kMinStripWidth && totalWidth (w) > viewWidth) --w;
-    return w;
+    while (w > kMinStripWidth && ! fits (w)) --w;
+    int inW;
+    if (fits (w))
+        inW = juce::roundToInt ((float) inputsWidth (w) * s);
+    else
+        inW = juce::roundToInt ((float) avail * (float) inputsWidth (kMinStripWidth)
+                                / (float) (inputsWidth (kMinStripWidth) + outputsWidth (kMinStripWidth)));
+    return inW + kDividerWidth / 2;
 }
 
-void StripArea::layoutFor (int viewWidth, int viewHeight, int scrollBarThickness)
+void StripArea::setSplit (int x)
 {
-    const int minHeight = kCaptionHeight + InputStripView::minimumHeight (numHw, numVirt);
-    const bool vertical = viewHeight < minHeight;           // window too low: scroll up / down
-    if (vertical) viewWidth -= scrollBarThickness;
-    stripWidth = fitStripWidth (viewWidth);
-    const int total = totalWidth (stripWidth);
-    const bool horizontal = total > viewWidth;
-    const int height = juce::jmax (minHeight, horizontal ? viewHeight - scrollBarThickness : viewHeight);
-    setSize (juce::jmax (total, viewWidth), height);
+    if (ctx.session == nullptr) return;
+    auto& split = ctx.session->prefs.stripSplit;
+    const float wanted = x < 0 ? -1.0f : (float) x / (float) juce::jmax (1, getWidth());
+    if (std::abs (wanted - split) < 0.0005f) return;
+    split = wanted;
+    ctx.session->prefsVersion.fetch_add (1); // stored with the session
     resized();
+    repaint();
+}
+
+void StripArea::layoutPane (StripPane& pane, bool outputs, int paneWidth, int paneHeight)
+{
+    // Strips stretch to fill the pane (up to kMaxStripWidth); below kMinStripWidth the pane scrolls.
+    float s = scaleFor (paneHeight);
+    auto contentWidth = [&] (int w) { return outputs ? outputsWidth (w) : inputsWidth (w); };
+    auto fit = [&]
+    {
+        int w = kMaxStripWidth;
+        while (w > kMinStripWidth && (float) contentWidth (w) * s > (float) paneWidth) --w;
+        return w;
+    };
+    int w = fit();
+    if ((float) contentWidth (w) * s > (float) paneWidth) // scrolls: the scroll bar takes some height
+    {
+        s = scaleFor (paneHeight - StripPane::kScrollBar);
+        w = fit();
+    }
+    const bool scrolls = (float) contentWidth (w) * s > (float) paneWidth + 0.5f;
+    const int h = juce::roundToInt ((float) (paneHeight - (scrolls ? StripPane::kScrollBar : 0)) / s);
+    pane.setContentSize (juce::jmax (contentWidth (w), juce::roundToInt ((float) paneWidth / s)), h, s);
+
+    auto place = [&] (Section& sec, int x, int count, int firstStrip, bool bus)
+    {
+        sec.x = x;
+        sec.width = groupWidth (sec, count, w);
+        for (int k = 0; k < count; ++k)
+        {
+            juce::Component* c = bus ? (juce::Component*) busStrips[(size_t) (firstStrip + k)].get()
+                                     : (juce::Component*) inStrips[(size_t) (firstStrip + k)].get();
+            c->setBounds (x + k * w, 0, w, h);
+        }
+        return x + sec.width;
+    };
+    if (! outputs)
+        place (inSec, kPad, (int) inStrips.size(), 0, false);
+    else
+        place (virtSec, place (hwSec, kPad, numHw, 0, true) + kBusGroupGap, numVirt, numHw, true);
 }
 
 void StripArea::resized()
 {
-    const int w = stripWidth;
-    auto r = getLocalBounds().withTrimmedLeft (kMargin);
-    const int top = kCaptionHeight;
+    const int width = getWidth(), height = getHeight();
+    const float stored = ctx.session != nullptr ? ctx.session->prefs.stripSplit : -1.0f;
+    int split = stored >= 0.0f ? juce::roundToInt (stored * (float) width) : defaultSplit();
+    split = juce::jlimit (kMinPaneWidth + kDividerWidth / 2, juce::jmax (kMinPaneWidth + kDividerWidth / 2, width - kMinPaneWidth - kDividerWidth / 2), split);
 
-
-    // Inputs
-    inSec.area = r.removeFromLeft (sectionWidth (inSec, (int) inStrips.size(), w));
-    {
-        auto strips = inSec.area.withTrimmedTop (top);
-        for (auto& s : inStrips) s->setBounds (strips.removeFromLeft (w));
-    }
-    r.removeFromLeft (kSectionGap);
-    hwSec.area = r.removeFromLeft (sectionWidth (hwSec, numHw, w));
-    r.removeFromLeft (kBusGroupGap);
-    virtSec.area = r.removeFromLeft (sectionWidth (virtSec, numVirt, w));
-    {
-        auto hw = hwSec.area.withTrimmedTop (top), virt = virtSec.area.withTrimmedTop (top);
-        for (int k = 0; k < (int) busStrips.size(); ++k)
-            busStrips[(size_t) k]->setBounds ((k < numHw ? hw : virt).removeFromLeft (w));
-    }
-
-    for (auto [sec, plus] : { std::pair<Section*, PlusButton*> { &inSec, &addIn }, { &hwSec, &addHw }, { &virtSec, &addVirt } })
-        plus->setBounds (sec->area.getX() + 6 + sec->captionWidth + 10, (kCaptionHeight - kPlusSize) / 2 + 1, kPlusSize, kPlusSize - 2);
+    divider.setBounds (split - kDividerWidth / 2, 0, kDividerWidth, height);
+    const int paneH = height - kCaptionHeight;
+    inPane.setBounds (0, kCaptionHeight, divider.getX(), paneH);
+    outPane.setBounds (divider.getRight(), kCaptionHeight, width - divider.getRight(), paneH);
+    layoutPane (inPane, false, inPane.getWidth(), paneH);
+    layoutPane (outPane, true, outPane.getWidth(), paneH);
+    layoutCaptions();
 }
 
-juce::Rectangle<int> StripArea::stripBounds (int sel) const
+void StripArea::layoutCaptions()
 {
-    for (auto& s : inStrips)  if (s->getSelectIndex() == sel) return s->getBounds();
-    for (auto& b : busStrips) if (b->getSelectIndex() == sel) return b->getBounds();
-    return {};
+    // Captions follow their group of strips but stay in view (sticky) while the pane is scrolled.
+    auto place = [this] (Section& sec, const StripPane& pane, PlusButton& plus)
+    {
+        const float s = pane.getScale();
+        const int full = sec.captionWidth + 10 + kPlusSize + 6;
+        const int groupX = pane.getX() + juce::roundToInt (((float) sec.x - pane.getScrollX()) * s);
+        const int groupR = groupX + juce::roundToInt ((float) sec.width * s);
+        const int x = juce::jmin (juce::jmax (groupX, pane.getX() + kPad), groupR - full) + 6;
+        sec.caption = { x, 0, full, kCaptionHeight };
+        plus.setBounds (x + sec.captionWidth + 10, (kCaptionHeight - kPlusSize) / 2 + 1, kPlusSize, kPlusSize - 2);
+    };
+    place (inSec, inPane, addIn);
+    place (hwSec, outPane, addHw);
+    place (virtSec, outPane, addVirt);
+    // Hidden while pushed out of the pane by scrolling (or by the other caption).
+    addIn.setVisible (addIn.getRight() <= inPane.getRight() && ctx.engine.numActiveInputs() < kMaxInputs);
+    addHw.setVisible (addHw.getX() >= outPane.getX() && addHw.getRight() <= virtSec.caption.getX() - 4 && numHw < kMaxHwBuses);
+    addVirt.setVisible (addVirt.getRight() <= getWidth() && addVirt.getX() >= outPane.getX() && numVirt < kMaxVirtBuses);
+    repaint (getLocalBounds().withHeight (kCaptionHeight));
+}
+
+void StripArea::scrollToChannel (int sel)
+{
+    for (auto& s : inStrips)  if (s->getSelectIndex() == sel) { inPane.scrollToShow (s->getBounds()); return; }
+    for (auto& b : busStrips) if (b->getSelectIndex() == sel) { outPane.scrollToShow (b->getBounds()); return; }
 }
 
 void StripArea::paint (juce::Graphics& g)
 {
-    // Section captions
+    // Section captions, each clipped to its pane
     g.setFont (captionFont());
-    for (auto* sec : { &inSec, &hwSec, &virtSec })
+    auto caption = [&] (const Section& sec, juce::Rectangle<int> clip)
     {
-        g.setColour (sec->colour);
-        g.drawText (sec->title, sec->area.getX() + 6, 0, sec->captionWidth + 4, kCaptionHeight, juce::Justification::centredLeft, false);
-    }
+        juce::Graphics::ScopedSaveState state (g);
+        g.reduceClipRegion (clip);
+        g.setColour (sec.colour);
+        g.drawText (sec.title, sec.caption.withWidth (sec.captionWidth + 4), juce::Justification::centredLeft, false);
+    };
+    caption (inSec, { 0, 0, inPane.getRight(), kCaptionHeight });
+    caption (hwSec, { outPane.getX(), 0, juce::jmax (0, virtSec.caption.getX() - outPane.getX() - 4), kCaptionHeight });
+    caption (virtSec, { outPane.getX(), 0, outPane.getWidth(), kCaptionHeight });
 
     // SEL: the input faders set the level on the selected bus.
     if (selBus >= 0)
     {
-        const int x = addIn.getRight() + 12;
+        const int x = inSec.caption.getRight() + 6;
         g.setColour (theme::busColour (selBus));
         g.setFont (theme::font (11.5f, true));
         g.drawFittedText ("FADERS = LEVEL ON " + busCode (selBus)
                               + (monBus >= 0 ? "   (monitoring on " + busCode (monBus) + ")" : juce::String()),
-                          juce::Rectangle<int> (x, 0, juce::jmax (0, inSec.area.getRight() - x - 4), kCaptionHeight),
+                          juce::Rectangle<int> (x, 0, juce::jmax (0, inPane.getRight() - x - 4), kCaptionHeight),
                           juce::Justification::centredLeft, 1, 0.8f);
     }
-
-    // Divider between the inputs and the output section.
-    const float x = (float) inSec.area.getRight() + kSectionGap * 0.5f;
-    g.setColour (theme::outline.withAlpha (0.7f));
-    g.fillRect (juce::Rectangle<float> (x - 0.5f, 8.0f, 1.0f, (float) getHeight() - 16.0f));
 }
 
 void StripArea::setSelInfo (int sb, int mb)
@@ -779,7 +905,7 @@ void StripArea::setSelInfo (int sb, int mb)
     if (sb == selBus && mb == monBus) return;
     selBus = sb;
     monBus = mb;
-    repaint (inSec.area.withHeight (kCaptionHeight));
+    repaint (0, 0, inPane.getRight(), kCaptionHeight);
 }
 
 void StripArea::updateMeters (float dt)

@@ -831,8 +831,10 @@ public:
                 if (ctx.prefsChanged) ctx.prefsChanged();
             };
         };
-        setupScale (uiScale, { 75, 85, 100, 110, 125, 140, 160, 180, 200 }, prefs.uiScale, &Session::AppPrefs::uiScale);
-        setupScale (fontScale, { 85, 100, 110, 120, 135, 150 }, prefs.fontScale, &Session::AppPrefs::fontScale);
+        // Both use the same steps.
+        const std::initializer_list<int> steps { 75, 80, 90, 100, 110, 125, 150, 175, 200 };
+        setupScale (uiScale, steps, prefs.uiScale, &Session::AppPrefs::uiScale);
+        setupScale (fontScale, steps, prefs.fontScale, &Session::AppPrefs::fontScale);
         uiScale.setTooltip ("Size of everything in the main window. The strips scroll sideways when they no longer fit.");
         fontScale.setTooltip ("Size of the text in all windows (open windows update when they are rebuilt / reopened)");
 
@@ -903,13 +905,13 @@ SettingsPanel::SettingsPanel (UiContext& c) : ctx (c)
 {
     addAndMakeVisible (tabs);
     tabs.setTabBarDepth (40);
+    tabs.addTab ("General", theme::panel, new GeneralTab (c), true);
     tabs.addTab ("Audio Engine", theme::panel, new AudioTab (c, [this] { if (onEngineChanged) onEngineChanged(); }), true);
     tabs.addTab ("MIDI", theme::panel, new MidiTab (c), true);
     tabs.addTab ("Plugins", theme::panel, new PluginTab (c), true);
     tabs.addTab ("Import", theme::panel, new ImportTab (c, [this] { if (onEngineChanged) onEngineChanged(); }), true);
     tabs.addTab ("Virtual Cables", theme::panel, new CablesTab (c, [this] { if (onEngineChanged) onEngineChanged(); }), true);
     tabs.addTab ("Backup & Transfer", theme::panel, new BackupTab (c, [this] { if (onSessionReplaced) onSessionReplaced(); }), true);
-    tabs.addTab ("General", theme::panel, new GeneralTab (c), true);
 }
 
 SettingsPanel::~SettingsPanel() = default;

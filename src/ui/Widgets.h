@@ -7,7 +7,7 @@
 namespace hydra
 {
 class Session;
-class EqUndo;
+class UndoHistory;
 
 /** Inspector selection index of the recorder (after the input slots and the bus slots). */
 constexpr int kRecorderSelect = kMaxInputs + kMaxBuses;
@@ -28,7 +28,7 @@ struct UiContext
     MidiMapper& midi;
     Hotkeys& hotkeys;
     Session* session = nullptr;
-    EqUndo* eqUndo = nullptr;   // EQ undo / redo history (Ctrl+Z / Ctrl+Y)
+    UndoHistory* undo = nullptr;   // undo / redo of all parameter changes (Ctrl+Z / Ctrl+Y)
     bool learnMode = false;
     std::function<void()> learnModeChanged;
 
@@ -64,8 +64,9 @@ struct UiContext
         return selectIndex < kMaxInputs ? &engine.inputs[(size_t) selectIndex].eq : &engine.buses[(size_t) (selectIndex - kMaxInputs)].eq;
     }
 
-    /** Ctrl+Z (undo) / Ctrl+Y, Ctrl+Shift+Z (redo) for the EQ of a channel. Returns true if the key was one of them. */
-    bool handleEqUndoKey (const juce::KeyPress& key, int selectIndex, juce::String* message = nullptr);
+    /** Ctrl+Z (undo) / Ctrl+Y, Ctrl+Shift+Z (redo) of the last parameter change anywhere in the mixer.
+        Returns true if the key was one of them; message describes what was undone / redone. */
+    bool handleUndoKey (const juce::KeyPress& key, juce::String* message = nullptr);
 };
 
 //==============================================================================
@@ -205,6 +206,7 @@ class ChoiceSegments final : public ParamControl
 public:
     /** values: parameter value of each segment (default: segment i = value i), so only some choices can be offered. */
     ChoiceSegments (UiContext& c, Param& p, juce::Colour accent, juce::StringArray labels = {}, std::vector<int> values = {});
+    int getNumSegments() const noexcept { return labels.size(); }
     void paint (juce::Graphics&) override;
 
 private:
@@ -268,8 +270,17 @@ public:
     void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
     void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
 
-private:
+protected:
     bool hover = false;
+};
+
+/** Chip with a trash-can icon (remove a plugin); turns red on hover. */
+class TrashButton final : public Chip
+{
+public:
+    TrashButton() { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+    void paint (juce::Graphics&) override;
+    static void drawIcon (juce::Graphics&, juce::Rectangle<float> area, juce::Colour);
 };
 
 //==============================================================================

@@ -112,9 +112,61 @@ private:
 };
 
 //==============================================================================
-/** All strips of the channels in use, with the section captions (Inputs / Hardware Outputs /
-    Virtual Outputs) and their "+" buttons. Lives in a horizontally scrolling viewport: strips
-    stretch to fill the visible width, and below kMinStripWidth the area becomes wider than the view. */
+/** Horizontally scrolling row of strips (one per category: inputs, outputs). Never scrolls vertically:
+    when the pane is too low for the strips, they are drawn smaller instead. The strips are children of
+    getContent(), which is laid out in logical units and drawn scaled. */
+class StripPane final : public juce::Component
+{
+public:
+    StripPane();
+    juce::Component& getContent() noexcept { return content; }
+    /** Logical size of the strips and the factor they are drawn with; scrolls sideways when wider than the pane. */
+    void setContentSize (int logicalWidth, int logicalHeight, float scale);
+    /** Scroll position in logical units (0 = start). */
+    float getScrollX() const;
+    float getScale() const noexcept { return scale; }
+    /** Scrolls so that the area (content coordinates) is visible. */
+    void scrollToShow (juce::Rectangle<int> area);
+    void resized() override;
+
+    std::function<void()> onScroll;
+    static constexpr int kScrollBar = 10;
+
+private:
+    struct View final : juce::Viewport
+    {
+        std::function<void()> moved;
+        void visibleAreaChanged (const juce::Rectangle<int>&) override { if (moved) moved(); }
+    };
+    View view;
+    juce::Component holder, content;
+    float scale = 1.0f;
+};
+
+/** Vertical divider between the input and the output pane: drag sideways to give one side more room,
+    double-click to return to the default position. */
+class PaneDivider final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    PaneDivider();
+    std::function<void (int x)> onDrag;   // wanted centre position in the parent
+    std::function<void()> onReset;
+    void paint (juce::Graphics&) override;
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override    { dragging = false; repaint(); }
+    void mouseDoubleClick (const juce::MouseEvent&) override { if (onReset) onReset(); }
+
+private:
+    int startCentre = 0;
+    bool hover = false, dragging = false;
+};
+
+/** All strips of the channels in use: the inputs on the left, the outputs (hardware, then virtual) on the
+    right, each in its own pane that scrolls sideways on its own. Section captions (Inputs / Hardware
+    Outputs / Virtual Outputs) with their "+" buttons stay in view above the panes. */
 class StripArea final : public juce::Component
 {
 public:
@@ -122,11 +174,8 @@ public:
 
     /** Recreates the strips for the current channel layout. */
     void rebuild();
-    /** Sets this component's size for a viewport of the given visible size (scrolls sideways when the
-        strips do not fit, and vertically when the window is too low for the faders). */
-    void layoutFor (int viewWidth, int viewHeight, int scrollBarThickness);
-    /** Area of a channel's strip (selection index), or empty if it is not shown. */
-    juce::Rectangle<int> stripBounds (int selectIndex) const;
+    /** Scrolls the pane of a channel (selection index) so that its strip is visible. */
+    void scrollToChannel (int selectIndex);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -137,7 +186,7 @@ public:
     /** Bus selected with SEL / monitored bus, shown next to the Inputs caption. */
     void setSelInfo (int selBus, int monBus);
 
-    static constexpr int kMinStripWidth = 92, kMaxStripWidth = 140, kCaptionHeight = 34;
+    static constexpr int kMinStripWidth = 92, kMaxStripWidth = 140, kCaptionHeight = 34, kDividerWidth = 16;
 
     std::vector<std::unique_ptr<InputStripView>> inStrips;
     std::vector<std::unique_ptr<BusStripView>> busStrips;   // A buses first, then B buses
@@ -147,18 +196,25 @@ private:
     {
         juce::String title;
         juce::Colour colour;
-        juce::Rectangle<int> area;    // caption + strips
         int captionWidth = 0;
+        int x = 0, width = 0;          // group of strips in its pane's content (logical units)
+        juce::Rectangle<int> caption;  // shown caption in this component (sticky while scrolling)
     };
-    int sectionWidth (const Section&, int strips, int stripWidth) const;
-    int fitStripWidth (int viewWidth) const;
-    int totalWidth (int stripWidth) const;
+    int groupWidth (const Section&, int strips, int stripWidth) const;
+    int inputsWidth (int stripWidth) const;    // logical width of a pane's content
+    int outputsWidth (int stripWidth) const;
+    float scaleFor (int paneHeight) const;     // < 1 when the pane is too low for the strips
+    int defaultSplit() const;                  // divider position (centre) for equally wide strips
+    void layoutPane (StripPane&, bool outputs, int paneWidth, int paneHeight);
+    void layoutCaptions();
+    void setSplit (int centreX);
 
     UiContext& ctx;
+    StripPane inPane, outPane;
+    PaneDivider divider;
     Section inSec, hwSec, virtSec;
     int numHw = 0, numVirt = 0;
     int selBus = -1, monBus = -1;
     PlusButton addIn { theme::accentIn }, addHw { theme::accentHw }, addVirt { theme::accentVirt };
-    int stripWidth = kMinStripWidth;
 };
 } // namespace hydra
