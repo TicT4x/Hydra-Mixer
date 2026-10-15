@@ -153,6 +153,13 @@ public:
     juce::StringArray getMasterInputNames() const;
     juce::StringArray getMasterOutputNames() const;
 
+    /** ASIO drivers that can run next to the master (every ASIO driver except the master's own). */
+    juce::StringArray getSecondaryAsioDrivers() const;
+    /** Channel names of a secondary ASIO driver (probed once, cached). Message thread. */
+    juce::StringArray getAsioChannelNames (const juce::String& driver, bool inputs) const;
+    /** True if t names the ASIO driver that is the master (its channels are then used directly). */
+    bool isMasterAsio (const IoTarget& t) const;
+
     void prepareChains();
 
 private:
@@ -160,8 +167,10 @@ private:
     {
         std::vector<std::shared_ptr<AsyncInput>> ins;
         std::vector<std::shared_ptr<AsyncOutput>> outs;
-        struct In  { IoTarget::Kind kind = IoTarget::Kind::None; int ch = 0; bool mono = false; AsyncInput* s = nullptr; };
-        struct Out { IoTarget::Kind kind = IoTarget::Kind::None; int ch = 0; bool mono = false; AsyncOutput* s = nullptr; };
+        // ch / chR: left / right channel. For asynchronous streams they index the stream's channels
+        // (chR = -1: the stream has no right channel).
+        struct In  { IoTarget::Kind kind = IoTarget::Kind::None; int ch = 0, chR = 1; bool mono = false; AsyncInput* s = nullptr; };
+        struct Out { IoTarget::Kind kind = IoTarget::Kind::None; int ch = 0, chR = 1; bool mono = false; AsyncOutput* s = nullptr; };
         std::array<In, kNumInputs> in;
         std::array<Out, kNumBuses> out;
     };

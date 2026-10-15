@@ -19,6 +19,7 @@ constexpr int kNumVirtBuses = 3;   // B1..B3
 constexpr int kNumBuses     = kNumHwBuses + kNumVirtBuses;
 constexpr int kMaxBlock     = 4096; // engine processes in chunks of at most this size
 constexpr int kMaxDeviceChannels = 32;
+constexpr int kMaxStreamChannels = 16; // channels carried by one asynchronous stream (8 stereo strips / buses)
 
 inline juce::String busCode (int b)
 {

@@ -23,7 +23,8 @@ public:
         buildTable (cutoff);
 
         histCapacity = (int) std::ceil (maxOutBlock * nominalRatio * 1.05) + taps * 4 + 64;
-        for (auto& h : hist) h.assign ((size_t) histCapacity, 0.0f);
+        for (int c = 0; c < kMaxChannels; ++c)
+            hist[(size_t) c].assign (c < numChannels ? (size_t) histCapacity : 0, 0.0f);
         reset();
     }
 
@@ -113,7 +114,7 @@ public:
     }
 
 private:
-    static constexpr int kMaxChannels = 8;
+    static constexpr int kMaxChannels = kMaxStreamChannels;
     static constexpr int kPhases = 512;
     static constexpr size_t tmpSize = 512;
 
@@ -139,7 +140,8 @@ private:
             for (int k = 0; k < taps; ++k)
                 table[(size_t) p * (size_t) taps + (size_t) k] /= (float) sum;
         }
-        for (auto& t : tmp) t.assign (tmpSize, 0.0f);
+        for (int c = 0; c < kMaxChannels; ++c)
+            tmp[(size_t) c].assign (c < numChannels ? tmpSize : 0, 0.0f);
     }
 
     void produce (float* const* out, int n) noexcept
@@ -191,13 +193,21 @@ private:
 
 /** Keeps a ring buffer at a self-tuned target fill level by nudging the resampling ratio
     (PI controller). Lowers its target automatically when the stream is stable, raises it
-    after an underrun — always the lowest latency that is still glitch-free. */
+    after an underrun — always the lowest latency that is still glitch-free.
+
+    The regulated value is the *lowest* fill seen over a short window (a few device periods),
+    not the mean: the fill at the engine's measuring point depends on the phase between device
+    and engine callbacks, and with two clocks that phase rotates only slowly (100 ppm: one
+    turn in ~30 s). Holding the window minimum at the target keeps the safety margin the
+    same at every phase instead of only at the phases seen while the target was tightened. */
 class DriftController
 {
 public:
-    /** initialTarget/minTarget/maxTarget in frames, quantum = adaptation step (frames). */
+    /** initialTarget/minTarget/maxTarget in frames (device frames), quantum = adaptation step.
+        deviceRate: frames per second the ring moves at (sets the loop gain).
+        windowBlocks: engine blocks the minimum is taken over (should span several device periods). */
     void prepare (double initialTarget, double minTarget, double maxTarget, double quantumFrames,
-                  double engineRate, int engineBlock)
+                  double engineRate, int engineBlock, double deviceRate, int windowBlocks)
     {
         lo = minTarget;
         hi = juce::jmax (minTarget, maxTarget);
@@ -208,6 +218,18 @@ public:
         blocksPerSecond = engineRate / juce::jmax (1, engineBlock);
         slackMin = 1.0e9;
         blockCounter = 0;
+        window = juce::jlimit (1, 1024, windowBlocks);
+        windowCounter = 0;
+        curMin = prevMin = target;
+
+        // PI loop on the fill error in frames. The ring moves by deviceRate * u frames/s for a
+        // ratio correction u, so these gains give a critically damped loop (no overshoot into
+        // an underrun after the target was lowered) with ~2 s time constant.
+        constexpr double wn = 0.5, zeta = 1.0;
+        const double rate = juce::jmax (1000.0, deviceRate);
+        kp = 2.0 * zeta * wn / rate;
+        ki = wn * wn / rate / blocksPerSecond; // per block
+        alpha = 1.0 / juce::jmax (1.0, blocksPerSecond * 0.1); // ~0.1 s smoothing of the window minimum
     }
 
     /** Call once per engine block with the measured fill (frames) and the minimum fill that
@@ -216,11 +238,13 @@ public:
     {
         if (hadUnderrun)
         {
+            // Keep the integral: it holds the learned clock drift.
             target = juce::jmin (hi, target + 2.0 * quantum);
-            integral = 0.0;
             avg = fill;
             slackMin = 1.0e9;
             blockCounter = 0;
+            curMin = prevMin = fill;
+            windowCounter = 0;
         }
 
         slackMin = juce::jmin (slackMin, fill - minSafeFill);
@@ -232,19 +256,27 @@ public:
             blockCounter = 0;
         }
 
-        const double alpha = 1.0 / juce::jmax (1.0, blocksPerSecond * 0.5); // ~0.5 s smoothing
-        avg += alpha * (fill - avg);
+        // Sliding minimum over 1..2 windows (two buckets, O(1), no allocation).
+        curMin = juce::jmin (curMin, fill);
+        const double low = juce::jmin (curMin, prevMin);
+        if (++windowCounter >= window) { prevMin = curMin; curMin = 1.0e9; windowCounter = 0; }
 
-        const double err = (avg - target) / juce::jmax (1.0, target);
-        integral = juce::jlimit (-0.002, 0.002, integral + err * 2.0e-6);
-        const double corr = juce::jlimit (-0.003, 0.003, err * 1.0e-3 + integral);
-        return 1.0 + corr;
+        avg += alpha * (low - avg);
+        const double err = avg - target; // frames
+        const double p = kp * err;
+        // Anti-windup: integrate only while the output is not saturated.
+        const double next = juce::jlimit (-kMaxDrift, kMaxDrift, integral + ki * err);
+        if (std::abs (p + next) < kMaxCorr) integral = next;
+        return 1.0 + juce::jlimit (-kMaxCorr, kMaxCorr, p + integral);
     }
 
     double getTarget() const noexcept { return target; }
 
 private:
     double lo = 64, hi = 4096, quantum = 32, target = 128, avg = 128, integral = 0, blocksPerSecond = 375, slackMin = 1e9;
-    int blockCounter = 0;
+    double curMin = 128, prevMin = 128, kp = 0, ki = 0, alpha = 0.01;
+    int blockCounter = 0, window = 1, windowCounter = 0;
+    static constexpr double kMaxDrift = 0.001; // clock mismatch the integral may learn (1000 ppm)
+    static constexpr double kMaxCorr = 0.003;  // total ratio correction (~5 cents at most)
 };
 } // namespace hydra
