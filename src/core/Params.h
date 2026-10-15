@@ -30,7 +30,8 @@ public:
     float getNormalised() const noexcept  { return range.convertTo0to1 (get()); }
     uint32_t getVersion() const noexcept  { return version.load (std::memory_order_acquire); }
 
-    void set (float v) noexcept
+    /** external = set by a MIDI controller: not recorded as an undo step (see UndoHistory). */
+    void set (float v, bool external = false) noexcept
     {
         v = juce::jlimit (range.start, range.end, v);
         if (type == ParamType::Toggle)
@@ -39,11 +40,17 @@ public:
             v = (float) juce::roundToInt (v);
 
         if (value.exchange (v, std::memory_order_relaxed) != v)
+        {
+            // Stored before the version is published, so a reader that sees the new version sees the mark too.
+            externalVersion.store (external ? version.load (std::memory_order_relaxed) + 1 : 0, std::memory_order_relaxed);
             version.fetch_add (1, std::memory_order_release);
+        }
     }
 
-    void setNormalised (float n) noexcept { set (range.convertFrom0to1 (juce::jlimit (0.0f, 1.0f, n))); }
-    void toggle() noexcept                { set (isOn() ? 0.0f : 1.0f); }
+    void setNormalised (float n, bool external = false) noexcept { set (range.convertFrom0to1 (juce::jlimit (0.0f, 1.0f, n)), external); }
+    void toggle (bool external = false) noexcept                 { set (isOn() ? 0.0f : 1.0f, external); }
+    /** True if the current value was set by a MIDI controller. */
+    bool isExternalChange() const noexcept { return externalVersion.load (std::memory_order_relaxed) == getVersion(); }
     void reset() noexcept                 { set (defaultValue); }
 
     juce::String toText() const
@@ -68,6 +75,7 @@ public:
 private:
     std::atomic<float> value;
     std::atomic<uint32_t> version { 1 };
+    std::atomic<uint32_t> externalVersion { 0 };
 };
 
 class ParamRegistry

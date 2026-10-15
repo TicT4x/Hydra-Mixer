@@ -1,7 +1,26 @@
 #include "Widgets.h"
+#include "state/UndoHistory.h"
 
 namespace hydra
 {
+//==============================================================================
+bool UiContext::handleUndoKey (const juce::KeyPress& key, juce::String* message)
+{
+    const auto mods = key.getModifiers();
+    if (! mods.isCommandDown() || mods.isAltDown()) return false;
+    const int code = juce::CharacterFunctions::toUpperCase ((juce::juce_wchar) key.getKeyCode());
+    const bool isUndo = code == 'Z' && ! mods.isShiftDown();
+    const bool isRedo = code == 'Y' || (code == 'Z' && mods.isShiftDown());
+    if (! isUndo && ! isRedo) return false;
+    if (undo == nullptr) return true;
+
+    const auto what = isUndo ? undo->undo() : undo->redo();
+    if (message != nullptr)
+        *message = what.isNotEmpty() ? (isUndo ? "Undo:  " : "Redo:  ") + what
+                                     : juce::String (isUndo ? "Nothing to undo" : "Nothing to redo");
+    return true;
+}
+
 //==============================================================================
 bool setParamFromText (Param& p, const juce::String& text)
 {
@@ -453,13 +472,18 @@ void Switch::paint (juce::Graphics& g)
 }
 
 //==============================================================================
-ChoiceSegments::ChoiceSegments (UiContext& c, Param& p, juce::Colour a, juce::StringArray l)
-    : ParamControl (c, p), accent (a), labels (l.isEmpty() ? p.choices : l) {}
+ChoiceSegments::ChoiceSegments (UiContext& c, Param& p, juce::Colour a, juce::StringArray l, std::vector<int> v)
+    : ParamControl (c, p), accent (a), labels (l.isEmpty() ? p.choices : l), values (std::move (v)) {}
+
+int ChoiceSegments::valueOf (int segment) const
+{
+    return juce::isPositiveAndBelow (segment, (int) values.size()) ? values[(size_t) segment] : segment;
+}
 
 void ChoiceSegments::press (const juce::MouseEvent& e)
 {
     const int n = juce::jmax (1, labels.size());
-    param.set ((float) juce::jlimit (0, n - 1, e.x * n / juce::jmax (1, getWidth())));
+    param.set ((float) valueOf (juce::jlimit (0, n - 1, e.x * n / juce::jmax (1, getWidth()))));
 }
 
 void ChoiceSegments::paint (juce::Graphics& g)
@@ -473,13 +497,14 @@ void ChoiceSegments::paint (juce::Graphics& g)
     for (int i = 0; i < n; ++i)
     {
         auto seg = juce::Rectangle<float> (r.getX() + w * (float) i, r.getY(), w, r.getHeight()).reduced (2.0f);
-        if (i == cur)
+        const bool on = valueOf (i) == cur;
+        if (on)
         {
             g.setColour (accent);
             g.fillRoundedRectangle (seg, 5.0f);
         }
-        g.setColour (i == cur ? theme::bg : theme::textDim);
-        g.setFont (theme::font (11.0f, i == cur));
+        g.setColour (on ? theme::bg : theme::textDim);
+        g.setFont (theme::font (11.0f, on));
         g.drawFittedText (labels[i], seg.toNearestInt(), juce::Justification::centred, 2, 0.8f);
     }
 }
@@ -651,5 +676,64 @@ void Chip::paint (juce::Graphics& g)
     g.setColour (active ? theme::text : colour);
     g.setFont (theme::font (12.0f));
     g.drawFittedText (text, tr.toNearestInt(), centred ? juce::Justification::centred : juce::Justification::centredLeft, 1, 0.8f);
+}
+//==============================================================================
+void TrashButton::drawIcon (juce::Graphics& g, juce::Rectangle<float> area, juce::Colour colour)
+{
+    // Trash can: lid with handle, tapered bin with three ribs.
+    const float s = juce::jmin (area.getWidth(), area.getHeight());
+    auto r = juce::Rectangle<float> (s * 0.8f, s).withCentre (area.getCentre());
+    const float stroke = juce::jmax (1.2f, s * 0.09f);
+    const juce::PathStrokeType pst (stroke, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+    juce::Path p;
+    const float lidY = r.getY() + r.getHeight() * 0.2f;
+    p.startNewSubPath (r.getX(), lidY);
+    p.lineTo (r.getRight(), lidY);
+    const float hw = r.getWidth() * 0.18f;
+    p.startNewSubPath (r.getCentreX() - hw, lidY);
+    p.lineTo (r.getCentreX() - hw, r.getY() + stroke * 0.5f);
+    p.lineTo (r.getCentreX() + hw, r.getY() + stroke * 0.5f);
+    p.lineTo (r.getCentreX() + hw, lidY);
+    const float top = lidY + stroke * 0.9f, bottom = r.getBottom() - stroke * 0.5f;
+    const float inset = r.getWidth() * 0.12f, taper = r.getWidth() * 0.06f;
+    p.startNewSubPath (r.getX() + inset, top);
+    p.lineTo (r.getX() + inset + taper, bottom);
+    p.lineTo (r.getRight() - inset - taper, bottom);
+    p.lineTo (r.getRight() - inset, top);
+    for (float f : { 0.36f, 0.5f, 0.64f })
+    {
+        const float x = r.getX() + r.getWidth() * f;
+        p.startNewSubPath (x, top + r.getHeight() * 0.14f);
+        p.lineTo (x, bottom - r.getHeight() * 0.14f);
+    }
+    g.setColour (colour);
+    g.strokePath (p, pst);
+}
+
+void TrashButton::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat().reduced (0.5f);
+    g.setColour (hover ? theme::mute.withAlpha (0.2f) : theme::panel2);
+    g.fillRoundedRectangle (r, 6.0f);
+    g.setColour (hover ? theme::mute.withAlpha (0.8f) : theme::outline);
+    g.drawRoundedRectangle (r, 6.0f, 1.0f);
+    drawIcon (g, r.withSizeKeepingCentre (14.0f, 14.0f), hover ? theme::mute : theme::textDim);
+}
+
+//==============================================================================
+void PlusButton::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat().reduced (0.5f);
+    const float corner = juce::jmin (8.0f, r.getHeight() * 0.3f);
+    g.setColour (hover ? colour.withAlpha (0.22f) : theme::panel2);
+    g.fillRoundedRectangle (r, corner);
+    g.setColour (colour.withAlpha (hover ? 0.9f : 0.45f));
+    g.drawRoundedRectangle (r, corner, 1.0f);
+
+    const auto c = r.getCentre();
+    const float s = juce::jmin (r.getWidth(), r.getHeight()) * 0.22f;
+    g.setColour (hover ? theme::text : colour);
+    g.fillRoundedRectangle (c.x - s, c.y - 1.0f, s * 2.0f, 2.0f, 1.0f);
+    g.fillRoundedRectangle (c.x - 1.0f, c.y - s, 2.0f, s * 2.0f, 1.0f);
 }
 } // namespace hydra

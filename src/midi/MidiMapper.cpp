@@ -365,23 +365,23 @@ void MidiMapper::handleIncomingMidiMessage (juce::MidiInput* sourceDev, const ju
             {
                 float n = (float) raw / (float) rawMax;
                 if (m.invert) n = 1.0f - n;
-                p.setNormalised (m.toParam (n));
+                p.setNormalised (m.toParam (n), true);
                 m.lastSent = raw;
                 break;
             }
             case MidiMapping::Mode::Toggle:
-                if (press) p.toggle();
+                if (press) p.toggle (true);
                 break;
             case MidiMapping::Mode::Momentary:
-                if (press)   p.set (m.invert ? p.range.start : p.range.end);
-                if (release) p.set (m.invert ? p.range.end : p.range.start);
+                if (press)   p.set (m.invert ? p.range.start : p.range.end, true);
+                if (release) p.set (m.invert ? p.range.end : p.range.start, true);
                 break;
             case MidiMapping::Mode::Relative:
             {
                 int delta = src == MidiMapping::Source::CC ? (raw < 64 ? raw : raw - 128) : 0;
                 if (m.invert) delta = -delta;
                 const float lo = juce::jmin (m.minN, m.maxN), hi = juce::jmax (m.minN, m.maxN);
-                p.setNormalised (juce::jlimit (lo, hi, p.getNormalised() + (float) delta / 200.0f * (hi - lo)));
+                p.setNormalised (juce::jlimit (lo, hi, p.getNormalised() + (float) delta / 200.0f * (hi - lo)), true);
                 break;
             }
         }

@@ -14,7 +14,10 @@ namespace IoMenus
 /** Fader value readout under a strip; click to type a value. */
 void makeEditableDbLabel (juce::Label& label, Param& gain);
 
-/** Editable channel name + numbered badge; click selects the channel. */
+/** Right-click menu of a strip: rename, remove the channel. */
+void showChannelMenu (UiContext& ctx, int selectIndex, juce::Component& target, std::function<void()> rename);
+
+/** Editable channel name + numbered badge; click selects the channel, right-click opens the channel menu. */
 class StripHeader : public juce::Component
 {
 public:
@@ -22,8 +25,10 @@ public:
                  std::function<juce::String()> getName, std::function<void (juce::String)> setName);
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void refresh() { name.setText (getName(), juce::dontSendNotification); }
+    void showMenu();
 
 private:
     UiContext& ctx;
@@ -42,10 +47,14 @@ public:
     ~InputStripView() override { ParamPoller::detach (&dbPoll); }
     void paint (juce::Graphics&) override;
     void resized() override;
-    /** Any click inside the strip (also on its controls) selects it for the inspector. */
-    void mouseDown (const juce::MouseEvent&) override { ctx.select (index); }
+    /** Any click inside the strip (also on its controls) selects it for the inspector;
+        a right-click on the strip's background opens the channel menu. */
+    void mouseDown (const juce::MouseEvent&) override;
     void updateMeters (float dt);
     void refresh();
+    int getSelectIndex() const noexcept { return index; }
+    /** Height the strip needs with the given number of A / B routing buttons (fader at its minimum). */
+    static int minimumHeight (int numHwRoutes, int numVirtRoutes);
     /** -1: the fader controls the strip level. 0..7: it controls the send level to that bus (bus SEL). */
     void setFaderTarget (int bus);
     void paintOverChildren (juce::Graphics&) override;
@@ -54,7 +63,7 @@ private:
     UiContext& ctx;
     int index;
     InputStrip& strip;
-    int faderBus = -1;
+    int faderBus = -1, statusTick = 0;
     Param* faderParam = nullptr;
     bool faderRouted = true;
     juce::Rectangle<float> hwGroup, virtGroup;
@@ -63,8 +72,8 @@ private:
     Chip source;
     juce::Label sourceStatus;
     Knob trim, pan;
-    Toggle eq, gate, comp, denoise;
-    std::vector<std::unique_ptr<Toggle>> routes;
+    // Routing buttons of the buses in use (EQ / gate / comp / denoiser are switched in the inspector).
+    std::vector<std::unique_ptr<Toggle>> hwRoutes, virtRoutes;
     Toggle mono, solo, mute;
     std::unique_ptr<Fader> fader;
     MeterView meter;
@@ -80,9 +89,10 @@ public:
     ~BusStripView() override { ParamPoller::detach (&dbPoll); }
     void paint (juce::Graphics&) override;
     void resized() override;
-    void mouseDown (const juce::MouseEvent&) override { ctx.select (kNumInputs + index); }
+    void mouseDown (const juce::MouseEvent&) override;
     void updateMeters (float dt);
     void refresh();
+    int getSelectIndex() const noexcept { return busSelectIndex (index); }
 
 private:
     UiContext& ctx;
@@ -92,12 +102,119 @@ private:
     StripHeader header;
     Chip output;
     juce::Label outputStatus;
-    Toggle eq, lim, mono, sel, mute;
+    Toggle lim, mono, sel, mute;
     bool monitorShown = false;
     int tick = 0;
     Fader fader;
     MeterView meter;
     juce::Label dbLabel;
     struct DbPoll : ParamPoller::Client { BusStripView* v; uint32_t ver = 0; void pollParams() override; } dbPoll;
+};
+
+//==============================================================================
+/** Horizontally scrolling row of strips (one per category: inputs, outputs). Never scrolls vertically:
+    when the pane is too low for the strips, they are drawn smaller instead. The strips are children of
+    getContent(), which is laid out in logical units and drawn scaled. */
+class StripPane final : public juce::Component
+{
+public:
+    StripPane();
+    juce::Component& getContent() noexcept { return content; }
+    /** Logical size of the strips and the factor they are drawn with; scrolls sideways when wider than the pane. */
+    void setContentSize (int logicalWidth, int logicalHeight, float scale);
+    /** Scroll position in logical units (0 = start). */
+    float getScrollX() const;
+    float getScale() const noexcept { return scale; }
+    /** Scrolls so that the area (content coordinates) is visible. */
+    void scrollToShow (juce::Rectangle<int> area);
+    void resized() override;
+
+    std::function<void()> onScroll;
+    static constexpr int kScrollBar = 10;
+
+private:
+    struct View final : juce::Viewport
+    {
+        std::function<void()> moved;
+        void visibleAreaChanged (const juce::Rectangle<int>&) override { if (moved) moved(); }
+    };
+    View view;
+    juce::Component holder, content;
+    float scale = 1.0f;
+};
+
+/** Vertical divider between the input and the output pane: drag sideways to give one side more room,
+    double-click to return to the default position. */
+class PaneDivider final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    PaneDivider();
+    std::function<void (int x)> onDrag;   // wanted centre position in the parent
+    std::function<void()> onReset;
+    void paint (juce::Graphics&) override;
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override    { dragging = false; repaint(); }
+    void mouseDoubleClick (const juce::MouseEvent&) override { if (onReset) onReset(); }
+
+private:
+    int startCentre = 0;
+    bool hover = false, dragging = false;
+};
+
+/** All strips of the channels in use: the inputs on the left, the outputs (hardware, then virtual) on the
+    right, each in its own pane that scrolls sideways on its own. Section captions (Inputs / Hardware
+    Outputs / Virtual Outputs) with their "+" buttons stay in view above the panes. */
+class StripArea final : public juce::Component
+{
+public:
+    explicit StripArea (UiContext& c);
+
+    /** Recreates the strips for the current channel layout. */
+    void rebuild();
+    /** Scrolls the pane of a channel (selection index) so that its strip is visible. */
+    void scrollToChannel (int selectIndex);
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    void updateMeters (float dt);
+    void refreshStrips();
+    void repaintStrips();
+    void setFaderTarget (int bus);
+    /** Bus selected with SEL / monitored bus, shown next to the Inputs caption. */
+    void setSelInfo (int selBus, int monBus);
+
+    static constexpr int kMinStripWidth = 92, kMaxStripWidth = 140, kCaptionHeight = 34, kDividerWidth = 16;
+
+    std::vector<std::unique_ptr<InputStripView>> inStrips;
+    std::vector<std::unique_ptr<BusStripView>> busStrips;   // A buses first, then B buses
+
+private:
+    struct Section
+    {
+        juce::String title;
+        juce::Colour colour;
+        int captionWidth = 0;
+        int x = 0, width = 0;          // group of strips in its pane's content (logical units)
+        juce::Rectangle<int> caption;  // shown caption in this component (sticky while scrolling)
+    };
+    int groupWidth (const Section&, int strips, int stripWidth) const;
+    int inputsWidth (int stripWidth) const;    // logical width of a pane's content
+    int outputsWidth (int stripWidth) const;
+    float scaleFor (int paneHeight) const;     // < 1 when the pane is too low for the strips
+    int defaultSplit() const;                  // divider position (centre) for equally wide strips
+    void layoutPane (StripPane&, bool outputs, int paneWidth, int paneHeight);
+    void layoutCaptions();
+    void setSplit (int centreX);
+
+    UiContext& ctx;
+    StripPane inPane, outPane;
+    PaneDivider divider;
+    Section inSec, hwSec, virtSec;
+    int numHw = 0, numVirt = 0;
+    int selBus = -1, monBus = -1;
+    PlusButton addIn { theme::accentIn }, addHw { theme::accentHw }, addVirt { theme::accentVirt };
 };
 } // namespace hydra

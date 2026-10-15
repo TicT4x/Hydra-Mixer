@@ -7,6 +7,12 @@ namespace hydra
 namespace
 {
 constexpr int kVmHwStrips = 5; // Potato: 5 hardware strips + 3 virtual strips
+constexpr int kVmStrips = 8;
+constexpr int kVmHwBuses = 5;  // Potato: A1-A5 + B1-B3
+constexpr int kVmBuses = 8;
+
+/** Hydra bus index of Voicemeeter bus b (1..8: A1-A5, B1-B3). */
+int vmBus (int b) { return b <= kVmHwBuses ? hwBusIndex (b - 1) : virtBusIndex (b - 1 - kVmHwBuses); }
 
 /** Voicemeeter stores the ASIO driver as its COM CLSID; JUCE lists drivers by their registry key name. */
 juce::String asioNameFromClsid (const juce::String& clsid)
@@ -129,6 +135,21 @@ VoicemeeterImport::Result VoicemeeterImport::run (const juce::File& file, Engine
 
     // Start from a clean state so nothing from the previous Hydra session lingers.
     for (auto& p : eng.params.all()) p->reset();
+    // Voicemeeter Potato's layout (8 inputs, A1-A5, B1-B3); the other slots are cleared.
+    for (int i = kVmStrips; i < kMaxInputs; ++i)
+    {
+        auto& st = eng.inputs[(size_t) i];
+        st.name = "Input " + juce::String (i + 1);
+        st.source = {};
+        st.plugins.clear();
+    }
+    for (int b = 0; b < kMaxBuses; ++b)
+        if (! eng.buses[(size_t) b].active->isOn())
+        {
+            eng.buses[(size_t) b].name = busCode (b);
+            eng.buses[(size_t) b].output = {};
+            eng.buses[(size_t) b].plugins.clear();
+        }
 
     //--------------------------------------------------------------------------
     // Devices
@@ -162,7 +183,7 @@ VoicemeeterImport::Result VoicemeeterImport::run (const juce::File& file, Engine
 
     //--------------------------------------------------------------------------
     // Input strips
-    for (int s = 1; s <= kNumInputs; ++s)
+    for (int s = 1; s <= kVmStrips; ++s)
     {
         auto& strip = eng.inputs[(size_t) (s - 1)];
         const auto pre = "in" + juce::String (s) + ".";
@@ -216,9 +237,9 @@ VoicemeeterImport::Result VoicemeeterImport::run (const juce::File& file, Engine
             setP (eng, pre + "mono", mono ? 1.0f : 0.0f);
             setP (eng, pre + "gain", attrF (st, "dblevel"));
             setP (eng, pre + "eq.on", attrF (st, "EQon"));
-            static const char* busAttr[kNumBuses] = { "busa", "busa2", "busa3", "busa4", "busa5", "busb", "busb2", "busb3" };
-            for (int b = 0; b < kNumBuses; ++b)
-                setP (eng, pre + "route." + busCode (b), attrF (st, busAttr[b]));
+            static const char* busAttr[kVmBuses] = { "busa", "busa2", "busa3", "busa4", "busa5", "busb", "busb2", "busb3" };
+            for (int b = 1; b <= kVmBuses; ++b)
+                setP (eng, pre + "route." + busCode (vmBus (b)), attrF (st, busAttr[b - 1]));
         }
 
         const auto* pan = findIndexed (*params, "Strip", s, "paneltype");
@@ -279,21 +300,22 @@ VoicemeeterImport::Result VoicemeeterImport::run (const juce::File& file, Engine
             setP (eng, bp + "q", attrF (e, "Q", 1.0f));
         }
     };
-    importEq ("VoiceMeeterStripEQ", "Strip", [] (int i) { return "in" + juce::String (i) + "."; }, kNumInputs);
-    importEq ("VoiceMeeterBUSEQ", "Bus", [] (int i) { return "bus." + busCode (i - 1) + "."; }, kNumBuses);
+    importEq ("VoiceMeeterStripEQ", "Strip", [] (int i) { return "in" + juce::String (i) + "."; }, kVmStrips);
+    importEq ("VoiceMeeterBUSEQ", "Bus", [] (int i) { return "bus." + busCode (vmBus (i)) + "."; }, kVmBuses);
     for (auto& st : eng.inputs) st.eq.hideNeutralBands();
     for (auto& bu : eng.buses)  bu.eq.hideNeutralBands();
 
     //--------------------------------------------------------------------------
     // Buses
-    for (int b = 1; b <= kNumBuses; ++b)
+    for (int b = 1; b <= kVmBuses; ++b)
     {
-        auto& bus = eng.buses[(size_t) (b - 1)];
-        const auto pre = "bus." + busCode (b - 1) + ".";
-        const bool hw = b <= kNumHwBuses;
+        const int hb = vmBus (b);
+        auto& bus = eng.buses[(size_t) hb];
+        const auto pre = "bus." + busCode (hb) + ".";
+        const bool hw = b <= kVmHwBuses;
         const auto label = hw ? params->getChildElementAllSubText ("LabelBus" + juce::String (b), {})
-                              : params->getChildElementAllSubText ("LabelVirtualBus" + juce::String (b - kNumHwBuses), {});
-        bus.name = label.isNotEmpty() ? label : busCode (b - 1);
+                              : params->getChildElementAllSubText ("LabelVirtualBus" + juce::String (b - kVmHwBuses), {});
+        bus.name = label.isNotEmpty() ? label : busCode (hb);
 
         if (const auto* e = findIndexed (*params, "Bus", b, "mute"))
         {
@@ -320,10 +342,10 @@ VoicemeeterImport::Result VoicemeeterImport::run (const juce::File& file, Engine
         else
         {
             out.kind = IoTarget::Kind::Virtual;
-            out.virtualIndex = b - 1 - kNumHwBuses;
+            out.virtualIndex = b - 1 - kVmHwBuses;
         }
         bus.output = out;
-        rep.add (busCode (b - 1) + (bus.name != busCode (b - 1) ? " \"" + bus.name + "\"" : juce::String()) + ": "
+        rep.add (busCode (hb) + (bus.name != busCode (hb) ? " \"" + bus.name + "\"" : juce::String()) + ": "
                  + (out.kind == IoTarget::Kind::Master && b > 1 ? "ASIO out " + juce::String (out.channel + 1) + "/" + juce::String (out.channel + 2)
                                                               : out.describe()));
     }

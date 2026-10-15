@@ -181,7 +181,7 @@ private:
 };
 
 //==============================================================================
-/** 6-band EQ: type picker | curve | selected band controls. Shared by inputs and buses. */
+/** 8-band EQ: type picker | curve | selected band controls. Shared by inputs and buses. */
 class EqSection final : public juce::Component, private ParamPoller::Client
 {
 public:
@@ -610,7 +610,7 @@ class BusDetail final : public juce::Component
 public:
     BusDetail (UiContext& c, int b, std::function<void()> scan)
         : bus (c.engine.buses[(size_t) b]), colour (theme::busColour (b)),
-          eqSec (c, bus.eq, colour, kNumInputs + b), limSec ("Limiter", colour),
+          eqSec (c, bus.eq, colour, kMaxInputs + b), limSec ("Limiter", colour),
           fxSec ("VST3 Insert Chain", colour),
           limOn (c, *bus.limOn, "ON", colour), ceiling (c, *bus.limCeil, "CEILING", colour),
           bypass (c, *bus.fxBypass, "BYPASS", theme::mute),
@@ -650,6 +650,19 @@ private:
 };
 
 //==============================================================================
+/** Choice segments for the buses in use of one kind (A or B): labels and the matching choice values. */
+std::pair<juce::StringArray, std::vector<int>> activeBusChoices (const Engine& e, bool virtualBuses)
+{
+    juce::StringArray labels;
+    std::vector<int> values;
+    const int first = virtualBuses ? virtBusIndex (0) : hwBusIndex (0);
+    const int count = virtualBuses ? kMaxVirtBuses : kMaxHwBuses;
+    for (int k = 0; k < count; ++k)
+        if (e.isBusActive (first + k)) { labels.add (busCode (first + k)); values.push_back (k); }
+    if (labels.isEmpty()) { labels.add (virtualBuses ? "no B bus" : "no A bus"); values.push_back (0); }
+    return { labels, values };
+}
+
 juce::String formatTime (double seconds)
 {
     const auto t = (int) seconds;
@@ -658,26 +671,153 @@ juce::String formatTime (double seconds)
     return hms + ":" + juce::String (t % 60).paddedLeft ('0', 2) + "." + juce::String ((int) (seconds * 10.0) % 10);
 }
 
-/** Recorder: record a virtual bus (B1-B3) to WAV, play back files to any buses. */
+/** Waveform of the take being recorded, or of the loaded file with the play position. Click or drag
+    to move the play position (like a DAW timeline); while stopped it sets where PLAY starts. */
+class WaveformView final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    explicit WaveformView (Recorder& r) : rec (r)
+    {
+        setTooltip ("Click / drag: jump to that position");
+        setMouseCursor (juce::MouseCursor::IBeamCursor);
+    }
+
+    /** Called ~30x per second: repaints only if the waveform or the position changed. */
+    void update()
+    {
+        const bool recording = rec.isRecording();
+        const auto& wave = recording ? rec.getRecordWaveform() : rec.getPlayWaveform();
+        const double pos = recording ? rec.getRecordSeconds() : rec.isPlaying() ? rec.getPlaySeconds() : rec.getStartSeconds();
+        const auto v = wave.getVersion();
+        const int px = juce::roundToInt (pos / juce::jmax (0.001, length()) * getWidth());
+        if (v != shownVersion || recording != shownRecording || px != shownPx || rec.getLoadedFile() != shownFile)
+        {
+            shownVersion = v;
+            shownRecording = recording;
+            shownPx = px;
+            shownFile = rec.getLoadedFile();
+            repaint();
+        }
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        g.setColour (theme::bg);
+        g.fillRoundedRectangle (r, 6.0f);
+        auto plot = r.reduced (6.0f, 4.0f).withTrimmedBottom (12.0f);
+
+        const bool recording = rec.isRecording();
+        const auto& wave = recording ? rec.getRecordWaveform() : rec.getPlayWaveform();
+        const double len = length();
+        const auto colour = recording ? theme::mute : theme::good;
+
+        // Time ruler
+        g.setFont (theme::font (9.5f));
+        const double step = len <= 10 ? 1 : len <= 60 ? 5 : len <= 300 ? 30 : len <= 1200 ? 60 : len <= 3600 ? 300 : 600;
+        for (double s = 0; s <= len && len > 0.0; s += step)
+        {
+            const float x = plot.getX() + (float) (s / len) * plot.getWidth();
+            g.setColour (theme::outline.withAlpha (0.5f));
+            g.fillRect (x, plot.getY(), 1.0f, plot.getHeight());
+            g.setColour (theme::textFaint);
+            const int t = (int) s;
+            g.drawText (juce::String (t / 60) + ":" + juce::String (t % 60).paddedLeft ('0', 2),
+                        juce::Rectangle<float> (x + 2.0f, plot.getBottom(), 40.0f, 12.0f), juce::Justification::centredLeft, false);
+        }
+
+        if (wave.getSeconds() <= 0.0 || len <= 0.0)
+        {
+            g.setColour (theme::textFaint);
+            g.setFont (theme::font (12.0f));
+            g.drawText (recording ? "Recording..." : rec.getLoadedFile() == juce::File() ? "Record something or open a file - its waveform appears here"
+                                                                                          : "Reading the file...",
+                        plot, juce::Justification::centred);
+            return;
+        }
+
+        // Waveform: one column per pixel, mirrored around the centre line (level in dB-ish scale).
+        const int cols = juce::jmax (1, (int) plot.getWidth());
+        columns.resize ((size_t) cols);
+        wave.getColumns (0.0, len, columns.data(), cols);
+        const float mid = plot.getCentreY(), half = plot.getHeight() * 0.5f;
+        juce::Path p;
+        p.startNewSubPath (plot.getX(), mid);
+        auto toH = [half] (float v) { return half * juce::jlimit (0.0f, 1.0f, std::sqrt (v)); };
+        for (int c = 0; c < cols; ++c) p.lineTo (plot.getX() + (float) c, mid - toH (columns[(size_t) c]));
+        for (int c = cols; --c >= 0;) p.lineTo (plot.getX() + (float) c, mid + toH (columns[(size_t) c]));
+        p.closeSubPath();
+        g.setColour (colour.withAlpha (0.55f));
+        g.fillPath (p);
+        g.setColour (colour.withAlpha (0.25f));
+        g.fillRect (plot.getX(), mid - 0.5f, plot.getWidth(), 1.0f);
+
+        if (recording) return;
+        // Start cursor (where PLAY begins) and play head
+        const float startX = plot.getX() + (float) (rec.getStartSeconds() / len) * plot.getWidth();
+        g.setColour (theme::text.withAlpha (0.5f));
+        g.fillRect (startX - 0.5f, plot.getY(), 1.0f, plot.getHeight());
+        juce::Path flag;
+        flag.addTriangle (startX - 4.0f, plot.getY(), startX + 4.0f, plot.getY(), startX, plot.getY() + 6.0f);
+        g.fillPath (flag);
+        if (rec.isPlaying())
+        {
+            const float x = plot.getX() + (float) (rec.getPlaySeconds() / len) * plot.getWidth();
+            g.setColour (theme::text);
+            g.fillRect (x - 1.0f, plot.getY() - 2.0f, 2.0f, plot.getHeight() + 4.0f);
+        }
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override { seekTo (e.x); }
+    void mouseDrag (const juce::MouseEvent& e) override { seekTo (e.x); }
+
+private:
+    double length() const
+    {
+        if (rec.isRecording()) return juce::jmax (1.0, rec.getRecordSeconds());
+        return rec.getPlayLengthSeconds();
+    }
+
+    void seekTo (int x)
+    {
+        if (rec.isRecording() || rec.getLoadedFile() == juce::File()) return;
+        const float left = 6.0f, width = (float) getWidth() - 12.0f;
+        rec.seek (juce::jlimit (0.0, 1.0, (double) ((float) x - left) / width) * rec.getPlayLengthSeconds());
+        update();
+    }
+
+    Recorder& rec;
+    std::vector<float> columns;
+    uint32_t shownVersion = 0;
+    bool shownRecording = false;
+    int shownPx = -1;
+    juce::File shownFile;
+};
+
+/** Recorder: left what is recorded (a B bus), in the middle the recording itself (transport, waveform,
+    file), on the right where playback goes (any A / B buses). */
 class RecorderDetail final : public juce::Component
 {
 public:
     explicit RecorderDetail (UiContext& c)
         : ctx (c), rec (c.engine.recorder),
-          transportSec ("Recorder", theme::mute), sourceSec ("Record Source", theme::accentVirt),
-          playSec ("Playback", theme::good), outSec ("Playback Outputs", theme::accentHw),
+          sourceSec ("Record Source", theme::accentVirt), takeSec ("Recording", theme::mute), outSec ("Play To", theme::accentHw),
           recBtn (c, *rec.record, "REC", theme::mute), playBtn (c, *rec.play, "PLAY", theme::good),
           loopBtn (c, *rec.loop, "LOOP", theme::good),
-          source (c, *rec.source, theme::accentVirt), level (c, *rec.level, "LEVEL", theme::good)
+          source (c, *rec.source, theme::accentVirt, activeBusChoices (c.engine, true).first, activeBusChoices (c.engine, true).second),
+          level (c, *rec.level, "LEVEL", theme::good),
+          wave (rec)
     {
-        for (juce::Component* s : std::initializer_list<juce::Component*> { &transportSec, &sourceSec, &playSec, &outSec }) addAndMakeVisible (s);
-        for (juce::Component* k : std::initializer_list<juce::Component*> { &recBtn, &playBtn, &loopBtn }) transportSec.addAndMakeVisible (k);
+        for (juce::Component* s : std::initializer_list<juce::Component*> { &sourceSec, &takeSec, &outSec }) addAndMakeVisible (s);
         for (juce::Component* k : std::initializer_list<juce::Component*> { &source, &folderChip, &formatChip }) sourceSec.addAndMakeVisible (k);
-        for (juce::Component* k : std::initializer_list<juce::Component*> { &openChip, &lastChip, &showChip, &level }) playSec.addAndMakeVisible (k);
-        for (int b = 0; b < kNumBuses; ++b)
+        for (juce::Component* k : std::initializer_list<juce::Component*> { &recBtn, &playBtn, &loopBtn, &wave, &openChip, &lastChip, &showChip })
+            takeSec.addAndMakeVisible (k);
+        outSec.addAndMakeVisible (level);
+        for (int b = 0; b < kMaxBuses; ++b)
         {
-            outs.push_back (std::make_unique<Toggle> (c, *rec.out[(size_t) b], busCode (b), theme::busColour (b)));
-            outSec.addAndMakeVisible (*outs.back());
+            if (! c.engine.isBusActive (b)) continue;
+            (isHwBus (b) ? hwOuts : virtOuts).push_back (std::make_unique<Toggle> (c, *rec.out[(size_t) b], busCode (b), theme::busColour (b)));
+            outSec.addAndMakeVisible (*(isHwBus (b) ? hwOuts : virtOuts).back());
         }
         for (auto* chip : { &folderChip, &formatChip, &openChip, &lastChip, &showChip })
         {
@@ -686,12 +826,14 @@ public:
         }
         formatChip.showArrow = true;
 
-        recBtn.setTooltip ("Record the selected bus to a WAV file (stop with a second click)");
-        playBtn.setTooltip ("Play the loaded file to the buses selected under Playback Outputs");
+        recBtn.setTooltip ("Record the selected B bus to a WAV file (stop with a second click)");
+        playBtn.setTooltip ("Play the loaded file to the buses selected under Play To (starts at the marker in the waveform)");
+        loopBtn.setTooltip ("Repeat the file");
         folderChip.setTooltip ("Folder for new recordings");
         openChip.setTooltip ("Load an audio file for playback (WAV, AIFF, FLAC, Ogg, MP3)");
         lastChip.setTooltip ("Load the most recent recording");
         showChip.setTooltip ("Show the loaded file in Explorer");
+        level.setTooltip ("Playback level");
 
         folderChip.onClick = [this] { chooseFolder(); };
         formatChip.onClick = [this] { chooseFormat(); };
@@ -714,64 +856,100 @@ public:
 
     void resized() override
     {
+        // Source and outputs take what they need, the recording gets the rest.
         auto r = getLocalBounds();
-        transportSec.setBounds (r.removeFromLeft (360));
-        sourceSec.setBounds (r.removeFromLeft (250));
-        playSec.setBounds (r.removeFromLeft (380));
-        outSec.setBounds (r);
+        sourceSec.setBounds (r.removeFromLeft (juce::jlimit (210, 300, 40 + 34 * juce::jmax (4, source.getNumSegments()))));
+        const int most = (int) juce::jmax (hwOuts.size(), virtOuts.size());
+        const int perRow = most == 5 ? 5 : 4;   // 5 A buses in one row, otherwise rows of four
+        outSec.setBounds (r.removeFromRight (24 + perRow * 40 + 8 + 70));
+        takeSec.setBounds (r);
 
-        auto t = transportSec.content();
-        auto buttons = t.removeFromBottom (30);
-        rowLayout (buttons, { &recBtn, &playBtn, &loopBtn }, 6);
-        timeArea = t.translated (transportSec.getX(), transportSec.getY());
-
+        // Source: bus choice, what it records, folder / format
         auto s = sourceSec.content();
         source.setBounds (s.removeFromTop (26));
-        s.removeFromTop (8);
-        sourceInfo = s.removeFromTop (16).translated (sourceSec.getX(), sourceSec.getY());
-        auto chips = s.removeFromBottom (26);
+        s.removeFromTop (6);
+        sourceInfo = s.removeFromTop (30).translated (sourceSec.getX(), sourceSec.getY());
+        s.removeFromTop (6);
+        auto chips = s.removeFromTop (26);
         folderChip.setBounds (chips.removeFromLeft (chips.getWidth() / 2 - 3));
         chips.removeFromLeft (6);
         formatChip.setBounds (chips);
 
-        auto p = playSec.content();
-        level.setBounds (p.removeFromRight (70).withSizeKeepingCentre (70, 72));
-        p.removeFromRight (8);
-        auto pchips = p.removeFromBottom (26);
-        rowLayout (pchips, { &openChip, &lastChip, &showChip }, 5);
-        fileArea = p.translated (playSec.getX(), playSec.getY());
+        // Recording: transport + time, waveform, file
+        auto t = takeSec.content();
+        auto transport = t.removeFromTop (28);
+        recBtn.setBounds (transport.removeFromLeft (58));
+        transport.removeFromLeft (5);
+        playBtn.setBounds (transport.removeFromLeft (62));
+        transport.removeFromLeft (5);
+        loopBtn.setBounds (transport.removeFromLeft (58));
+        transport.removeFromLeft (14);
+        timeArea = transport.translated (takeSec.getX(), takeSec.getY());
+        t.removeFromTop (6);
+        auto fileRow = t.removeFromBottom (24);
+        t.removeFromBottom (6);
+        wave.setBounds (t);
+        showChip.setBounds (fileRow.removeFromRight (64));
+        fileRow.removeFromRight (5);
+        lastChip.setBounds (fileRow.removeFromRight (84));
+        fileRow.removeFromRight (5);
+        openChip.setBounds (fileRow.removeFromRight (92));
+        fileRow.removeFromRight (10);
+        fileArea = fileRow.translated (takeSec.getX(), takeSec.getY());
 
-        auto o = outSec.content().withSizeKeepingCentre (outSec.content().getWidth(), 50);
-        auto hw = o.removeFromTop (22);
-        const int cell = juce::jmin (64, (hw.getWidth() - 4 * 4) / 5);
-        for (int b = 0; b < kNumHwBuses; ++b) { outs[(size_t) b]->setBounds (hw.removeFromLeft (cell)); hw.removeFromLeft (4); }
-        o.removeFromTop (6);
-        for (int b = kNumHwBuses; b < kNumBuses; ++b) { outs[(size_t) b]->setBounds (o.removeFromLeft (cell)); o.removeFromLeft (4); }
+        // Play to: A buses, then B buses (own rows), level knob on the right
+        auto o = outSec.content();
+        level.setBounds (o.removeFromRight (64).withSizeKeepingCentre (64, 74));
+        o.removeFromRight (8);
+        hwLabel = virtLabel = {};
+        auto group = [&] (std::vector<std::unique_ptr<Toggle>>& list, juce::Rectangle<int>& label)
+        {
+            if (list.empty()) return;
+            label = o.removeFromTop (14).translated (outSec.getX(), outSec.getY());
+            for (size_t k = 0; k < list.size(); k += (size_t) perRow)
+            {
+                auto row = o.removeFromTop (22);
+                o.removeFromTop (4);
+                for (size_t j = k; j < juce::jmin (list.size(), k + (size_t) perRow); ++j)
+                {
+                    list[j]->setBounds (row.removeFromLeft (36));
+                    row.removeFromLeft (4);
+                }
+            }
+            o.removeFromTop (4);
+        };
+        group (hwOuts, hwLabel);
+        group (virtOuts, virtLabel);
     }
 
     void paintOverChildren (juce::Graphics& g) override
     {
-        // Transport: big time display + state
         const bool recording = rec.isRecording(), playing = rec.isPlaying();
         auto t = timeArea;
-        g.setFont (theme::mono (30.0f));
+        g.setFont (theme::mono (20.0f));
         g.setColour (recording ? theme::mute : playing ? theme::good : theme::textDim);
-        g.drawText (shownTime, t.removeFromTop (juce::jmin (46, t.getHeight() - 18)), juce::Justification::centredLeft);
+        const int tw = juce::jmin (t.getWidth(), juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), shownTime) + 16);
+        g.drawText (shownTime, t.removeFromLeft (tw), juce::Justification::centredLeft);
         g.setFont (theme::font (11.5f));
         g.setColour (rec.getLastError().isNotEmpty() && ! recording && ! playing ? theme::warn : theme::textDim);
-        g.drawFittedText (stateText, t, juce::Justification::topLeft, 2);
+        g.drawFittedText (stateText, t, juce::Justification::centredRight, 2, 0.85f);
 
         g.setColour (theme::textFaint);
         g.setFont (theme::font (11.0f));
-        g.drawFittedText (sourceText, sourceInfo, juce::Justification::centredLeft, 1);
+        g.drawFittedText (sourceText, sourceInfo, juce::Justification::topLeft, 2, 0.85f);
 
+        g.setFont (theme::font (10.5f, true));
+        if (! hwLabel.isEmpty())   { g.setColour (theme::accentHw.withAlpha (0.8f));   g.drawText ("HARDWARE (A)", hwLabel, juce::Justification::centredLeft); }
+        if (! virtLabel.isEmpty()) { g.setColour (theme::accentVirt.withAlpha (0.8f)); g.drawText ("VIRTUAL (B)", virtLabel, juce::Justification::centredLeft); }
+
+        auto f = fileArea;
         g.setColour (rec.getLoadedFile() != juce::File() ? theme::text : theme::textFaint);
         g.setFont (theme::font (12.5f, true));
-        auto f = fileArea;
-        g.drawFittedText (fileTitle, f.removeFromTop (20), juce::Justification::centredLeft, 1);
+        const int fw = juce::jmin (f.getWidth(), juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), fileTitle) + 12);
+        g.drawFittedText (fileTitle, f.removeFromLeft (fw), juce::Justification::centredLeft, 1, 0.8f);
         g.setColour (theme::textDim);
         g.setFont (theme::font (11.0f));
-        g.drawFittedText (fileInfo, f.removeFromTop (34), juce::Justification::topLeft, 2);
+        g.drawFittedText (fileInfo, f, juce::Justification::centredLeft, 1, 0.8f);
     }
 
     void updateMeters()
@@ -779,11 +957,14 @@ public:
         const bool recording = rec.isRecording(), playing = rec.isPlaying();
         juce::String time;
         if (recording)    time = formatTime (rec.getRecordSeconds());
-        else if (playing) time = formatTime (rec.getPlaySeconds()) + "  /  " + formatTime (rec.getPlayLengthSeconds());
+        else if (playing) time = formatTime (rec.getPlaySeconds()) + " / " + formatTime (rec.getPlayLengthSeconds());
+        else if (rec.getLoadedFile() != juce::File())
+            time = formatTime (rec.getStartSeconds()) + " / " + formatTime (rec.getPlayLengthSeconds());
         else              time = formatTime (0.0);
         const auto v = rec.stateVersion.load() + rec.source->getVersion();
         if (v != seenVersion) { seenVersion = v; refreshTexts(); }
         if (time != shownTime) { shownTime = time; repaint (timeArea); }
+        wave.update();
     }
 
 private:
@@ -791,18 +972,18 @@ private:
     {
         const bool recording = rec.isRecording(), playing = rec.isPlaying();
         if (recording)    stateText = "Recording " + busCode (rec.getRecordSourceBus()) + "  ->  " + rec.getRecordingFile().getFileName();
-        else if (playing) stateText = "Playing " + rec.getLoadedFile().getFileName();
+        else if (playing) stateText = "Playing";
         else if (rec.getLastError().isNotEmpty()) stateText = rec.getLastError();
-        else              stateText = "Stopped. Records the selected bus after its fader and limiter.";
+        else              stateText = "Stopped";
 
-        sourceText = "Records " + busCode (rec.getRecordSourceBus()) + "  ->  " + rec.getFolder().getFileName();
+        sourceText = "Records " + busCode (rec.getRecordSourceBus()) + " after its fader and limiter into  "
+                     + rec.getFolder().getFileName();
         folderChip.text = "Folder...";
         formatChip.text = rec.bitDepth >= 32 ? "WAV 32f" : "WAV " + juce::String (rec.bitDepth);
 
         const auto file = rec.getLoadedFile();
         fileTitle = file != juce::File() ? file.getFileName() : juce::String ("No file loaded");
-        fileInfo = file != juce::File() ? formatTime (rec.getPlayLengthSeconds()) + "   ·   " + file.getParentDirectory().getFullPathName()
-                                        : juce::String ("Record something or open a file.");
+        fileInfo = file != juce::File() ? file.getParentDirectory().getFullPathName() : juce::String();
         for (auto* chip : { &folderChip, &formatChip }) chip->repaint();
         repaint();
     }
@@ -846,26 +1027,27 @@ private:
 
     UiContext& ctx;
     Recorder& rec;
-    Section transportSec, sourceSec, playSec, outSec;
+    Section sourceSec, takeSec, outSec;
     Toggle recBtn, playBtn, loopBtn;
     ChoiceSegments source;
     Knob level;
+    WaveformView wave;
     Chip folderChip { "Folder...", theme::text }, formatChip { "WAV 24", theme::text };
     Chip openChip { "Open File...", theme::text }, lastChip { "Last Take", theme::text }, showChip { "Show", theme::text };
-    std::vector<std::unique_ptr<Toggle>> outs;
+    std::vector<std::unique_ptr<Toggle>> hwOuts, virtOuts;
     std::unique_ptr<juce::FileChooser> chooser;
-    juce::Rectangle<int> timeArea, sourceInfo, fileArea;
+    juce::Rectangle<int> timeArea, sourceInfo, fileArea, hwLabel, virtLabel;
     juce::String shownTime, stateText, sourceText, fileTitle, fileInfo;
     uint64_t seenVersion = 0;
 };
 } // namespace
 
 //==============================================================================
-struct PluginChainView::Card : juce::Component
+struct PluginChainView::Card : juce::Component, juce::SettableTooltipClient
 {
     Card (PluginChainView& o, int i) : owner (o), index (i)
     {
-        for (auto* b : { &bypass, &edit, &left, &right, &remove })
+        for (auto* b : { &bypass, &edit, (Chip*) &remove })
         {
             addAndMakeVisible (b);
             b->showArrow = false;
@@ -877,18 +1059,17 @@ struct PluginChainView::Card : juce::Component
         };
         edit.onClick   = [this] { owner.openEditor (index); };
         // Chain edits rebuild the cards, so defer them until this click handler has returned.
-        auto later = [this] (std::function<void (PluginChain&, int)> fn)
+        remove.onClick = [this]
         {
             juce::Component::SafePointer<PluginChainView> o (&owner);
             const int ix = index;
-            juce::MessageManager::callAsync ([o, ix, fn] { if (o != nullptr) { fn (o->chain, ix); o->refresh(); } });
+            juce::MessageManager::callAsync ([o, ix] { if (o != nullptr) { o->chain.remove (ix); o->refresh(); } });
         };
-        left.onClick   = [later] { later ([] (PluginChain& c, int i) { c.move (i, i - 1); }); };
-        right.onClick  = [later] { later ([] (PluginChain& c, int i) { c.move (i, i + 1); }); };
-        remove.onClick = [later] { later ([] (PluginChain& c, int i) { c.remove (i); }); };
         bypass.setTooltip ("Bypass this plugin");
         edit.setTooltip ("Open plugin editor");
         remove.setTooltip ("Remove plugin");
+        setTooltip ("Drag to change the order. Double-click: open the editor.");
+        setMouseCursor (juce::MouseCursor::DraggingHandCursor);
         refresh();
     }
 
@@ -898,8 +1079,6 @@ struct PluginChainView::Card : juce::Component
         if (s == nullptr) return;
         name = s->instance->getName();
         vendor = s->description.manufacturerName;
-        const int lat = s->instance->getLatencySamples();
-        latency = lat > 0 ? juce::String (lat) + " smp latency" : juce::String();
         bypass.text = s->bypassed ? "OFF" : "ON";
         bypass.active = ! s->bypassed;
         bypass.colour = s->bypassed ? theme::textDim : owner.accent;
@@ -909,36 +1088,71 @@ struct PluginChainView::Card : juce::Component
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat().reduced (2.0f);
-        g.setColour (theme::raised);
+        if (dragging)
+            juce::DropShadow (juce::Colours::black.withAlpha (0.5f), 12, { 0, 3 }).drawForRectangle (g, r.toNearestInt());
+        g.setColour (dragging ? theme::raised.brighter (0.08f) : theme::raised);
         g.fillRoundedRectangle (r, 7.0f);
-        g.setColour (bypass.active ? owner.accent.withAlpha (0.6f) : theme::outline);
-        g.drawRoundedRectangle (r, 7.0f, 1.0f);
-        auto t = r.reduced (10.0f, 8.0f);
+        g.setColour (dragging ? owner.accent : bypass.active ? owner.accent.withAlpha (0.6f) : theme::outline);
+        g.drawRoundedRectangle (r, 7.0f, dragging ? 1.5f : 1.0f);
+
+        // Grip (drag handle) at the top right
+        g.setColour (theme::textFaint);
+        for (int row = 0; row < 3; ++row)
+            for (int col = 0; col < 2; ++col)
+                g.fillEllipse (r.getRight() - 16.0f + (float) col * 5.0f, r.getY() + 9.0f + (float) row * 5.0f, 2.2f, 2.2f);
+
+        auto t = r.reduced (10.0f, 8.0f).withTrimmedRight (12.0f);
         g.setColour (theme::text);
         g.setFont (theme::font (13.0f, true));
         g.drawFittedText (name, t.removeFromTop (18.0f).toNearestInt(), juce::Justification::centredLeft, 1);
         g.setColour (theme::textDim);
         g.setFont (theme::font (11.0f));
         g.drawFittedText (vendor, t.removeFromTop (15.0f).toNearestInt(), juce::Justification::centredLeft, 1);
-        if (latency.isNotEmpty())
-        {
-            g.setColour (theme::warn);
-            g.drawFittedText (latency, t.removeFromTop (15.0f).toNearestInt(), juce::Justification::centredLeft, 1);
-        }
     }
 
     void resized() override
     {
         auto r = getLocalBounds().reduced (8).removeFromBottom (22);
-        rowLayout (r, { &bypass, &edit, &left, &right, &remove }, 3);
+        remove.setBounds (r.removeFromRight (30));
+        r.removeFromRight (3);
+        rowLayout (r, { &bypass, &edit }, 3);
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        dragging = false;
+        grabX = e.getMouseDownX();
+    }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (! dragging)
+        {
+            if (e.getDistanceFromDragStart() < 6) return;
+            dragging = true;
+            toFront (false);
+            repaint();
+        }
+        owner.cardDragged (index, e.getEventRelativeTo (getParentComponent()).x - grabX);
+    }
+
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        if (! dragging) return;
+        dragging = false;
+        repaint();
+        owner.cardDropped (index);
     }
 
     void mouseDoubleClick (const juce::MouseEvent&) override { owner.openEditor (index); }
 
     PluginChainView& owner;
     int index;
-    juce::String name, vendor, latency;
-    Chip bypass { "ON" }, edit { "EDIT" }, left { "<" }, right { ">" }, remove { "X" };
+    bool dragging = false;
+    int grabX = 0;
+    juce::String name, vendor;
+    Chip bypass { "ON" }, edit { "EDIT" };
+    TrashButton remove;
 };
 
 PluginChainView::PluginChainView (UiContext& c, PluginChain& ch, juce::Colour a) : ctx (c), chain (ch), accent (a)
@@ -946,17 +1160,26 @@ PluginChainView::PluginChainView (UiContext& c, PluginChain& ch, juce::Colour a)
     addAndMakeVisible (addButton);
     addButton.showArrow = false;
     addButton.centred = true;
-    addButton.onClick = [this] { showAddMenu(); };
+    addButton.onClick = [this] { showAddMenu (addButton); };
+    plusCard.colour = accent;
+    plusCard.setTooltip ("Add a VST3 plugin at the end of the chain");
+    plusCard.onClick = [this] { showAddMenu (plusCard); };
+    viewport.setViewedComponent (&row, false);
+    viewport.setScrollBarsShown (false, true);
+    viewport.setScrollBarThickness (8);
+    addAndMakeVisible (viewport);
+    row.addAndMakeVisible (plusCard);
     refresh();
 }
 
 void PluginChainView::refresh()
 {
     cards.clear();
+    dragIndex = dropIndex = -1;
     for (int i = 0; i < chain.size(); ++i)
     {
         cards.push_back (std::make_unique<Card> (*this, i));
-        addAndMakeVisible (*cards.back());
+        row.addAndMakeVisible (*cards.back());
     }
     resized();
     repaint();
@@ -976,19 +1199,70 @@ void PluginChainView::paint (juce::Graphics& g)
 
 void PluginChainView::resized()
 {
-    auto r = getLocalBounds();
-    addButton.setBounds (r.removeFromLeft (170).withSizeKeepingCentre (170, 32));
-    r.removeFromLeft (8);
-    for (auto& c : cards)
+    // Empty chain: a labelled "Add" button. With plugins: their cards and a "+" after the last one.
+    const bool empty = cards.empty();
+    addButton.setVisible (empty);
+    viewport.setVisible (! empty);
+    if (empty)
     {
-        if (r.getWidth() < 120) { c->setVisible (false); continue; }
-        c->setVisible (true);
-        c->setBounds (r.removeFromLeft (juce::jmin (200, r.getWidth())));
-        r.removeFromLeft (4);
+        addButton.setBounds (getLocalBounds().removeFromLeft (170).withSizeKeepingCentre (170, 32));
+        return;
     }
+    viewport.setBounds (getLocalBounds());
+    const int n = (int) cards.size();
+    cardWidth = juce::jlimit (kMinCardWidth, kMaxCardWidth, (getWidth() - kPlusWidth) / n - kCardGap);
+    const int needed = n * (cardWidth + kCardGap) + kPlusWidth;
+    const int h = needed > getWidth() ? getHeight() - viewport.getScrollBarThickness() : getHeight();
+    row.setSize (juce::jmax (needed, getWidth()), juce::jmax (40, h));
+    layoutCards();
 }
 
-void PluginChainView::showAddMenu()
+void PluginChainView::layoutCards()
+{
+    const int h = row.getHeight();
+    int slot = 0;
+    for (int i = 0; i < (int) cards.size(); ++i)
+    {
+        if (i == dragIndex) continue;            // follows the mouse
+        if (slot == dropIndex) ++slot;           // gap where the dragged card would land
+        cards[(size_t) i]->setBounds (slot * (cardWidth + kCardGap), 0, cardWidth, h);
+        ++slot;
+    }
+    plusCard.setBounds ((int) cards.size() * (cardWidth + kCardGap), 0, kPlusWidth, h);
+}
+
+void PluginChainView::cardDragged (int index, int x)
+{
+    auto& card = *cards[(size_t) index];
+    const int n = (int) cards.size();
+    const int maxX = (n - 1) * (cardWidth + kCardGap);
+    card.setTopLeftPosition (juce::jlimit (0, juce::jmax (0, maxX), x), 0);
+    const int target = juce::jlimit (0, n - 1, (card.getX() + cardWidth / 2) / (cardWidth + kCardGap));
+    if (dragIndex != index || dropIndex != target)
+    {
+        dragIndex = index;
+        dropIndex = target;
+        layoutCards();
+    }
+    viewport.autoScroll (card.getX() - viewport.getViewPositionX() + cardWidth / 2, 10, 30, 8);
+}
+
+void PluginChainView::cardDropped (int index)
+{
+    const int to = dropIndex;
+    dragIndex = dropIndex = -1;
+    if (to < 0 || to == index) { layoutCards(); return; }
+    // Rebuilding the cards destroys the one that called us: do it after its mouse handler returned.
+    juce::Component::SafePointer<PluginChainView> safe (this);
+    juce::MessageManager::callAsync ([safe, index, to]
+    {
+        if (safe == nullptr) return;
+        safe->chain.move (index, to);
+        safe->refresh();
+    });
+}
+
+void PluginChainView::showAddMenu (juce::Component& target)
 {
     auto types = ctx.engine.pluginHost.known.getTypes();
     juce::PopupMenu m;
@@ -1020,7 +1294,7 @@ void PluginChainView::showAddMenu()
         m.addItem ("(no plugins found yet)", false, false, nullptr);
     m.addSeparator();
     m.addItem ("Scan for VST3 plugins...", [this] { if (onScanRequested) onScanRequested(); });
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&addButton));
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target));
 }
 
 void PluginChainView::openEditor (int index)
@@ -1386,7 +1660,7 @@ void EqGraph::mouseDown (const juce::MouseEvent& e)
         if (! plot.contains (e.position)) return;
         const auto at = onGhost ? ghostAt : e.position; // on the curve: the band lands where the ghost was
         k = addBand (xToFreq (at.x), juce::jlimit (-18.0f, 18.0f, yToDb (at.y)));
-        if (k < 0) return; // all six bands in use
+        if (k < 0) return; // all bands in use
         justAdded = k;
         justAddedTime = juce::Time::getMillisecondCounterHiRes();
     }
@@ -1462,8 +1736,7 @@ struct EqEditor::BandColumn final : public juce::Component, private ParamPoller:
         if (inUse()) { owner.selectBand (band); return; }
         if (e.eventComponent == this)
         {
-            static const float defFreq[ParamEq::kBands] = { 80, 250, 800, 2500, 6000, 12000 };
-            if (const int k = owner.graph.addBand (defFreq[band], 0.0f); k >= 0) owner.selectBand (k);
+            if (const int k = owner.graph.addBand (ParamEq::defaultFreq (band), 0.0f); k >= 0) owner.selectBand (k);
         }
     }
 
@@ -1546,10 +1819,10 @@ struct EqEditor::BandColumn final : public juce::Component, private ParamPoller:
 
 EqEditor::EqEditor (UiContext& c, int sel)
     : ctx (c), selectIndex (sel),
-      eq (sel < kNumInputs ? c.engine.inputs[(size_t) sel].eq : c.engine.buses[(size_t) (sel - kNumInputs)].eq),
-      colour (sel < kNumInputs ? theme::accentIn : theme::busColour (sel - kNumInputs)),
+      eq (sel < kMaxInputs ? c.engine.inputs[(size_t) sel].eq : c.engine.buses[(size_t) (sel - kMaxInputs)].eq),
+      colour (sel < kMaxInputs ? theme::accentIn : theme::busColour (sel - kMaxInputs)),
       onToggle (c, *eq.on, "EQ ON", colour), graph (c, eq, colour, true),
-      tap (sel < kNumInputs ? c.engine.inputs[(size_t) sel].spectrum : c.engine.buses[(size_t) (sel - kNumInputs)].spectrum),
+      tap (sel < kMaxInputs ? c.engine.inputs[(size_t) sel].spectrum : c.engine.buses[(size_t) (sel - kMaxInputs)].spectrum),
       fft (std::make_unique<juce::dsp::FFT> (kFftOrder))
 {
     history.assign (kFftSize, 0.0f);
@@ -1560,8 +1833,8 @@ EqEditor::EqEditor (UiContext& c, int sel)
     tap.ring.skip (tap.ring.available()); // stale audio from an earlier view
     tap.users.fetch_add (1);
 
-    title = sel < kNumInputs ? "IN " + juce::String (sel + 1) + "   " + c.engine.inputs[(size_t) sel].name
-                             : busCode (sel - kNumInputs) + "   " + c.engine.buses[(size_t) (sel - kNumInputs)].name;
+    title = sel < kMaxInputs ? "IN " + juce::String (sel + 1) + "   " + c.engine.inputs[(size_t) sel].name
+                             : busCode (sel - kMaxInputs) + "   " + c.engine.buses[(size_t) (sel - kMaxInputs)].name;
     addAndMakeVisible (onToggle);
     addAndMakeVisible (graph);
     for (int k = 0; k < ParamEq::kBands; ++k)
@@ -1570,9 +1843,10 @@ EqEditor::EqEditor (UiContext& c, int sel)
         addAndMakeVisible (*bands.back());
     }
     graph.onBandSelected = [this] (int) { for (auto& b : bands) b->repaint(); };
+    setWantsKeyboardFocus (true);
     for (int k = 0; k < ParamEq::kBands; ++k) // start on the first band in use
         if (eq.bandOn[(size_t) k]->isOn()) { graph.setSelectedBand (k); break; }
-    setSize (1240, 780);
+    setSize (1240, 820);
 }
 
 EqEditor::~EqEditor()
@@ -1674,7 +1948,7 @@ void EqEditor::paint (juce::Graphics& g)
     g.setColour (theme::textFaint);
     g.setFont (theme::font (11.5f));
     g.drawText ("Click: add band.  Drag: frequency / gain.  Wheel: Q.  Double-click / right-click a point: remove, type.  "
-                "Background: live spectrum after the EQ (dBFS on the right).",
+                "Ctrl+Z / Ctrl+Y: undo / redo.  Background: live spectrum after the EQ (dBFS on the right).",
                 head.withTrimmedLeft (260).withTrimmedRight (120), juce::Justification::centredLeft);
 }
 
@@ -1683,11 +1957,16 @@ void EqEditor::resized()
     auto r = getLocalBounds().reduced (14, 0);
     auto head = r.removeFromTop (44);
     onToggle.setBounds (head.removeFromRight (96).withSizeKeepingCentre (96, 26));
-    auto bottom = r.removeFromBottom (juce::jlimit (170, 230, r.getHeight() / 3)).withTrimmedBottom (10);
+    // All bands in one row on wide windows, otherwise two rows of four.
+    const int perRow = r.getWidth() / ParamEq::kBands >= 210 ? ParamEq::kBands : ParamEq::kBands / 2;
+    const int rows = ParamEq::kBands / perRow;
+    const int rowH = juce::jlimit (150, 220, r.getHeight() / (rows == 1 ? 3 : 4));
+    auto bottom = r.removeFromBottom (rowH * rows + 10).withTrimmedBottom (10);
     r.removeFromBottom (8);
     graph.setBounds (r);
-    const int w = bottom.getWidth() / ParamEq::kBands;
-    for (auto& b : bands) b->setBounds (bottom.removeFromLeft (w));
+    const int w = bottom.getWidth() / perRow;
+    for (int k = 0; k < (int) bands.size(); ++k)
+        bands[(size_t) k]->setBounds (bottom.getX() + (k % perRow) * w, bottom.getY() + (k / perRow) * rowH, w, rowH);
 }
 
 //==============================================================================
@@ -1700,52 +1979,11 @@ void Inspector::showChannel (int sel)
     current = sel;
     auto scan = [this] { if (onScanRequested) onScanRequested(); };
     if (sel == kRecorderSelect) content = std::make_unique<RecorderDetail> (ctx);
-    else if (sel < kNumInputs)  content = std::make_unique<InputDetail> (ctx, sel, scan);
-    else                        content = std::make_unique<BusDetail> (ctx, sel - kNumInputs, scan);
+    else if (sel < kMaxInputs)  content = std::make_unique<InputDetail> (ctx, sel, scan);
+    else                        content = std::make_unique<BusDetail> (ctx, sel - kMaxInputs, scan);
     addAndMakeVisible (*content);
-    shownLatency = latencyText();
     resized();
     repaint();
-}
-
-juce::String Inspector::latencyText() const
-{
-    auto& e = ctx.engine;
-    const double sr = juce::jmax (1.0, e.getSampleRate());
-    auto ms = [] (double v) { return juce::String (v, 1) + " ms"; };
-    juce::String t;
-    double total = 0.0;
-
-    if (current == kRecorderSelect)
-    {
-        const auto& rec = e.recorder;
-        if (rec.isRecording()) return "RECORDING   " + busCode (rec.getRecordSourceBus());
-        if (rec.isPlaying())   return "PLAYING";
-        return {};
-    }
-    if (current < kNumInputs)
-    {
-        const auto& s = e.inputs[(size_t) current];
-        if (s.source.kind == IoTarget::Kind::None) return "LATENCY   no source selected";
-        const double dev = e.getIoLatencyMs (s.source, true);
-        const double dn = 1000.0 * s.dspLatency.load() / sr;
-        const double fx = 1000.0 * s.plugins.getTotalLatency() / sr;
-        t << "LATENCY   input " << (dev < 0 ? juce::String ("offline") : ms (dev));
-        if (s.dnOn->isOn()) t << "  +  denoiser " << ms (dn);
-        if (fx > 0.0) t << "  +  plugins " << ms (fx);
-        total = juce::jmax (0.0, dev) + dn + fx;
-    }
-    else
-    {
-        const auto& b = e.buses[(size_t) (current - kNumInputs)];
-        const double fx = 1000.0 * b.plugins.getTotalLatency() / sr;
-        const double dev = e.getIoLatencyMs (b.output, false);
-        t << "LATENCY   output " << (dev < 0 ? juce::String ("offline") : ms (dev));
-        if (fx > 0.0) t << "  +  plugins " << ms (fx);
-        total = juce::jmax (0.0, dev) + fx;
-    }
-    t << "   =   " << ms (total);
-    return t;
 }
 
 void Inspector::paint (juce::Graphics& g)
@@ -1760,13 +1998,10 @@ void Inspector::paint (juce::Graphics& g)
         g.drawText ("REC", title.removeFromLeft (50), juce::Justification::centredLeft);
         g.setColour (theme::text);
         g.drawText ("Recorder", title.removeFromLeft (300), juce::Justification::centredLeft);
-        g.setColour (theme::textDim);
-        g.setFont (theme::mono (12.0f));
-        g.drawText (shownLatency, title, juce::Justification::centredRight);
         return;
     }
-    const bool isBus = current >= kNumInputs;
-    const int idx = isBus ? current - kNumInputs : current;
+    const bool isBus = current >= kMaxInputs;
+    const int idx = isBus ? current - kMaxInputs : current;
     const auto colour = isBus ? theme::busColour (idx) : theme::accentIn;
     const auto name = isBus ? ctx.engine.buses[(size_t) idx].name : ctx.engine.inputs[(size_t) idx].name;
     g.setColour (colour);
@@ -1775,10 +2010,6 @@ void Inspector::paint (juce::Graphics& g)
     g.drawText (code, title.removeFromLeft (50), juce::Justification::centredLeft);
     g.setColour (theme::text);
     g.drawText (name, title.removeFromLeft (300), juce::Justification::centredLeft);
-
-    g.setColour (theme::textDim);
-    g.setFont (theme::mono (12.0f));
-    g.drawText (shownLatency, title, juce::Justification::centredRight);
 }
 
 void Inspector::resized()
@@ -1793,16 +2024,5 @@ void Inspector::updateMeters()
         d->updateMeters();
     else if (auto* rd = dynamic_cast<RecorderDetail*> (content.get()))
         rd->updateMeters();
-
-    if (++tick >= 5) // ~6 Hz is plenty for the latency readout
-    {
-        tick = 0;
-        auto t = latencyText();
-        if (t != shownLatency)
-        {
-            shownLatency = t;
-            repaint (getLocalBounds().reduced (14, 8).removeFromTop (20));
-        }
-    }
 }
 } // namespace hydra

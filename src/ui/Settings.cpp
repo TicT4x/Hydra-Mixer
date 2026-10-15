@@ -704,20 +704,20 @@ private:
         };
 
         juce::StringArray rep;
-        for (int i = 0; i < kNumInputs; ++i)
+        for (int i = 0; i < kMaxInputs; ++i)
         {
             auto& s = eng.inputs[(size_t) i];
-            if (s.source.kind != IoTarget::Kind::Virtual) continue;
+            if (! eng.isInputActive (i) || s.source.kind != IoTarget::Kind::Virtual) continue;
             const auto* c = nextFree();
             if (c == nullptr) { rep.add ("In " + juce::String (i + 1) + " \"" + s.name + "\": no free cable left"); continue; }
             IoTarget t; t.kind = IoTarget::Kind::Device; t.typeName = "Windows Audio (Low Latency Mode)"; t.deviceName = c->recordingName;
             eng.setInputSource (i, t);
             rep.add ("In " + juce::String (i + 1) + " \"" + s.name + "\": apps should play to \"" + c->playbackName + "\"");
         }
-        for (int b = kNumHwBuses; b < kNumBuses; ++b)
+        for (int b = kMaxHwBuses; b < kMaxBuses; ++b)
         {
             auto& bus = eng.buses[(size_t) b];
-            if (bus.output.kind != IoTarget::Kind::Virtual) continue;
+            if (! eng.isBusActive (b) || bus.output.kind != IoTarget::Kind::Virtual) continue;
             const auto* c = nextFree();
             if (c == nullptr) { rep.add (busCode (b) + ": no free cable left"); continue; }
             IoTarget t; t.kind = IoTarget::Kind::Device; t.typeName = "Windows Audio (Low Latency Mode)"; t.deviceName = c->playbackName;
@@ -740,29 +740,47 @@ private:
 
 //==============================================================================
 //==============================================================================
+namespace
+{
+juce::StringArray activeHwLabels (const Engine& e)
+{
+    juce::StringArray l;
+    for (int a = 0; a < kMaxHwBuses; ++a) if (e.isBusActive (hwBusIndex (a))) l.add (busCode (hwBusIndex (a)));
+    return l;
+}
+
+std::vector<int> activeHwValues (const Engine& e)
+{
+    std::vector<int> v;
+    for (int a = 0; a < kMaxHwBuses; ++a) if (e.isBusActive (hwBusIndex (a))) v.push_back (a);
+    return v;
+}
+} // namespace
+
 /** Monitoring of the selected bus, system tray behaviour, shutdown. */
 class GeneralTab final : public juce::Component
 {
 public:
     explicit GeneralTab (UiContext& c)
         : ctx (c), monOn (c, *c.engine.monOn, "Monitor selected bus", theme::learn),
-          monBus (c, *c.engine.monBus, theme::accentHw)
+          monBus (c, *c.engine.monBus, theme::accentHw, activeHwLabels (c.engine), activeHwValues (c.engine))
     {
-        for (auto* l : { &monTitle, &trayTitle })
+        for (auto* l : { &monTitle, &trayTitle, &displayTitle })
         {
             addAndMakeVisible (l);
             l->setFont (theme::font (12.0f, true));
             l->setColour (juce::Label::textColourId, theme::textDim);
         }
-        for (auto* l : { &monHelp, &monBusL, &trayHelp })
+        for (auto* l : { &monHelp, &monBusL, &trayHelp, &uiScaleL, &fontScaleL })
         {
             addAndMakeVisible (l);
             styleLabel (*l, true, 12.5f);
             l->setJustificationType (juce::Justification::topLeft);
         }
+        for (auto* l : { &uiScaleL, &fontScaleL }) l->setJustificationType (juce::Justification::centredLeft);
         addAndMakeVisible (monOn);
         addAndMakeVisible (monBus);
-        monHelp.setText ("Press SEL on a bus (A1-A5 / B1-B3): the input faders then set each input's level on that bus only. "
+        monHelp.setText ("Press SEL on a bus: the input faders then set each input's level on that bus only. "
                          "With monitoring on, the selected bus is heard on the monitor output below - its normal mix is muted "
                          "while monitoring, so you hear only the monitored bus (through the monitor bus's EQ, fader and limiter). "
                          "Press SEL again to return to normal.", juce::dontSendNotification);
@@ -794,6 +812,32 @@ public:
             };
         }
 
+        // Display: zoom of the main window and text size.
+        auto setupScale = [this] (juce::ComboBox& box, std::initializer_list<int> percents, float current, float Session::AppPrefs::* field)
+        {
+            addAndMakeVisible (box);
+            int id = 1, sel = 0, bestDiff = 1000;
+            for (int pc : percents)
+            {
+                box.addItem (juce::String (pc) + " %", id);
+                if (const int d = std::abs (pc - juce::roundToInt (current * 100.0f)); d < bestDiff) { bestDiff = d; sel = id; }
+                ++id;
+            }
+            box.setSelectedId (sel, juce::dontSendNotification);
+            box.onChange = [this, &box, field]
+            {
+                ctx.session->prefs.*field = box.getText().getFloatValue() / 100.0f;
+                ctx.session->prefsVersion.fetch_add (1);
+                if (ctx.prefsChanged) ctx.prefsChanged();
+            };
+        };
+        // Both use the same steps.
+        const std::initializer_list<int> steps { 75, 80, 90, 100, 110, 125, 150, 175, 200 };
+        setupScale (uiScale, steps, prefs.uiScale, &Session::AppPrefs::uiScale);
+        setupScale (fontScale, steps, prefs.fontScale, &Session::AppPrefs::fontScale);
+        uiScale.setTooltip ("Size of everything in the main window. The strips scroll sideways when they no longer fit.");
+        fontScale.setTooltip ("Size of the text in all windows (open windows update when they are rebuilt / reopened)");
+
         addAndMakeVisible (shutdown);
         shutdown.setColour (juce::TextButton::buttonColourId, theme::mute.withAlpha (0.25f));
         shutdown.onClick = [this] { if (ctx.shutdown) ctx.shutdown(); };
@@ -803,6 +847,7 @@ public:
     {
         g.setColour (theme::outline.withAlpha (0.6f));
         g.fillRect (divider);
+        g.fillRect (divider2);
     }
 
     void resized() override
@@ -821,6 +866,18 @@ public:
         divider = r.removeFromTop (1);
         r.removeFromTop (16);
 
+        displayTitle.setBounds (r.removeFromTop (22));
+        r.removeFromTop (6);
+        auto drow = r.removeFromTop (28);
+        uiScaleL.setBounds (drow.removeFromLeft (110));
+        uiScale.setBounds (drow.removeFromLeft (110));
+        drow.removeFromLeft (36);
+        fontScaleL.setBounds (drow.removeFromLeft (80));
+        fontScale.setBounds (drow.removeFromLeft (110));
+        r.removeFromTop (16);
+        divider2 = r.removeFromTop (1);
+        r.removeFromTop (16);
+
         trayTitle.setBounds (r.removeFromTop (22));
         r.removeFromTop (4);
         for (auto* b : { &trayIcon, &closeTray, &minTray, &startTray })
@@ -833,13 +890,14 @@ public:
 
 private:
     UiContext& ctx;
-    juce::Label monTitle { {}, "MONITORING (SEL)" }, trayTitle { {}, "WINDOW & SYSTEM TRAY" };
-    juce::Label monHelp, monBusL { {}, "Monitor output" }, trayHelp;
+    juce::Label monTitle { {}, "MONITORING (SEL)" }, trayTitle { {}, "WINDOW & SYSTEM TRAY" }, displayTitle { {}, "DISPLAY" };
+    juce::Label monHelp, monBusL { {}, "Monitor output" }, trayHelp, uiScaleL { {}, "Interface size" }, fontScaleL { {}, "Text size" };
+    juce::ComboBox uiScale, fontScale;
     Switch monOn;
     ChoiceSegments monBus;
     juce::ToggleButton trayIcon, closeTray, minTray, startTray;
     juce::TextButton shutdown { "Shut down Hydra Mixer" };
-    juce::Rectangle<int> divider;
+    juce::Rectangle<int> divider, divider2;
 };
 
 //==============================================================================
@@ -847,13 +905,13 @@ SettingsPanel::SettingsPanel (UiContext& c) : ctx (c)
 {
     addAndMakeVisible (tabs);
     tabs.setTabBarDepth (40);
+    tabs.addTab ("General", theme::panel, new GeneralTab (c), true);
     tabs.addTab ("Audio Engine", theme::panel, new AudioTab (c, [this] { if (onEngineChanged) onEngineChanged(); }), true);
     tabs.addTab ("MIDI", theme::panel, new MidiTab (c), true);
     tabs.addTab ("Plugins", theme::panel, new PluginTab (c), true);
     tabs.addTab ("Import", theme::panel, new ImportTab (c, [this] { if (onEngineChanged) onEngineChanged(); }), true);
     tabs.addTab ("Virtual Cables", theme::panel, new CablesTab (c, [this] { if (onEngineChanged) onEngineChanged(); }), true);
     tabs.addTab ("Backup & Transfer", theme::panel, new BackupTab (c, [this] { if (onSessionReplaced) onSessionReplaced(); }), true);
-    tabs.addTab ("General", theme::panel, new GeneralTab (c), true);
 }
 
 SettingsPanel::~SettingsPanel() = default;

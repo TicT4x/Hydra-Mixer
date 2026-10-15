@@ -127,6 +127,7 @@ public:
         session->hotkeys = hotkeys.get();
         const bool loaded = session->loadDefault();
 
+        theme::fontScale = session->prefs.fontScale; // before the UI creates its labels
         window = std::make_unique<MainWindow> (*engine, *midi, *hotkeys, *session);
         if (session->windowState.isNotEmpty())
             window->restoreWindowStateFromString (session->windowState);
@@ -202,6 +203,15 @@ private:
     {
         if (session == nullptr || window == nullptr) return;
         const auto& p = session->prefs;
+        if (auto* mc = window->getMain())
+        {
+            mc->setUiScale (p.uiScale);
+            if (std::abs (theme::fontScale - p.fontScale) > 0.001f)
+            {
+                theme::fontScale = p.fontScale;
+                mc->fontScaleChanged();
+            }
+        }
         if (p.trayIcon || p.closeToTray || p.minimiseToTray || p.startInTray || ! window->isVisible())
             ensureTray();
         else

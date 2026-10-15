@@ -20,7 +20,7 @@ bool Session::save (const juce::File& f) const
         if (p->persistent && p->get() != p->defaultValue)
             ps->setAttribute (p->id.replaceCharacter ('.', '_'), p->get());
 
-    for (int i = 0; i < kNumInputs; ++i)
+    for (int i = 0; i < kMaxInputs; ++i)
     {
         const auto& s = engine.inputs[(size_t) i];
         auto* e = root.createNewChildElement ("INPUT");
@@ -29,7 +29,7 @@ bool Session::save (const juce::File& f) const
         e->addChildElement (s.source.toXml ("SOURCE").release());
         e->addChildElement (s.plugins.toXml().release());
     }
-    for (int b = 0; b < kNumBuses; ++b)
+    for (int b = 0; b < kMaxBuses; ++b)
     {
         const auto& bus = engine.buses[(size_t) b];
         auto* e = root.createNewChildElement ("BUS");
@@ -44,6 +44,9 @@ bool Session::save (const juce::File& f) const
     app->setAttribute ("closeToTray", prefs.closeToTray);
     app->setAttribute ("minimiseToTray", prefs.minimiseToTray);
     app->setAttribute ("startInTray", prefs.startInTray);
+    app->setAttribute ("uiScale", prefs.uiScale);
+    app->setAttribute ("fontScale", prefs.fontScale);
+    app->setAttribute ("stripSplit", prefs.stripSplit);
 
     auto* rec = root.createNewChildElement ("RECORDER");
     rec->setAttribute ("folder", engine.recorder.folder.getFullPathName());
@@ -89,6 +92,9 @@ bool Session::load (const juce::File& f)
         prefs.closeToTray = app->getBoolAttribute ("closeToTray", prefs.closeToTray);
         prefs.minimiseToTray = app->getBoolAttribute ("minimiseToTray", prefs.minimiseToTray);
         prefs.startInTray = app->getBoolAttribute ("startInTray", prefs.startInTray);
+        prefs.uiScale = juce::jlimit (0.5f, 3.0f, (float) app->getDoubleAttribute ("uiScale", 1.0));
+        prefs.fontScale = juce::jlimit (0.5f, 2.0f, (float) app->getDoubleAttribute ("fontScale", 1.0));
+        prefs.stripSplit = juce::jlimit (-1.0f, 1.0f, (float) app->getDoubleAttribute ("stripSplit", -1.0));
     }
     prefsVersion.fetch_add (1);
 
@@ -114,7 +120,8 @@ bool Session::load (const juce::File& f)
             const auto key = p->id.replaceCharacter ('.', '_');
             float v = p->defaultValue;
             if (ps->hasAttribute (key)) v = (float) ps->getDoubleAttribute (key);
-            else if (fileVersion < 2 && p->id.contains (".eq.b") && p->id.endsWith (".on")) v = 1.0f;
+            else if (fileVersion < 2 && p->id.contains (".eq.b") && p->id.endsWith (".on")
+                     && p->id.fromLastOccurrenceOf (".eq.b", false, false).getIntValue() <= ParamEq::kV1Bands) v = 1.0f;
             p->set (v);
         }
     // A flat EQ starts without points.
@@ -124,7 +131,7 @@ bool Session::load (const juce::File& f)
     for (auto* e : root->getChildWithTagNameIterator ("INPUT"))
     {
         const int i = e->getIntAttribute ("index", -1);
-        if (! juce::isPositiveAndBelow (i, kNumInputs)) continue;
+        if (! juce::isPositiveAndBelow (i, kMaxInputs)) continue;
         auto& s = engine.inputs[(size_t) i];
         s.name = e->getStringAttribute ("name", s.name);
         s.source = IoTarget::fromXml (e->getChildByName ("SOURCE"));
@@ -132,7 +139,7 @@ bool Session::load (const juce::File& f)
     for (auto* e : root->getChildWithTagNameIterator ("BUS"))
     {
         const int b = e->getIntAttribute ("index", -1);
-        if (! juce::isPositiveAndBelow (b, kNumBuses)) continue;
+        if (! juce::isPositiveAndBelow (b, kMaxBuses)) continue;
         auto& bus = engine.buses[(size_t) b];
         bus.name = e->getStringAttribute ("name", bus.name);
         bus.output = IoTarget::fromXml (e->getChildByName ("OUTPUT"));
@@ -151,13 +158,13 @@ bool Session::load (const juce::File& f)
     for (auto* e : root->getChildWithTagNameIterator ("INPUT"))
     {
         const int i = e->getIntAttribute ("index", -1);
-        if (auto* c = e->getChildByName ("CHAIN"); c != nullptr && juce::isPositiveAndBelow (i, kNumInputs))
+        if (auto* c = e->getChildByName ("CHAIN"); c != nullptr && juce::isPositiveAndBelow (i, kMaxInputs))
             engine.inputs[(size_t) i].plugins.fromXml (*c, engine.pluginHost);
     }
     for (auto* e : root->getChildWithTagNameIterator ("BUS"))
     {
         const int b = e->getIntAttribute ("index", -1);
-        if (auto* c = e->getChildByName ("CHAIN"); c != nullptr && juce::isPositiveAndBelow (b, kNumBuses))
+        if (auto* c = e->getChildByName ("CHAIN"); c != nullptr && juce::isPositiveAndBelow (b, kMaxBuses))
             engine.buses[(size_t) b].plugins.fromXml (*c, engine.pluginHost);
     }
 

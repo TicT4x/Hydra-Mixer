@@ -62,6 +62,19 @@ public:
     }
     void closeButtonPressed() override { setVisible (false); }
 
+    /** Keys not used by the content (e.g. Ctrl+Z / Ctrl+Y: undo / redo, handled by the main window). */
+    std::function<bool (const juce::KeyPress&)> onKey;
+    bool keyPressed (const juce::KeyPress& k) override { return onKey != nullptr && onKey (k); }
+
+    void activeWindowStatusChanged() override
+    {
+        juce::DocumentWindow::activeWindowStatusChanged();
+        // Content that handles keys itself (EQ editor: Ctrl+Z) gets the focus when the window is activated.
+        if (isActiveWindow())
+            if (auto* c = getContentComponent(); c != nullptr && c->getWantsKeyboardFocus() && ! c->hasKeyboardFocus (true))
+                c->grabKeyboardFocus();
+    }
+
     /** Replaces the content (the old one is deleted). */
     void replaceContent (juce::Component* content, const juce::String& title)
     {

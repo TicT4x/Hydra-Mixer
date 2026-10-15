@@ -1,4 +1,5 @@
 #include "Strips.h"
+#include "state/Session.h"
 
 namespace hydra
 {
@@ -202,10 +203,49 @@ void StripHeader::resized()
     name.setBounds (getLocalBounds().withTrimmedLeft (30));
 }
 
+void StripHeader::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+    {
+        ctx.select (selectIndex);
+        showMenu();
+    }
+}
+
 void StripHeader::mouseUp (const juce::MouseEvent& e)
 {
+    if (e.mods.isPopupMenu()) return;
     if (e.getNumberOfClicks() >= 2) name.showEditor();
     else ctx.select (selectIndex);
+}
+
+void StripHeader::showMenu()
+{
+    juce::Component::SafePointer<StripHeader> safe (this);
+    showChannelMenu (ctx, selectIndex, *this, [safe] { if (safe != nullptr) safe->name.showEditor(); });
+}
+
+void showChannelMenu (UiContext& ctx, int sel, juce::Component& target, std::function<void()> rename)
+{
+    auto& e = ctx.engine;
+    const bool isInput = sel < kMaxInputs;
+    const int bus = sel - kMaxInputs;
+    const auto name = isInput ? e.inputs[(size_t) sel].name : e.buses[(size_t) bus].name;
+
+    juce::String blocked;
+    if (isInput && e.numActiveInputs() <= 1)                         blocked = "the last input stays";
+    else if (! isInput && isHwBus (bus) && e.numActiveBuses (false) <= 1) blocked = "the last hardware output stays";
+
+    juce::PopupMenu m;
+    m.addSectionHeader (channelCode (sel) + "   " + name);
+    m.addItem ("Rename", std::move (rename));
+    m.addSeparator();
+    m.addItem ("Remove " + channelCode (sel) + (blocked.isEmpty() ? juce::String ("...") : "   (" + blocked + ")"),
+               blocked.isEmpty(), false, [&ctx, sel] { if (ctx.removeChannel) ctx.removeChannel (sel); });
+    const int group = isInput ? 0 : isHwBus (bus) ? 1 : 2;
+    m.addItem (isInput ? "Add Input" : isHwBus (bus) ? "Add Hardware Output" : "Add Virtual Output",
+               [&ctx, group] { if (ctx.addChannel) ctx.addChannel (group); });
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target));
 }
 
 void makeEditableDbLabel (juce::Label& l, Param& gain)
@@ -275,35 +315,47 @@ InputStripView::InputStripView (UiContext& c, int i)
               [this] { return strip.name; }, [this] (juce::String n) { strip.name = n; }),
       trim (c, *strip.trim, "GAIN", theme::accentIn),
       pan (c, *strip.pan, "PAN", theme::accentIn),
-      eq (c, *strip.eq.on, "EQ", theme::accentIn),
-      gate (c, *strip.gateOn, "GATE", theme::accentIn),
-      comp (c, *strip.compOn, "COMP", theme::accentIn),
-      denoise (c, *strip.dnOn, "DENOISE", theme::good),
       mono (c, *strip.mono, "MONO", theme::good),
       solo (c, *strip.solo, "SOLO", theme::solo),
       mute (c, *strip.mute, "MUTE", theme::mute),
       meter (strip.meter)
 {
-    for (auto* comp : std::initializer_list<juce::Component*> { &header, &source, &sourceStatus, &trim, &pan, &eq, &gate,
-                                                               &this->comp, &denoise, &mono, &solo, &mute, &meter, &dbLabel })
+    for (auto* comp : std::initializer_list<juce::Component*> { &header, &source, &sourceStatus, &trim, &pan,
+                                                               &mono, &solo, &mute, &meter, &dbLabel })
         addAndMakeVisible (comp);
 
-    for (int b = 0; b < kNumBuses; ++b)
+    // Routing buttons only for the buses in use.
+    for (int b = 0; b < kMaxBuses; ++b)
     {
-        routes.push_back (std::make_unique<Toggle> (c, *strip.route[(size_t) b], busCode (b), theme::busColour (b)));
-        addAndMakeVisible (*routes.back());
+        if (! c.engine.isBusActive (b)) continue;
+        auto& list = isHwBus (b) ? hwRoutes : virtRoutes;
+        list.push_back (std::make_unique<Toggle> (c, *strip.route[(size_t) b], busCode (b), theme::busColour (b)));
+        addAndMakeVisible (*list.back());
     }
 
     source.onClick = [this] { IoMenus::showInputMenu (source, ctx, index, [this] { refresh(); }); };
     source.setTooltip ("Select input source (hardware, Windows device, virtual input or loopback)");
     styleSmallLabel (sourceStatus);
-    denoise.setTooltip ("RNNoise denoiser (adds 10 ms latency in the default mode, 48 kHz only)");
     addMouseListener (this, true);
 
     dbPoll.v = this;
     setFaderTarget (-1);
     ParamPoller::attach (&dbPoll);
     refresh();
+}
+
+int InputStripView::minimumHeight (int numHw, int numVirt)
+{
+    auto group = [] (int count) { const int rows = (count + 2) / 3; return count > 0 ? rows * 20 + (rows - 1) * 3 + 6 + 6 : 0; };
+    return 16 + 28 + 4 + 24 + 15 + 54 + 10 + group (numHw) + group (numVirt) + 2
+         + 90 /* fader */ + 16 + 4 + 20 + 3 + 24;
+}
+
+void InputStripView::mouseDown (const juce::MouseEvent& e)
+{
+    ctx.select (index);
+    if (e.mods.isPopupMenu() && e.eventComponent == this)
+        header.showMenu();
 }
 
 void InputStripView::setFaderTarget (int bus)
@@ -366,8 +418,7 @@ void InputStripView::refresh()
 void InputStripView::updateMeters (float dt)
 {
     meter.update (dt);
-    static int tick = 0;
-    if ((++tick & 15) == 0)
+    if ((++statusTick & 15) == 0)
     {
         const bool needsDriver = strip.source.kind == IoTarget::Kind::Virtual;
         sourceStatus.setText (strip.source.kind == IoTarget::Kind::None ? juce::String()
@@ -385,7 +436,7 @@ void InputStripView::paint (juce::Graphics& g)
     g.setColour (sel ? theme::accentIn.withAlpha (0.7f) : theme::outline.withAlpha (0.6f));
     g.drawRoundedRectangle (r, 10.0f, sel ? 1.5f : 1.0f);
 
-    // Routing groups: hardware outputs A1-A5 and virtual outputs B1-B3
+    // Routing groups: hardware outputs (A) and virtual outputs (B)
     auto group = [&g] (juce::Rectangle<float> area, juce::Colour colour)
     {
         g.setColour (colour.withAlpha (0.07f));
@@ -393,8 +444,8 @@ void InputStripView::paint (juce::Graphics& g)
         g.setColour (colour.withAlpha (0.28f));
         g.drawRoundedRectangle (area, 6.0f, 1.0f);
     };
-    group (hwGroup, theme::accentHw);
-    group (virtGroup, theme::accentVirt);
+    if (! hwGroup.isEmpty())   group (hwGroup, theme::accentHw);
+    if (! virtGroup.isEmpty()) group (virtGroup, theme::accentVirt);
 }
 
 void InputStripView::resized()
@@ -406,28 +457,33 @@ void InputStripView::resized()
     sourceStatus.setBounds (r.removeFromTop (15));
     auto knobs = r.removeFromTop (54);
     layoutRow (knobs, { &trim, &pan }, 4);
-    r.removeFromTop (6);
-    layoutRow (r.removeFromTop (20), { &eq, &gate, &comp });
-    r.removeFromTop (3);
-    denoise.setBounds (r.removeFromTop (20));
-    r.removeFromTop (8);
+    r.removeFromTop (10);
 
-    // A1 A2 A3 / A4 A5 in one group, B1 B2 B3 in a separate group below
-    auto hw = r.removeFromTop (20 + 3 + 20 + 6).reduced (0, 3);
-    hwGroup = hw.toFloat().expanded (3.0f, 3.0f).reduced (0.0f, 0.5f);
-    hw = hw.reduced (3, 0);
-    layoutRow (hw.removeFromTop (20), { routes[0].get(), routes[1].get(), routes[2].get() }, 3);
-    hw.removeFromTop (3);
-    auto rowA2 = hw.removeFromTop (20);
-    const int cell = (rowA2.getWidth() - 6) / 3;
-    routes[3]->setBounds (rowA2.removeFromLeft (cell));
-    rowA2.removeFromLeft (3);
-    routes[4]->setBounds (rowA2.removeFromLeft (cell));
-    r.removeFromTop (6);
-    auto virt = r.removeFromTop (20 + 6).reduced (0, 3);
-    virtGroup = virt.toFloat().expanded (3.0f, 3.0f).reduced (0.0f, 0.5f);
-    layoutRow (virt.reduced (3, 0), { routes[5].get(), routes[6].get(), routes[7].get() }, 3);
-    r.removeFromTop (8);
+    // Routing: the A buses in one group, the B buses in a separate group below (three per row).
+    auto routeGroup = [&r] (std::vector<std::unique_ptr<Toggle>>& list) -> juce::Rectangle<float>
+    {
+        if (list.empty()) return {};
+        const int rows = ((int) list.size() + 2) / 3;
+        auto area = r.removeFromTop (rows * 20 + (rows - 1) * 3 + 6).reduced (0, 3);
+        const auto group = area.toFloat().expanded (3.0f, 3.0f).reduced (0.0f, 0.5f);
+        area = area.reduced (3, 0);
+        const int cell = (area.getWidth() - 6) / 3;
+        for (int row = 0; row < rows; ++row)
+        {
+            auto line = area.removeFromTop (20);
+            area.removeFromTop (3);
+            for (int k = row * 3; k < juce::jmin ((int) list.size(), row * 3 + 3); ++k)
+            {
+                list[(size_t) k]->setBounds (line.removeFromLeft (cell));
+                line.removeFromLeft (3);
+            }
+        }
+        r.removeFromTop (6);
+        return group;
+    };
+    hwGroup = routeGroup (hwRoutes);
+    virtGroup = routeGroup (virtRoutes);
+    r.removeFromTop (2);
 
     mute.setBounds (r.removeFromBottom (24));
     r.removeFromBottom (3);
@@ -444,9 +500,8 @@ void InputStripView::resized()
 //==============================================================================
 BusStripView::BusStripView (UiContext& c, int i)
     : ctx (c), index (i), bus (c.engine.buses[(size_t) i]),
-      header (c, kNumInputs + i, busCode (i), theme::busColour (i),
+      header (c, busSelectIndex (i), busCode (i), theme::busColour (i),
               [this] { return bus.name; }, [this] (juce::String n) { bus.name = n; }),
-      eq (c, *bus.eq.on, "EQ", theme::busColour (i)),
       lim (c, *bus.limOn, "LIM", theme::busColour (i)),
       mono (c, *bus.mono, "MONO", theme::good),
       sel (c, *bus.sel, "SEL", theme::learn),
@@ -454,7 +509,7 @@ BusStripView::BusStripView (UiContext& c, int i)
       fader (c, *bus.gain, theme::busColour (i)),
       meter (bus.meter)
 {
-    for (auto* comp : std::initializer_list<juce::Component*> { &header, &output, &outputStatus, &eq, &lim, &mono, &sel, &mute,
+    for (auto* comp : std::initializer_list<juce::Component*> { &header, &output, &outputStatus, &lim, &mono, &sel, &mute,
                                                                &fader, &meter, &dbLabel })
         addAndMakeVisible (comp);
 
@@ -470,6 +525,13 @@ BusStripView::BusStripView (UiContext& c, int i)
     dbPoll.v = this;
     ParamPoller::attach (&dbPoll);
     refresh();
+}
+
+void BusStripView::mouseDown (const juce::MouseEvent& e)
+{
+    ctx.select (busSelectIndex (index));
+    if (e.mods.isPopupMenu() && e.eventComponent == this)
+        header.showMenu();
 }
 
 void BusStripView::DbPoll::pollParams()
@@ -516,7 +578,7 @@ void BusStripView::updateMeters (float dt)
 void BusStripView::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (2.0f);
-    const bool sel = ctx.selected == kNumInputs + index;
+    const bool sel = ctx.selected == busSelectIndex (index);
     g.setColour (theme::panel);
     g.fillRoundedRectangle (r, 10.0f);
     if (bus.sel->isOn() || monitorShown)
@@ -535,8 +597,8 @@ void BusStripView::resized()
     r.removeFromTop (4);
     output.setBounds (r.removeFromTop (24));
     outputStatus.setBounds (r.removeFromTop (15));
-    r.removeFromTop (6);
-    layoutRow (r.removeFromTop (20), { &eq, &lim });
+    r.removeFromTop (10);
+    lim.setBounds (r.removeFromTop (20));
     r.removeFromTop (3);
     sel.setBounds (r.removeFromTop (20));
     r.removeFromTop (8);
@@ -551,5 +613,321 @@ void BusStripView::resized()
     meter.setBounds (meterArea.reduced (0, 14));
     r.removeFromRight (2);
     fader.setBounds (r);
+}
+//==============================================================================
+StripPane::StripPane()
+{
+    view.setViewedComponent (&holder, false);
+    view.setScrollBarsShown (false, true);   // sideways only, and only while needed
+    view.setScrollBarThickness (kScrollBar);
+    view.setSingleStepSizes (24, 24);
+    view.moved = [this] { if (onScroll) onScroll(); };
+    holder.addAndMakeVisible (content);
+    addAndMakeVisible (view);
+}
+
+void StripPane::resized() { view.setBounds (getLocalBounds()); }
+
+void StripPane::setContentSize (int w, int h, float s)
+{
+    scale = s;
+    content.setTransform (juce::AffineTransform::scale (s));
+    content.setBounds (0, 0, w, h);
+    holder.setSize (juce::roundToInt ((float) w * s), juce::roundToInt ((float) h * s));
+    if (onScroll) onScroll();
+}
+
+float StripPane::getScrollX() const { return (float) view.getViewPositionX() / scale; }
+
+void StripPane::scrollToShow (juce::Rectangle<int> area)
+{
+    const auto a = area.toFloat().transformedBy (content.getTransform()).toNearestInt();
+    const auto v = view.getViewArea();
+    if (a.getX() < v.getX())              view.setViewPosition (a.getX() - 8, 0);
+    else if (a.getRight() > v.getRight()) view.setViewPosition (a.getRight() + 8 - v.getWidth(), 0);
+}
+
+//==============================================================================
+PaneDivider::PaneDivider()
+{
+    setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+    setTooltip ("Drag to give the inputs or the outputs more room.  Double-click: default position.");
+}
+
+void PaneDivider::paint (juce::Graphics& g)
+{
+    const float x = (float) getWidth() * 0.5f;
+    const bool active = hover || dragging;
+    g.setColour (active ? theme::accentIn.withAlpha (0.8f) : theme::outline.withAlpha (0.7f));
+    g.fillRect (juce::Rectangle<float> (x - (active ? 1.0f : 0.5f), 8.0f, active ? 2.0f : 1.0f, (float) getHeight() - 16.0f));
+    // Grip in the middle
+    auto grip = juce::Rectangle<float> (0.0f, 0.0f, 8.0f, 34.0f).withCentre ({ x, (float) getHeight() * 0.5f });
+    g.setColour (active ? theme::raised.brighter (0.1f) : theme::raised);
+    g.fillRoundedRectangle (grip, 4.0f);
+    g.setColour (active ? theme::text : theme::textFaint);
+    for (int k = 0; k < 3; ++k)
+        g.fillEllipse (x - 1.2f, grip.getY() + 9.0f + (float) k * 7.0f, 2.4f, 2.4f);
+}
+
+void PaneDivider::mouseDown (const juce::MouseEvent&)
+{
+    startCentre = getBounds().getCentreX();
+    dragging = true;
+    repaint();
+}
+
+void PaneDivider::mouseDrag (const juce::MouseEvent& e)
+{
+    if (onDrag) onDrag (startCentre + e.getDistanceFromDragStartX());
+}
+
+//==============================================================================
+namespace
+{
+constexpr int kPad = 8, kBusGroupGap = 14, kPlusSize = 26, kMinPaneWidth = 120;
+juce::Font captionFont() { return theme::font (17.0f, true); }
+} // namespace
+
+StripArea::StripArea (UiContext& c) : ctx (c)
+{
+    inSec   = { "Inputs", theme::accentIn };
+    hwSec   = { "Hardware Outputs", theme::accentHw };
+    virtSec = { "Virtual Outputs", theme::accentVirt };
+    addIn.setTooltip ("Add an input channel");
+    addHw.setTooltip ("Add a hardware output (A bus)");
+    addVirt.setTooltip ("Add a virtual output (B bus)");
+    addIn.onClick   = [this] { if (ctx.addChannel) ctx.addChannel (0); };
+    addHw.onClick   = [this] { if (ctx.addChannel) ctx.addChannel (1); };
+    addVirt.onClick = [this] { if (ctx.addChannel) ctx.addChannel (2); };
+    for (auto* pane : { &inPane, &outPane })
+    {
+        addAndMakeVisible (pane);
+        pane->onScroll = [this] { layoutCaptions(); };
+    }
+    addAndMakeVisible (divider);
+    divider.onDrag = [this] (int x) { setSplit (x); };
+    divider.onReset = [this] { setSplit (-1); };
+    for (auto* b : { &addIn, &addHw, &addVirt })
+        addAndMakeVisible (b);
+    rebuild();
+}
+
+void StripArea::rebuild()
+{
+    inStrips.clear();
+    busStrips.clear();
+    numHw = numVirt = 0;
+    auto& e = ctx.engine;
+    for (int i = 0; i < kMaxInputs; ++i)
+        if (e.isInputActive (i))
+        {
+            inStrips.push_back (std::make_unique<InputStripView> (ctx, i));
+            inPane.getContent().addAndMakeVisible (*inStrips.back());
+        }
+    for (int b = 0; b < kMaxBuses; ++b)
+        if (e.isBusActive (b))
+        {
+            busStrips.push_back (std::make_unique<BusStripView> (ctx, b));
+            outPane.getContent().addAndMakeVisible (*busStrips.back());
+            ++(isHwBus (b) ? numHw : numVirt);
+        }
+    addIn.setVisible (e.numActiveInputs() < kMaxInputs);
+    addHw.setVisible (numHw < kMaxHwBuses);
+    addVirt.setVisible (numVirt < kMaxVirtBuses);
+
+    const auto f = captionFont();
+    for (auto* sec : { &inSec, &hwSec, &virtSec })
+        sec->captionWidth = juce::GlyphArrangement::getStringWidthInt (f, sec->title);
+    resized();
+    repaint();
+}
+
+int StripArea::groupWidth (const Section& sec, int strips, int w) const
+{
+    // Wide enough for the caption and its "+" button even with a single (or no) strip.
+    return juce::jmax (strips * w, sec.captionWidth + 10 + kPlusSize + 8);
+}
+
+int StripArea::inputsWidth (int w) const  { return 2 * kPad + groupWidth (inSec, (int) inStrips.size(), w); }
+int StripArea::outputsWidth (int w) const { return 2 * kPad + groupWidth (hwSec, numHw, w) + kBusGroupGap + groupWidth (virtSec, numVirt, w); }
+
+float StripArea::scaleFor (int paneHeight) const
+{
+    // No vertical scrolling: below the strips' minimum height they are drawn smaller.
+    const int minHeight = InputStripView::minimumHeight (numHw, numVirt);
+    return juce::jlimit (0.4f, 1.0f, (float) paneHeight / (float) minHeight);
+}
+
+int StripArea::defaultSplit() const
+{
+    // Both panes get the same (widest possible) strip width. If even the narrowest strips do not
+    // fit, each pane gets a share proportional to what it needs, so both scroll alike.
+    const int avail = getWidth() - kDividerWidth;
+    const float s = scaleFor (getHeight() - kCaptionHeight);
+    auto fits = [&] (int w) { return (float) (inputsWidth (w) + outputsWidth (w)) * s <= (float) avail; };
+    int w = kMaxStripWidth;
+    while (w > kMinStripWidth && ! fits (w)) --w;
+    int inW;
+    if (fits (w))
+        inW = juce::roundToInt ((float) inputsWidth (w) * s);
+    else
+        inW = juce::roundToInt ((float) avail * (float) inputsWidth (kMinStripWidth)
+                                / (float) (inputsWidth (kMinStripWidth) + outputsWidth (kMinStripWidth)));
+    return inW + kDividerWidth / 2;
+}
+
+void StripArea::setSplit (int x)
+{
+    if (ctx.session == nullptr) return;
+    auto& split = ctx.session->prefs.stripSplit;
+    const float wanted = x < 0 ? -1.0f : (float) x / (float) juce::jmax (1, getWidth());
+    if (std::abs (wanted - split) < 0.0005f) return;
+    split = wanted;
+    ctx.session->prefsVersion.fetch_add (1); // stored with the session
+    resized();
+    repaint();
+}
+
+void StripArea::layoutPane (StripPane& pane, bool outputs, int paneWidth, int paneHeight)
+{
+    // Strips stretch to fill the pane (up to kMaxStripWidth); below kMinStripWidth the pane scrolls.
+    float s = scaleFor (paneHeight);
+    auto contentWidth = [&] (int w) { return outputs ? outputsWidth (w) : inputsWidth (w); };
+    auto fit = [&]
+    {
+        int w = kMaxStripWidth;
+        while (w > kMinStripWidth && (float) contentWidth (w) * s > (float) paneWidth) --w;
+        return w;
+    };
+    int w = fit();
+    if ((float) contentWidth (w) * s > (float) paneWidth) // scrolls: the scroll bar takes some height
+    {
+        s = scaleFor (paneHeight - StripPane::kScrollBar);
+        w = fit();
+    }
+    const bool scrolls = (float) contentWidth (w) * s > (float) paneWidth + 0.5f;
+    const int h = juce::roundToInt ((float) (paneHeight - (scrolls ? StripPane::kScrollBar : 0)) / s);
+    pane.setContentSize (juce::jmax (contentWidth (w), juce::roundToInt ((float) paneWidth / s)), h, s);
+
+    auto place = [&] (Section& sec, int x, int count, int firstStrip, bool bus)
+    {
+        sec.x = x;
+        sec.width = groupWidth (sec, count, w);
+        for (int k = 0; k < count; ++k)
+        {
+            juce::Component* c = bus ? (juce::Component*) busStrips[(size_t) (firstStrip + k)].get()
+                                     : (juce::Component*) inStrips[(size_t) (firstStrip + k)].get();
+            c->setBounds (x + k * w, 0, w, h);
+        }
+        return x + sec.width;
+    };
+    if (! outputs)
+        place (inSec, kPad, (int) inStrips.size(), 0, false);
+    else
+        place (virtSec, place (hwSec, kPad, numHw, 0, true) + kBusGroupGap, numVirt, numHw, true);
+}
+
+void StripArea::resized()
+{
+    const int width = getWidth(), height = getHeight();
+    const float stored = ctx.session != nullptr ? ctx.session->prefs.stripSplit : -1.0f;
+    int split = stored >= 0.0f ? juce::roundToInt (stored * (float) width) : defaultSplit();
+    split = juce::jlimit (kMinPaneWidth + kDividerWidth / 2, juce::jmax (kMinPaneWidth + kDividerWidth / 2, width - kMinPaneWidth - kDividerWidth / 2), split);
+
+    divider.setBounds (split - kDividerWidth / 2, 0, kDividerWidth, height);
+    const int paneH = height - kCaptionHeight;
+    inPane.setBounds (0, kCaptionHeight, divider.getX(), paneH);
+    outPane.setBounds (divider.getRight(), kCaptionHeight, width - divider.getRight(), paneH);
+    layoutPane (inPane, false, inPane.getWidth(), paneH);
+    layoutPane (outPane, true, outPane.getWidth(), paneH);
+    layoutCaptions();
+}
+
+void StripArea::layoutCaptions()
+{
+    // Captions follow their group of strips but stay in view (sticky) while the pane is scrolled.
+    auto place = [this] (Section& sec, const StripPane& pane, PlusButton& plus)
+    {
+        const float s = pane.getScale();
+        const int full = sec.captionWidth + 10 + kPlusSize + 6;
+        const int groupX = pane.getX() + juce::roundToInt (((float) sec.x - pane.getScrollX()) * s);
+        const int groupR = groupX + juce::roundToInt ((float) sec.width * s);
+        const int x = juce::jmin (juce::jmax (groupX, pane.getX() + kPad), groupR - full) + 6;
+        sec.caption = { x, 0, full, kCaptionHeight };
+        plus.setBounds (x + sec.captionWidth + 10, (kCaptionHeight - kPlusSize) / 2 + 1, kPlusSize, kPlusSize - 2);
+    };
+    place (inSec, inPane, addIn);
+    place (hwSec, outPane, addHw);
+    place (virtSec, outPane, addVirt);
+    // Hidden while pushed out of the pane by scrolling (or by the other caption).
+    addIn.setVisible (addIn.getRight() <= inPane.getRight() && ctx.engine.numActiveInputs() < kMaxInputs);
+    addHw.setVisible (addHw.getX() >= outPane.getX() && addHw.getRight() <= virtSec.caption.getX() - 4 && numHw < kMaxHwBuses);
+    addVirt.setVisible (addVirt.getRight() <= getWidth() && addVirt.getX() >= outPane.getX() && numVirt < kMaxVirtBuses);
+    repaint (getLocalBounds().withHeight (kCaptionHeight));
+}
+
+void StripArea::scrollToChannel (int sel)
+{
+    for (auto& s : inStrips)  if (s->getSelectIndex() == sel) { inPane.scrollToShow (s->getBounds()); return; }
+    for (auto& b : busStrips) if (b->getSelectIndex() == sel) { outPane.scrollToShow (b->getBounds()); return; }
+}
+
+void StripArea::paint (juce::Graphics& g)
+{
+    // Section captions, each clipped to its pane
+    g.setFont (captionFont());
+    auto caption = [&] (const Section& sec, juce::Rectangle<int> clip)
+    {
+        juce::Graphics::ScopedSaveState state (g);
+        g.reduceClipRegion (clip);
+        g.setColour (sec.colour);
+        g.drawText (sec.title, sec.caption.withWidth (sec.captionWidth + 4), juce::Justification::centredLeft, false);
+    };
+    caption (inSec, { 0, 0, inPane.getRight(), kCaptionHeight });
+    caption (hwSec, { outPane.getX(), 0, juce::jmax (0, virtSec.caption.getX() - outPane.getX() - 4), kCaptionHeight });
+    caption (virtSec, { outPane.getX(), 0, outPane.getWidth(), kCaptionHeight });
+
+    // SEL: the input faders set the level on the selected bus.
+    if (selBus >= 0)
+    {
+        const int x = inSec.caption.getRight() + 6;
+        g.setColour (theme::busColour (selBus));
+        g.setFont (theme::font (11.5f, true));
+        g.drawFittedText ("FADERS = LEVEL ON " + busCode (selBus)
+                              + (monBus >= 0 ? "   (monitoring on " + busCode (monBus) + ")" : juce::String()),
+                          juce::Rectangle<int> (x, 0, juce::jmax (0, inPane.getRight() - x - 4), kCaptionHeight),
+                          juce::Justification::centredLeft, 1, 0.8f);
+    }
+}
+
+void StripArea::setSelInfo (int sb, int mb)
+{
+    if (sb == selBus && mb == monBus) return;
+    selBus = sb;
+    monBus = mb;
+    repaint (0, 0, inPane.getRight(), kCaptionHeight);
+}
+
+void StripArea::updateMeters (float dt)
+{
+    for (auto& s : inStrips) s->updateMeters (dt);
+    for (auto& s : busStrips) s->updateMeters (dt);
+}
+
+void StripArea::refreshStrips()
+{
+    for (auto& s : inStrips) s->refresh();
+    for (auto& s : busStrips) s->refresh();
+}
+
+void StripArea::repaintStrips()
+{
+    for (auto& s : inStrips) s->repaint();
+    for (auto& s : busStrips) s->repaint();
+}
+
+void StripArea::setFaderTarget (int bus)
+{
+    for (auto& s : inStrips) s->setFaderTarget (bus);
 }
 } // namespace hydra
