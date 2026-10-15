@@ -62,6 +62,15 @@ public:
     }
     void closeButtonPressed() override { setVisible (false); }
 
+    void activeWindowStatusChanged() override
+    {
+        juce::DocumentWindow::activeWindowStatusChanged();
+        // Content that handles keys itself (EQ editor: Ctrl+Z) gets the focus when the window is activated.
+        if (isActiveWindow())
+            if (auto* c = getContentComponent(); c != nullptr && c->getWantsKeyboardFocus() && ! c->hasKeyboardFocus (true))
+                c->grabKeyboardFocus();
+    }
+
     /** Replaces the content (the old one is deleted). */
     void replaceContent (juce::Component* content, const juce::String& title)
     {

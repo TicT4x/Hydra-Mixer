@@ -6,10 +6,10 @@ namespace hydra
 {
 /** Bus recorder + file player.
 
-    Recording: the audio thread copies the selected virtual bus (B1-B3, post fader / limiter) into a
+    Recording: the audio thread copies the selected virtual bus (B1-B8, post fader / limiter) into a
     wait-free ring; a background thread writes it to a WAV file.
     Playback: the background thread decodes (and resamples) a file into a second ring; the audio
-    thread pulls it and the engine mixes it into the chosen buses (A1-A5 / B1-B3).
+    thread pulls it and the engine mixes it into the chosen buses (A or B).
 
     Transport is driven by parameters (rec.record / rec.play), so it is MIDI-learnable and can have
     keyboard shortcuts. The audio thread never locks or allocates here. */
@@ -21,7 +21,7 @@ public:
 
     void createParams (ParamRegistry&);
     Param *record {}, *play {}, *loop {}, *source {}, *level {};
-    std::array<Param*, kNumBuses> out {};
+    std::array<Param*, kMaxBuses> out {};
 
     // Settings (message thread, stored with the session)
     juce::File folder;          // empty = Documents/Hydra Recordings

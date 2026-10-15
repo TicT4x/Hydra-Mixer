@@ -5,7 +5,8 @@ namespace juce::dsp { class FFT; }
 
 namespace hydra
 {
-/** Horizontal list of plugin "cards" for a chain, with add / bypass / edit / reorder / remove. */
+/** Horizontal list of plugin "cards" for a chain: bypass / edit / remove per card, reorder by dragging
+    a card, "+" after the last card adds a plugin (an empty chain shows a labelled add button). */
 class PluginChainView final : public juce::Component
 {
 public:
@@ -18,19 +19,29 @@ public:
     std::function<void()> onChainChanged;
 
 private:
-    void showAddMenu();
-    void openEditor (int index);
-
     struct Card;
+    void showAddMenu (juce::Component& target);
+    void openEditor (int index);
+    void layoutCards();
+    void cardDragged (int index, int x);   // x: wanted left edge of the card in the row
+    void cardDropped (int index);
+
+    static constexpr int kMaxCardWidth = 190, kMinCardWidth = 130, kCardGap = 6, kPlusWidth = 40;
+    int cardWidth = kMaxCardWidth;   // cards shrink so the "+" stays visible, then the row scrolls
+
     UiContext& ctx;
     PluginChain& chain;
     juce::Colour accent;
+    juce::Viewport viewport;
+    juce::Component row;                      // cards + plus, scrolls when the chain is long
     std::vector<std::unique_ptr<Card>> cards;
+    int dragIndex = -1, dropIndex = -1;
     Chip addButton { "+  Add VST3 Plugin", theme::textDim };
+    PlusButton plusCard;
 };
 
 //==============================================================================
-/** Interactive response curve of a 6-band parametric EQ (inputs and buses).
+/** Interactive response curve of an 8-band parametric EQ (inputs and buses).
     Only bands that are switched on appear as points. Clicking an empty spot adds a band there,
     double-click or the right-click menu removes it. Every band has its own colour (theme::bandColour). */
 class EqGraph final : public juce::Component, public ParamPoller::Client, public juce::SettableTooltipClient
@@ -54,7 +65,7 @@ public:
     void setSelectedBand (int b);
     std::function<void (int)> onBandSelected;
 
-    /** Switches on the first unused band at freq / gain. Returns its index, or -1 if all six are in use. */
+    /** Switches on the first unused band at freq / gain. Returns its index, or -1 if all are in use. */
     int addBand (float freqHz, float gainDb);
     /** Switches a band off and resets it to its defaults (its point disappears). */
     void removeBand (int k);
@@ -97,7 +108,7 @@ private:
 };
 
 //==============================================================================
-/** Large EQ editor (own window): big curve with live spectrum plus the controls of all six bands. */
+/** Large EQ editor (own window): big curve with live spectrum plus the controls of all eight bands. */
 class EqEditor final : public juce::Component
 {
 public:
@@ -105,6 +116,7 @@ public:
     ~EqEditor() override;
     void paint (juce::Graphics&) override;
     void resized() override;
+    bool keyPressed (const juce::KeyPress&) override;   // Ctrl+Z / Ctrl+Y: EQ undo / redo
     int getSelectIndex() const noexcept { return selectIndex; }
 
 private:

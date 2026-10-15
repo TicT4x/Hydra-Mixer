@@ -33,9 +33,11 @@ void Recorder::createParams (ParamRegistry& params)
     record->persistent = false; // never resume recording / playback on the next start
     play->persistent = false;
     loop   = &params.addToggle ("rec.loop", "Recorder Loop");
-    source = &params.addChoice ("rec.src", "Recorder Source", { "B1", "B2", "B3" }, 0);
+    juce::StringArray virtCodes;
+    for (int v = 0; v < kMaxVirtBuses; ++v) virtCodes.add (busCode (virtBusIndex (v)));
+    source = &params.addChoice ("rec.src", "Recorder Source", virtCodes, 0);
     level  = &params.add ("rec.level", "Recorder Playback Level", ParamType::Continuous, fader, 0.0f, " dB");
-    for (int b = 0; b < kNumBuses; ++b)
+    for (int b = 0; b < kMaxBuses; ++b)
         out[(size_t) b] = &params.addToggle ("rec.out." + busCode (b), "Recorder -> " + busCode (b), b == 0);
 }
 
@@ -47,7 +49,7 @@ juce::File Recorder::getFolder() const
 
 int Recorder::getRecordSourceBus() const noexcept
 {
-    return kNumHwBuses + juce::jlimit (0, kNumVirtBuses - 1, juce::roundToInt (source->get()));
+    return virtBusIndex (juce::jlimit (0, kMaxVirtBuses - 1, juce::roundToInt (source->get())));
 }
 
 double Recorder::getRecordSeconds() const { return (double) recFrames.load() / juce::jmax (1.0, recRate); }

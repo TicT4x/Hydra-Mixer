@@ -7,9 +7,19 @@
 namespace hydra
 {
 class Session;
+class EqUndo;
 
-/** Inspector selection index of the recorder (after the 8 inputs and 8 buses). */
-constexpr int kRecorderSelect = kNumInputs + kNumBuses;
+/** Inspector selection index of the recorder (after the input slots and the bus slots). */
+constexpr int kRecorderSelect = kMaxInputs + kMaxBuses;
+
+/** Selection index scheme: 0..kMaxInputs-1 = inputs, then the buses (A1..A8, B1..B8), then the recorder. */
+constexpr int busSelectIndex (int bus) noexcept { return kMaxInputs + bus; }
+
+/** "IN 3", "A2", "B1" for a selection index. */
+inline juce::String channelCode (int selectIndex)
+{
+    return selectIndex < kMaxInputs ? "IN " + juce::String (selectIndex + 1) : busCode (selectIndex - kMaxInputs);
+}
 
 /** Shared UI state handed to every widget. */
 struct UiContext
@@ -18,10 +28,11 @@ struct UiContext
     MidiMapper& midi;
     Hotkeys& hotkeys;
     Session* session = nullptr;
+    EqUndo* eqUndo = nullptr;   // EQ undo / redo history (Ctrl+Z / Ctrl+Y)
     bool learnMode = false;
     std::function<void()> learnModeChanged;
 
-    /** Selected channel for the inspector: 0..7 = inputs, 8..15 = buses, 16 = recorder. */
+    /** Selected channel for the inspector (see busSelectIndex / kRecorderSelect). */
     int selected = 0;
     std::function<void (int)> select;
 
@@ -39,6 +50,22 @@ struct UiContext
 
     /** Quits the application (also when "close to tray" is active). */
     std::function<void()> shutdown;
+
+    /** Asks for confirmation, then removes the channel (selection index) with its settings. */
+    std::function<void (int)> removeChannel;
+
+    /** Adds a channel: 0 = input, 1 = hardware output (A), 2 = virtual output (B). */
+    std::function<void (int)> addChannel;
+
+    /** EQ of a channel (selection index), or nullptr for the recorder. */
+    ParamEq* eqFor (int selectIndex) const
+    {
+        if (selectIndex < 0 || selectIndex >= kRecorderSelect) return nullptr;
+        return selectIndex < kMaxInputs ? &engine.inputs[(size_t) selectIndex].eq : &engine.buses[(size_t) (selectIndex - kMaxInputs)].eq;
+    }
+
+    /** Ctrl+Z (undo) / Ctrl+Y, Ctrl+Shift+Z (redo) for the EQ of a channel. Returns true if the key was one of them. */
+    bool handleEqUndoKey (const juce::KeyPress& key, int selectIndex, juce::String* message = nullptr);
 };
 
 //==============================================================================
@@ -176,13 +203,16 @@ private:
 class ChoiceSegments final : public ParamControl
 {
 public:
-    ChoiceSegments (UiContext& c, Param& p, juce::Colour accent, juce::StringArray labels = {});
+    /** values: parameter value of each segment (default: segment i = value i), so only some choices can be offered. */
+    ChoiceSegments (UiContext& c, Param& p, juce::Colour accent, juce::StringArray labels = {}, std::vector<int> values = {});
     void paint (juce::Graphics&) override;
 
 private:
     void press (const juce::MouseEvent&) override;
+    int valueOf (int segment) const;
     juce::Colour accent;
     juce::StringArray labels;
+    std::vector<int> values;
 };
 
 /** Vertical filter-type picker for one EQ band (bell, notch, band pass, cuts, shelves). */
@@ -232,6 +262,24 @@ public:
     juce::String text;
     juce::Colour colour;
     bool active = false, showArrow = true, centred = false;
+
+    void paint (juce::Graphics&) override;
+    void mouseUp (const juce::MouseEvent& e) override { if (e.mouseWasClicked() && onClick) onClick(); }
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
+
+private:
+    bool hover = false;
+};
+
+//==============================================================================
+/** Round-cornered "+" button (add a channel, add a plugin). */
+class PlusButton final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    explicit PlusButton (juce::Colour c = theme::textDim) : colour (c) { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+    std::function<void()> onClick;
+    juce::Colour colour;
 
     void paint (juce::Graphics&) override;
     void mouseUp (const juce::MouseEvent& e) override { if (e.mouseWasClicked() && onClick) onClick(); }

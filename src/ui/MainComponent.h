@@ -2,6 +2,7 @@
 #include "Strips.h"
 #include "Inspector.h"
 #include "Settings.h"
+#include "EqUndo.h"
 
 namespace hydra
 {
@@ -110,6 +111,11 @@ public:
     void openMidiMap();
     void openEqWindow (int selectIndex, bool bringToFront = true);
     void refreshAll();
+    /** Interface zoom (1 = 100 %): everything in the main window is drawn larger / smaller;
+        the strips scroll horizontally when they no longer fit. */
+    void setUiScale (float scale);
+    /** Rebuilds strips and inspector after the text size changed (labels keep their font otherwise). */
+    void fontScaleChanged();
     /** For the window's native hit-testing (point in this component's coordinates). */
     WindowControlKind windowControlAt (juce::Point<float> p) const;
 
@@ -120,20 +126,30 @@ private:
     void timerCallback() override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void select (int index);
+    bool isChannelShown (int selectIndex) const;
+    void rebuildStrips();
+    void scrollToChannel (int selectIndex);
+    void addChannel (int group);
+    void removeChannel (int selectIndex);
+    /** Size of the main window's contents in unscaled (logical) units. */
+    int logicalWidth() const  { return juce::roundToInt ((float) getWidth() / uiScale); }
+    int logicalHeight() const { return juce::roundToInt ((float) getHeight() / uiScale); }
     void showToast (const juce::String& text, double seconds);
     void meterFrame (double timestamp);
     void finishHotkeyCapture();
     void assignCapturedKey (const juce::KeyPress&);
 
     UiContext ctx;
+    EqUndo eqUndo;
     TopBar top;
-    std::vector<std::unique_ptr<InputStripView>> inStrips;
-    std::vector<std::unique_ptr<BusStripView>> busStrips;
+    juce::Viewport stripView;
+    StripArea strips;
     Inspector inspector;
     PanelHost panelHost;
     std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow;
     int shownSelBus = -1;     // bus selected with SEL as shown by the input faders
-    int shownCaptionSel = -1, shownMonBus = -1;
+    uint32_t shownLayout = 0; // engine channel layout the strips were built for
+    float uiScale = 1.0f;
     juce::String toast;
     double toastUntil = 0;
     double lastMeterFrame = 0;

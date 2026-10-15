@@ -202,10 +202,49 @@ void StripHeader::resized()
     name.setBounds (getLocalBounds().withTrimmedLeft (30));
 }
 
+void StripHeader::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+    {
+        ctx.select (selectIndex);
+        showMenu();
+    }
+}
+
 void StripHeader::mouseUp (const juce::MouseEvent& e)
 {
+    if (e.mods.isPopupMenu()) return;
     if (e.getNumberOfClicks() >= 2) name.showEditor();
     else ctx.select (selectIndex);
+}
+
+void StripHeader::showMenu()
+{
+    juce::Component::SafePointer<StripHeader> safe (this);
+    showChannelMenu (ctx, selectIndex, *this, [safe] { if (safe != nullptr) safe->name.showEditor(); });
+}
+
+void showChannelMenu (UiContext& ctx, int sel, juce::Component& target, std::function<void()> rename)
+{
+    auto& e = ctx.engine;
+    const bool isInput = sel < kMaxInputs;
+    const int bus = sel - kMaxInputs;
+    const auto name = isInput ? e.inputs[(size_t) sel].name : e.buses[(size_t) bus].name;
+
+    juce::String blocked;
+    if (isInput && e.numActiveInputs() <= 1)                         blocked = "the last input stays";
+    else if (! isInput && isHwBus (bus) && e.numActiveBuses (false) <= 1) blocked = "the last hardware output stays";
+
+    juce::PopupMenu m;
+    m.addSectionHeader (channelCode (sel) + "   " + name);
+    m.addItem ("Rename", std::move (rename));
+    m.addSeparator();
+    m.addItem ("Remove " + channelCode (sel) + (blocked.isEmpty() ? juce::String ("...") : "   (" + blocked + ")"),
+               blocked.isEmpty(), false, [&ctx, sel] { if (ctx.removeChannel) ctx.removeChannel (sel); });
+    const int group = isInput ? 0 : isHwBus (bus) ? 1 : 2;
+    m.addItem (isInput ? "Add Input" : isHwBus (bus) ? "Add Hardware Output" : "Add Virtual Output",
+               [&ctx, group] { if (ctx.addChannel) ctx.addChannel (group); });
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target));
 }
 
 void makeEditableDbLabel (juce::Label& l, Param& gain)
@@ -275,35 +314,47 @@ InputStripView::InputStripView (UiContext& c, int i)
               [this] { return strip.name; }, [this] (juce::String n) { strip.name = n; }),
       trim (c, *strip.trim, "GAIN", theme::accentIn),
       pan (c, *strip.pan, "PAN", theme::accentIn),
-      eq (c, *strip.eq.on, "EQ", theme::accentIn),
-      gate (c, *strip.gateOn, "GATE", theme::accentIn),
-      comp (c, *strip.compOn, "COMP", theme::accentIn),
-      denoise (c, *strip.dnOn, "DENOISE", theme::good),
       mono (c, *strip.mono, "MONO", theme::good),
       solo (c, *strip.solo, "SOLO", theme::solo),
       mute (c, *strip.mute, "MUTE", theme::mute),
       meter (strip.meter)
 {
-    for (auto* comp : std::initializer_list<juce::Component*> { &header, &source, &sourceStatus, &trim, &pan, &eq, &gate,
-                                                               &this->comp, &denoise, &mono, &solo, &mute, &meter, &dbLabel })
+    for (auto* comp : std::initializer_list<juce::Component*> { &header, &source, &sourceStatus, &trim, &pan,
+                                                               &mono, &solo, &mute, &meter, &dbLabel })
         addAndMakeVisible (comp);
 
-    for (int b = 0; b < kNumBuses; ++b)
+    // Routing buttons only for the buses in use.
+    for (int b = 0; b < kMaxBuses; ++b)
     {
-        routes.push_back (std::make_unique<Toggle> (c, *strip.route[(size_t) b], busCode (b), theme::busColour (b)));
-        addAndMakeVisible (*routes.back());
+        if (! c.engine.isBusActive (b)) continue;
+        auto& list = isHwBus (b) ? hwRoutes : virtRoutes;
+        list.push_back (std::make_unique<Toggle> (c, *strip.route[(size_t) b], busCode (b), theme::busColour (b)));
+        addAndMakeVisible (*list.back());
     }
 
     source.onClick = [this] { IoMenus::showInputMenu (source, ctx, index, [this] { refresh(); }); };
     source.setTooltip ("Select input source (hardware, Windows device, virtual input or loopback)");
     styleSmallLabel (sourceStatus);
-    denoise.setTooltip ("RNNoise denoiser (adds 10 ms latency in the default mode, 48 kHz only)");
     addMouseListener (this, true);
 
     dbPoll.v = this;
     setFaderTarget (-1);
     ParamPoller::attach (&dbPoll);
     refresh();
+}
+
+int InputStripView::minimumHeight (int numHw, int numVirt)
+{
+    auto group = [] (int count) { const int rows = (count + 2) / 3; return count > 0 ? rows * 20 + (rows - 1) * 3 + 6 + 6 : 0; };
+    return 16 + 28 + 4 + 24 + 15 + 54 + 10 + group (numHw) + group (numVirt) + 2
+         + 150 /* fader */ + 16 + 4 + 20 + 3 + 24;
+}
+
+void InputStripView::mouseDown (const juce::MouseEvent& e)
+{
+    ctx.select (index);
+    if (e.mods.isPopupMenu() && e.eventComponent == this)
+        header.showMenu();
 }
 
 void InputStripView::setFaderTarget (int bus)
@@ -366,8 +417,7 @@ void InputStripView::refresh()
 void InputStripView::updateMeters (float dt)
 {
     meter.update (dt);
-    static int tick = 0;
-    if ((++tick & 15) == 0)
+    if ((++statusTick & 15) == 0)
     {
         const bool needsDriver = strip.source.kind == IoTarget::Kind::Virtual;
         sourceStatus.setText (strip.source.kind == IoTarget::Kind::None ? juce::String()
@@ -385,7 +435,7 @@ void InputStripView::paint (juce::Graphics& g)
     g.setColour (sel ? theme::accentIn.withAlpha (0.7f) : theme::outline.withAlpha (0.6f));
     g.drawRoundedRectangle (r, 10.0f, sel ? 1.5f : 1.0f);
 
-    // Routing groups: hardware outputs A1-A5 and virtual outputs B1-B3
+    // Routing groups: hardware outputs (A) and virtual outputs (B)
     auto group = [&g] (juce::Rectangle<float> area, juce::Colour colour)
     {
         g.setColour (colour.withAlpha (0.07f));
@@ -393,8 +443,8 @@ void InputStripView::paint (juce::Graphics& g)
         g.setColour (colour.withAlpha (0.28f));
         g.drawRoundedRectangle (area, 6.0f, 1.0f);
     };
-    group (hwGroup, theme::accentHw);
-    group (virtGroup, theme::accentVirt);
+    if (! hwGroup.isEmpty())   group (hwGroup, theme::accentHw);
+    if (! virtGroup.isEmpty()) group (virtGroup, theme::accentVirt);
 }
 
 void InputStripView::resized()
@@ -406,28 +456,33 @@ void InputStripView::resized()
     sourceStatus.setBounds (r.removeFromTop (15));
     auto knobs = r.removeFromTop (54);
     layoutRow (knobs, { &trim, &pan }, 4);
-    r.removeFromTop (6);
-    layoutRow (r.removeFromTop (20), { &eq, &gate, &comp });
-    r.removeFromTop (3);
-    denoise.setBounds (r.removeFromTop (20));
-    r.removeFromTop (8);
+    r.removeFromTop (10);
 
-    // A1 A2 A3 / A4 A5 in one group, B1 B2 B3 in a separate group below
-    auto hw = r.removeFromTop (20 + 3 + 20 + 6).reduced (0, 3);
-    hwGroup = hw.toFloat().expanded (3.0f, 3.0f).reduced (0.0f, 0.5f);
-    hw = hw.reduced (3, 0);
-    layoutRow (hw.removeFromTop (20), { routes[0].get(), routes[1].get(), routes[2].get() }, 3);
-    hw.removeFromTop (3);
-    auto rowA2 = hw.removeFromTop (20);
-    const int cell = (rowA2.getWidth() - 6) / 3;
-    routes[3]->setBounds (rowA2.removeFromLeft (cell));
-    rowA2.removeFromLeft (3);
-    routes[4]->setBounds (rowA2.removeFromLeft (cell));
-    r.removeFromTop (6);
-    auto virt = r.removeFromTop (20 + 6).reduced (0, 3);
-    virtGroup = virt.toFloat().expanded (3.0f, 3.0f).reduced (0.0f, 0.5f);
-    layoutRow (virt.reduced (3, 0), { routes[5].get(), routes[6].get(), routes[7].get() }, 3);
-    r.removeFromTop (8);
+    // Routing: the A buses in one group, the B buses in a separate group below (three per row).
+    auto routeGroup = [&r] (std::vector<std::unique_ptr<Toggle>>& list) -> juce::Rectangle<float>
+    {
+        if (list.empty()) return {};
+        const int rows = ((int) list.size() + 2) / 3;
+        auto area = r.removeFromTop (rows * 20 + (rows - 1) * 3 + 6).reduced (0, 3);
+        const auto group = area.toFloat().expanded (3.0f, 3.0f).reduced (0.0f, 0.5f);
+        area = area.reduced (3, 0);
+        const int cell = (area.getWidth() - 6) / 3;
+        for (int row = 0; row < rows; ++row)
+        {
+            auto line = area.removeFromTop (20);
+            area.removeFromTop (3);
+            for (int k = row * 3; k < juce::jmin ((int) list.size(), row * 3 + 3); ++k)
+            {
+                list[(size_t) k]->setBounds (line.removeFromLeft (cell));
+                line.removeFromLeft (3);
+            }
+        }
+        r.removeFromTop (6);
+        return group;
+    };
+    hwGroup = routeGroup (hwRoutes);
+    virtGroup = routeGroup (virtRoutes);
+    r.removeFromTop (2);
 
     mute.setBounds (r.removeFromBottom (24));
     r.removeFromBottom (3);
@@ -444,9 +499,8 @@ void InputStripView::resized()
 //==============================================================================
 BusStripView::BusStripView (UiContext& c, int i)
     : ctx (c), index (i), bus (c.engine.buses[(size_t) i]),
-      header (c, kNumInputs + i, busCode (i), theme::busColour (i),
+      header (c, busSelectIndex (i), busCode (i), theme::busColour (i),
               [this] { return bus.name; }, [this] (juce::String n) { bus.name = n; }),
-      eq (c, *bus.eq.on, "EQ", theme::busColour (i)),
       lim (c, *bus.limOn, "LIM", theme::busColour (i)),
       mono (c, *bus.mono, "MONO", theme::good),
       sel (c, *bus.sel, "SEL", theme::learn),
@@ -454,7 +508,7 @@ BusStripView::BusStripView (UiContext& c, int i)
       fader (c, *bus.gain, theme::busColour (i)),
       meter (bus.meter)
 {
-    for (auto* comp : std::initializer_list<juce::Component*> { &header, &output, &outputStatus, &eq, &lim, &mono, &sel, &mute,
+    for (auto* comp : std::initializer_list<juce::Component*> { &header, &output, &outputStatus, &lim, &mono, &sel, &mute,
                                                                &fader, &meter, &dbLabel })
         addAndMakeVisible (comp);
 
@@ -470,6 +524,13 @@ BusStripView::BusStripView (UiContext& c, int i)
     dbPoll.v = this;
     ParamPoller::attach (&dbPoll);
     refresh();
+}
+
+void BusStripView::mouseDown (const juce::MouseEvent& e)
+{
+    ctx.select (busSelectIndex (index));
+    if (e.mods.isPopupMenu() && e.eventComponent == this)
+        header.showMenu();
 }
 
 void BusStripView::DbPoll::pollParams()
@@ -516,7 +577,7 @@ void BusStripView::updateMeters (float dt)
 void BusStripView::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (2.0f);
-    const bool sel = ctx.selected == kNumInputs + index;
+    const bool sel = ctx.selected == busSelectIndex (index);
     g.setColour (theme::panel);
     g.fillRoundedRectangle (r, 10.0f);
     if (bus.sel->isOn() || monitorShown)
@@ -535,8 +596,8 @@ void BusStripView::resized()
     r.removeFromTop (4);
     output.setBounds (r.removeFromTop (24));
     outputStatus.setBounds (r.removeFromTop (15));
-    r.removeFromTop (6);
-    layoutRow (r.removeFromTop (20), { &eq, &lim });
+    r.removeFromTop (10);
+    lim.setBounds (r.removeFromTop (20));
     r.removeFromTop (3);
     sel.setBounds (r.removeFromTop (20));
     r.removeFromTop (8);
@@ -551,5 +612,196 @@ void BusStripView::resized()
     meter.setBounds (meterArea.reduced (0, 14));
     r.removeFromRight (2);
     fader.setBounds (r);
+}
+//==============================================================================
+namespace
+{
+constexpr int kMargin = 8, kSectionGap = 30, kBusGroupGap = 14, kPlusSize = 26;
+juce::Font captionFont() { return theme::font (17.0f, true); }
+} // namespace
+
+StripArea::StripArea (UiContext& c) : ctx (c)
+{
+    inSec   = { "Inputs", theme::accentIn };
+    hwSec   = { "Hardware Outputs", theme::accentHw };
+    virtSec = { "Virtual Outputs", theme::accentVirt };
+    addIn.setTooltip ("Add an input channel");
+    addHw.setTooltip ("Add a hardware output (A bus)");
+    addVirt.setTooltip ("Add a virtual output (B bus)");
+    addIn.onClick   = [this] { if (ctx.addChannel) ctx.addChannel (0); };
+    addHw.onClick   = [this] { if (ctx.addChannel) ctx.addChannel (1); };
+    addVirt.onClick = [this] { if (ctx.addChannel) ctx.addChannel (2); };
+    for (auto* b : { &addIn, &addHw, &addVirt })
+        addAndMakeVisible (b);
+    rebuild();
+}
+
+void StripArea::rebuild()
+{
+    inStrips.clear();
+    busStrips.clear();
+    numHw = numVirt = 0;
+    auto& e = ctx.engine;
+    for (int i = 0; i < kMaxInputs; ++i)
+        if (e.isInputActive (i))
+        {
+            inStrips.push_back (std::make_unique<InputStripView> (ctx, i));
+            addAndMakeVisible (*inStrips.back());
+        }
+    for (int b = 0; b < kMaxBuses; ++b)
+        if (e.isBusActive (b))
+        {
+            busStrips.push_back (std::make_unique<BusStripView> (ctx, b));
+            addAndMakeVisible (*busStrips.back());
+            ++(isHwBus (b) ? numHw : numVirt);
+        }
+    addIn.setVisible (e.numActiveInputs() < kMaxInputs);
+    addHw.setVisible (numHw < kMaxHwBuses);
+    addVirt.setVisible (numVirt < kMaxVirtBuses);
+
+    const auto f = captionFont();
+    for (auto* sec : { &inSec, &hwSec, &virtSec })
+        sec->captionWidth = juce::GlyphArrangement::getStringWidthInt (f, sec->title);
+    resized();
+    repaint();
+}
+
+int StripArea::sectionWidth (const Section& sec, int strips, int w) const
+{
+    // Wide enough for the caption and its "+" button even with a single (or no) strip.
+    return juce::jmax (strips * w, sec.captionWidth + 10 + kPlusSize + 8);
+}
+
+int StripArea::totalWidth (int w) const
+{
+    return 2 * kMargin + kSectionGap + kBusGroupGap + sectionWidth (inSec, (int) inStrips.size(), w)
+         + sectionWidth (hwSec, numHw, w) + sectionWidth (virtSec, numVirt, w);
+}
+
+int StripArea::fitStripWidth (int viewWidth) const
+{
+    // Widest strips (up to kMaxStripWidth) that fit; sections with few strips are kept wide enough
+    // for their caption, which leaves less room for the others.
+    const int count[] = { (int) inStrips.size(), numHw, numVirt };
+    const Section* secs[] = { &inSec, &hwSec, &virtSec };
+    int w = kMaxStripWidth;
+    for (int pass = 0; pass < 3; ++pass)
+    {
+        int avail = viewWidth - 2 * kMargin - kSectionGap - kBusGroupGap, n = 0;
+        for (int k = 0; k < 3; ++k)
+        {
+            if (sectionWidth (*secs[k], count[k], w) > count[k] * w) avail -= sectionWidth (*secs[k], count[k], w);
+            else n += count[k];
+        }
+        w = n > 0 ? juce::jlimit (kMinStripWidth, kMaxStripWidth, avail / n) : kMaxStripWidth;
+    }
+    while (w > kMinStripWidth && totalWidth (w) > viewWidth) --w;
+    return w;
+}
+
+void StripArea::layoutFor (int viewWidth, int viewHeight, int scrollBarThickness)
+{
+    const int minHeight = kCaptionHeight + InputStripView::minimumHeight (numHw, numVirt);
+    const bool vertical = viewHeight < minHeight;           // window too low: scroll up / down
+    if (vertical) viewWidth -= scrollBarThickness;
+    stripWidth = fitStripWidth (viewWidth);
+    const int total = totalWidth (stripWidth);
+    const bool horizontal = total > viewWidth;
+    const int height = juce::jmax (minHeight, horizontal ? viewHeight - scrollBarThickness : viewHeight);
+    setSize (juce::jmax (total, viewWidth), height);
+    resized();
+}
+
+void StripArea::resized()
+{
+    const int w = stripWidth;
+    auto r = getLocalBounds().withTrimmedLeft (kMargin);
+    const int top = kCaptionHeight;
+
+
+    // Inputs
+    inSec.area = r.removeFromLeft (sectionWidth (inSec, (int) inStrips.size(), w));
+    {
+        auto strips = inSec.area.withTrimmedTop (top);
+        for (auto& s : inStrips) s->setBounds (strips.removeFromLeft (w));
+    }
+    r.removeFromLeft (kSectionGap);
+    hwSec.area = r.removeFromLeft (sectionWidth (hwSec, numHw, w));
+    r.removeFromLeft (kBusGroupGap);
+    virtSec.area = r.removeFromLeft (sectionWidth (virtSec, numVirt, w));
+    {
+        auto hw = hwSec.area.withTrimmedTop (top), virt = virtSec.area.withTrimmedTop (top);
+        for (int k = 0; k < (int) busStrips.size(); ++k)
+            busStrips[(size_t) k]->setBounds ((k < numHw ? hw : virt).removeFromLeft (w));
+    }
+
+    for (auto [sec, plus] : { std::pair<Section*, PlusButton*> { &inSec, &addIn }, { &hwSec, &addHw }, { &virtSec, &addVirt } })
+        plus->setBounds (sec->area.getX() + 6 + sec->captionWidth + 10, (kCaptionHeight - kPlusSize) / 2 + 1, kPlusSize, kPlusSize - 2);
+}
+
+juce::Rectangle<int> StripArea::stripBounds (int sel) const
+{
+    for (auto& s : inStrips)  if (s->getSelectIndex() == sel) return s->getBounds();
+    for (auto& b : busStrips) if (b->getSelectIndex() == sel) return b->getBounds();
+    return {};
+}
+
+void StripArea::paint (juce::Graphics& g)
+{
+    // Section captions
+    g.setFont (captionFont());
+    for (auto* sec : { &inSec, &hwSec, &virtSec })
+    {
+        g.setColour (sec->colour);
+        g.drawText (sec->title, sec->area.getX() + 6, 0, sec->captionWidth + 4, kCaptionHeight, juce::Justification::centredLeft, false);
+    }
+
+    // SEL: the input faders set the level on the selected bus.
+    if (selBus >= 0)
+    {
+        const int x = addIn.getRight() + 12;
+        g.setColour (theme::busColour (selBus));
+        g.setFont (theme::font (11.5f, true));
+        g.drawFittedText ("FADERS = LEVEL ON " + busCode (selBus)
+                              + (monBus >= 0 ? "   (monitoring on " + busCode (monBus) + ")" : juce::String()),
+                          juce::Rectangle<int> (x, 0, juce::jmax (0, inSec.area.getRight() - x - 4), kCaptionHeight),
+                          juce::Justification::centredLeft, 1, 0.8f);
+    }
+
+    // Divider between the inputs and the output section.
+    const float x = (float) inSec.area.getRight() + kSectionGap * 0.5f;
+    g.setColour (theme::outline.withAlpha (0.7f));
+    g.fillRect (juce::Rectangle<float> (x - 0.5f, 8.0f, 1.0f, (float) getHeight() - 16.0f));
+}
+
+void StripArea::setSelInfo (int sb, int mb)
+{
+    if (sb == selBus && mb == monBus) return;
+    selBus = sb;
+    monBus = mb;
+    repaint (inSec.area.withHeight (kCaptionHeight));
+}
+
+void StripArea::updateMeters (float dt)
+{
+    for (auto& s : inStrips) s->updateMeters (dt);
+    for (auto& s : busStrips) s->updateMeters (dt);
+}
+
+void StripArea::refreshStrips()
+{
+    for (auto& s : inStrips) s->refresh();
+    for (auto& s : busStrips) s->refresh();
+}
+
+void StripArea::repaintStrips()
+{
+    for (auto& s : inStrips) s->repaint();
+    for (auto& s : busStrips) s->repaint();
+}
+
+void StripArea::setFaderTarget (int bus)
+{
+    for (auto& s : inStrips) s->setFaderTarget (bus);
 }
 } // namespace hydra

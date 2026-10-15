@@ -4,11 +4,12 @@
 
 namespace hydra
 {
-/** 6-band parametric EQ bound to parameters; used by every input strip and every bus.
+/** 8-band parametric EQ bound to parameters; used by every input strip and every bus.
     Each band has its own on/off and filter type (bell, notch, band pass, cuts, shelves). */
 struct ParamEq
 {
-    static constexpr int kBands = 6;
+    static constexpr int kBands = 8;
+    static constexpr int kV1Bands = 6;   // sessions before 2026-10-15 had six bands
     // Same order (and indices) as Voicemeeter's EQ cell types.
     enum BandType { Bell = 0, Notch, BandPass, HighCut, LowCut, LowShelf, HighShelf, NumTypes };
 
@@ -31,6 +32,13 @@ struct ParamEq
         }
     }
 
+    /** Frequency a band starts at (its default). */
+    static float defaultFreq (int k) noexcept
+    {
+        static const float f[kBands] = { 80, 200, 500, 1000, 2500, 5000, 8000, 12000 };
+        return f[juce::jlimit (0, kBands - 1, k)];
+    }
+
     /** Types whose gain knob has no effect. */
     static bool typeUsesGain (int t) noexcept { return t == Bell || t == LowShelf || t == HighShelf; }
 
@@ -39,8 +47,7 @@ struct ParamEq
 
     void create (ParamRegistry& reg, const juce::String& idPrefix, const juce::String& namePrefix)
     {
-        static const float defFreq[kBands] = { 80, 250, 800, 2500, 6000, 12000 };
-        static const int defType[kBands] = { LowShelf, Bell, Bell, Bell, Bell, HighShelf };
+        static const int defType[kBands] = { LowShelf, Bell, Bell, Bell, Bell, Bell, Bell, HighShelf };
 
         juce::NormalisableRange<float> freqRange (20.0f, 20000.0f,
             [] (float s, float e, float n) { return s * std::pow (e / s, n); },
@@ -59,7 +66,7 @@ struct ParamEq
             bandOn[(size_t) k] = &reg.addToggle (bp + "on", bn + "On", false); // off = band not in use (no point shown)
             type[(size_t) k]   = &reg.addChoice (bp + "type", bn + "Type", typeNames(), defType[k]);
             gain[(size_t) k]   = &reg.add (bp + "gain", bn + "Gain", ParamType::Continuous, { -18.0f, 18.0f, 0.1f }, 0.0f, " dB");
-            freq[(size_t) k]   = &reg.add (bp + "freq", bn + "Freq", ParamType::Continuous, freqRange, defFreq[k], " Hz");
+            freq[(size_t) k]   = &reg.add (bp + "freq", bn + "Freq", ParamType::Continuous, freqRange, defaultFreq (k), " Hz");
             q[(size_t) k]      = &reg.add (bp + "q", bn + "Q", ParamType::Continuous, qRange, (k == 0 || k == kBands - 1) ? 0.7f : 1.0f);
         }
     }

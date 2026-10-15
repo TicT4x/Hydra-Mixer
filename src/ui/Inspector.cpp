@@ -181,7 +181,7 @@ private:
 };
 
 //==============================================================================
-/** 6-band EQ: type picker | curve | selected band controls. Shared by inputs and buses. */
+/** 8-band EQ: type picker | curve | selected band controls. Shared by inputs and buses. */
 class EqSection final : public juce::Component, private ParamPoller::Client
 {
 public:
@@ -610,7 +610,7 @@ class BusDetail final : public juce::Component
 public:
     BusDetail (UiContext& c, int b, std::function<void()> scan)
         : bus (c.engine.buses[(size_t) b]), colour (theme::busColour (b)),
-          eqSec (c, bus.eq, colour, kNumInputs + b), limSec ("Limiter", colour),
+          eqSec (c, bus.eq, colour, kMaxInputs + b), limSec ("Limiter", colour),
           fxSec ("VST3 Insert Chain", colour),
           limOn (c, *bus.limOn, "ON", colour), ceiling (c, *bus.limCeil, "CEILING", colour),
           bypass (c, *bus.fxBypass, "BYPASS", theme::mute),
@@ -650,6 +650,19 @@ private:
 };
 
 //==============================================================================
+/** Choice segments for the buses in use of one kind (A or B): labels and the matching choice values. */
+std::pair<juce::StringArray, std::vector<int>> activeBusChoices (const Engine& e, bool virtualBuses)
+{
+    juce::StringArray labels;
+    std::vector<int> values;
+    const int first = virtualBuses ? virtBusIndex (0) : hwBusIndex (0);
+    const int count = virtualBuses ? kMaxVirtBuses : kMaxHwBuses;
+    for (int k = 0; k < count; ++k)
+        if (e.isBusActive (first + k)) { labels.add (busCode (first + k)); values.push_back (k); }
+    if (labels.isEmpty()) { labels.add (virtualBuses ? "no B bus" : "no A bus"); values.push_back (0); }
+    return { labels, values };
+}
+
 juce::String formatTime (double seconds)
 {
     const auto t = (int) seconds;
@@ -658,7 +671,7 @@ juce::String formatTime (double seconds)
     return hms + ":" + juce::String (t % 60).paddedLeft ('0', 2) + "." + juce::String ((int) (seconds * 10.0) % 10);
 }
 
-/** Recorder: record a virtual bus (B1-B3) to WAV, play back files to any buses. */
+/** Recorder: record a virtual bus (B) to WAV, play back files to any buses. */
 class RecorderDetail final : public juce::Component
 {
 public:
@@ -668,16 +681,18 @@ public:
           playSec ("Playback", theme::good), outSec ("Playback Outputs", theme::accentHw),
           recBtn (c, *rec.record, "REC", theme::mute), playBtn (c, *rec.play, "PLAY", theme::good),
           loopBtn (c, *rec.loop, "LOOP", theme::good),
-          source (c, *rec.source, theme::accentVirt), level (c, *rec.level, "LEVEL", theme::good)
+          source (c, *rec.source, theme::accentVirt, activeBusChoices (c.engine, true).first, activeBusChoices (c.engine, true).second),
+          level (c, *rec.level, "LEVEL", theme::good)
     {
         for (juce::Component* s : std::initializer_list<juce::Component*> { &transportSec, &sourceSec, &playSec, &outSec }) addAndMakeVisible (s);
         for (juce::Component* k : std::initializer_list<juce::Component*> { &recBtn, &playBtn, &loopBtn }) transportSec.addAndMakeVisible (k);
         for (juce::Component* k : std::initializer_list<juce::Component*> { &source, &folderChip, &formatChip }) sourceSec.addAndMakeVisible (k);
         for (juce::Component* k : std::initializer_list<juce::Component*> { &openChip, &lastChip, &showChip, &level }) playSec.addAndMakeVisible (k);
-        for (int b = 0; b < kNumBuses; ++b)
+        for (int b = 0; b < kMaxBuses; ++b)
         {
-            outs.push_back (std::make_unique<Toggle> (c, *rec.out[(size_t) b], busCode (b), theme::busColour (b)));
-            outSec.addAndMakeVisible (*outs.back());
+            if (! c.engine.isBusActive (b)) continue;
+            (isHwBus (b) ? hwOuts : virtOuts).push_back (std::make_unique<Toggle> (c, *rec.out[(size_t) b], busCode (b), theme::busColour (b)));
+            outSec.addAndMakeVisible (*(isHwBus (b) ? hwOuts : virtOuts).back());
         }
         for (auto* chip : { &folderChip, &formatChip, &openChip, &lastChip, &showChip })
         {
@@ -742,11 +757,12 @@ public:
         fileArea = p.translated (playSec.getX(), playSec.getY());
 
         auto o = outSec.content().withSizeKeepingCentre (outSec.content().getWidth(), 50);
+        const int perRow = juce::jmax (5, (int) juce::jmax (hwOuts.size(), virtOuts.size()));
+        const int cell = juce::jmin (64, (o.getWidth() - 4 * (perRow - 1)) / perRow);
         auto hw = o.removeFromTop (22);
-        const int cell = juce::jmin (64, (hw.getWidth() - 4 * 4) / 5);
-        for (int b = 0; b < kNumHwBuses; ++b) { outs[(size_t) b]->setBounds (hw.removeFromLeft (cell)); hw.removeFromLeft (4); }
+        for (auto& t : hwOuts) { t->setBounds (hw.removeFromLeft (cell)); hw.removeFromLeft (4); }
         o.removeFromTop (6);
-        for (int b = kNumHwBuses; b < kNumBuses; ++b) { outs[(size_t) b]->setBounds (o.removeFromLeft (cell)); o.removeFromLeft (4); }
+        for (auto& t : virtOuts) { t->setBounds (o.removeFromLeft (cell)); o.removeFromLeft (4); }
     }
 
     void paintOverChildren (juce::Graphics& g) override
@@ -852,7 +868,7 @@ private:
     Knob level;
     Chip folderChip { "Folder...", theme::text }, formatChip { "WAV 24", theme::text };
     Chip openChip { "Open File...", theme::text }, lastChip { "Last Take", theme::text }, showChip { "Show", theme::text };
-    std::vector<std::unique_ptr<Toggle>> outs;
+    std::vector<std::unique_ptr<Toggle>> hwOuts, virtOuts;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::Rectangle<int> timeArea, sourceInfo, fileArea;
     juce::String shownTime, stateText, sourceText, fileTitle, fileInfo;
@@ -861,11 +877,11 @@ private:
 } // namespace
 
 //==============================================================================
-struct PluginChainView::Card : juce::Component
+struct PluginChainView::Card : juce::Component, juce::SettableTooltipClient
 {
     Card (PluginChainView& o, int i) : owner (o), index (i)
     {
-        for (auto* b : { &bypass, &edit, &left, &right, &remove })
+        for (auto* b : { &bypass, &edit, &remove })
         {
             addAndMakeVisible (b);
             b->showArrow = false;
@@ -877,18 +893,17 @@ struct PluginChainView::Card : juce::Component
         };
         edit.onClick   = [this] { owner.openEditor (index); };
         // Chain edits rebuild the cards, so defer them until this click handler has returned.
-        auto later = [this] (std::function<void (PluginChain&, int)> fn)
+        remove.onClick = [this]
         {
             juce::Component::SafePointer<PluginChainView> o (&owner);
             const int ix = index;
-            juce::MessageManager::callAsync ([o, ix, fn] { if (o != nullptr) { fn (o->chain, ix); o->refresh(); } });
+            juce::MessageManager::callAsync ([o, ix] { if (o != nullptr) { o->chain.remove (ix); o->refresh(); } });
         };
-        left.onClick   = [later] { later ([] (PluginChain& c, int i) { c.move (i, i - 1); }); };
-        right.onClick  = [later] { later ([] (PluginChain& c, int i) { c.move (i, i + 1); }); };
-        remove.onClick = [later] { later ([] (PluginChain& c, int i) { c.remove (i); }); };
         bypass.setTooltip ("Bypass this plugin");
         edit.setTooltip ("Open plugin editor");
         remove.setTooltip ("Remove plugin");
+        setTooltip ("Drag to change the order. Double-click: open the editor.");
+        setMouseCursor (juce::MouseCursor::DraggingHandCursor);
         refresh();
     }
 
@@ -909,11 +924,20 @@ struct PluginChainView::Card : juce::Component
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat().reduced (2.0f);
-        g.setColour (theme::raised);
+        if (dragging)
+            juce::DropShadow (juce::Colours::black.withAlpha (0.5f), 12, { 0, 3 }).drawForRectangle (g, r.toNearestInt());
+        g.setColour (dragging ? theme::raised.brighter (0.08f) : theme::raised);
         g.fillRoundedRectangle (r, 7.0f);
-        g.setColour (bypass.active ? owner.accent.withAlpha (0.6f) : theme::outline);
-        g.drawRoundedRectangle (r, 7.0f, 1.0f);
-        auto t = r.reduced (10.0f, 8.0f);
+        g.setColour (dragging ? owner.accent : bypass.active ? owner.accent.withAlpha (0.6f) : theme::outline);
+        g.drawRoundedRectangle (r, 7.0f, dragging ? 1.5f : 1.0f);
+
+        // Grip (drag handle) at the top right
+        g.setColour (theme::textFaint);
+        for (int row = 0; row < 3; ++row)
+            for (int col = 0; col < 2; ++col)
+                g.fillEllipse (r.getRight() - 16.0f + (float) col * 5.0f, r.getY() + 9.0f + (float) row * 5.0f, 2.2f, 2.2f);
+
+        auto t = r.reduced (10.0f, 8.0f).withTrimmedRight (12.0f);
         g.setColour (theme::text);
         g.setFont (theme::font (13.0f, true));
         g.drawFittedText (name, t.removeFromTop (18.0f).toNearestInt(), juce::Justification::centredLeft, 1);
@@ -930,15 +954,43 @@ struct PluginChainView::Card : juce::Component
     void resized() override
     {
         auto r = getLocalBounds().reduced (8).removeFromBottom (22);
-        rowLayout (r, { &bypass, &edit, &left, &right, &remove }, 3);
+        rowLayout (r, { &bypass, &edit, &remove }, 3);
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        dragging = false;
+        grabX = e.getMouseDownX();
+    }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (! dragging)
+        {
+            if (e.getDistanceFromDragStart() < 6) return;
+            dragging = true;
+            toFront (false);
+            repaint();
+        }
+        owner.cardDragged (index, e.getEventRelativeTo (getParentComponent()).x - grabX);
+    }
+
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        if (! dragging) return;
+        dragging = false;
+        repaint();
+        owner.cardDropped (index);
     }
 
     void mouseDoubleClick (const juce::MouseEvent&) override { owner.openEditor (index); }
 
     PluginChainView& owner;
     int index;
+    bool dragging = false;
+    int grabX = 0;
     juce::String name, vendor, latency;
-    Chip bypass { "ON" }, edit { "EDIT" }, left { "<" }, right { ">" }, remove { "X" };
+    Chip bypass { "ON" }, edit { "EDIT" }, remove { "X" };
 };
 
 PluginChainView::PluginChainView (UiContext& c, PluginChain& ch, juce::Colour a) : ctx (c), chain (ch), accent (a)
@@ -946,17 +998,26 @@ PluginChainView::PluginChainView (UiContext& c, PluginChain& ch, juce::Colour a)
     addAndMakeVisible (addButton);
     addButton.showArrow = false;
     addButton.centred = true;
-    addButton.onClick = [this] { showAddMenu(); };
+    addButton.onClick = [this] { showAddMenu (addButton); };
+    plusCard.colour = accent;
+    plusCard.setTooltip ("Add a VST3 plugin at the end of the chain");
+    plusCard.onClick = [this] { showAddMenu (plusCard); };
+    viewport.setViewedComponent (&row, false);
+    viewport.setScrollBarsShown (false, true);
+    viewport.setScrollBarThickness (8);
+    addAndMakeVisible (viewport);
+    row.addAndMakeVisible (plusCard);
     refresh();
 }
 
 void PluginChainView::refresh()
 {
     cards.clear();
+    dragIndex = dropIndex = -1;
     for (int i = 0; i < chain.size(); ++i)
     {
         cards.push_back (std::make_unique<Card> (*this, i));
-        addAndMakeVisible (*cards.back());
+        row.addAndMakeVisible (*cards.back());
     }
     resized();
     repaint();
@@ -976,19 +1037,70 @@ void PluginChainView::paint (juce::Graphics& g)
 
 void PluginChainView::resized()
 {
-    auto r = getLocalBounds();
-    addButton.setBounds (r.removeFromLeft (170).withSizeKeepingCentre (170, 32));
-    r.removeFromLeft (8);
-    for (auto& c : cards)
+    // Empty chain: a labelled "Add" button. With plugins: their cards and a "+" after the last one.
+    const bool empty = cards.empty();
+    addButton.setVisible (empty);
+    viewport.setVisible (! empty);
+    if (empty)
     {
-        if (r.getWidth() < 120) { c->setVisible (false); continue; }
-        c->setVisible (true);
-        c->setBounds (r.removeFromLeft (juce::jmin (200, r.getWidth())));
-        r.removeFromLeft (4);
+        addButton.setBounds (getLocalBounds().removeFromLeft (170).withSizeKeepingCentre (170, 32));
+        return;
     }
+    viewport.setBounds (getLocalBounds());
+    const int n = (int) cards.size();
+    cardWidth = juce::jlimit (kMinCardWidth, kMaxCardWidth, (getWidth() - kPlusWidth) / n - kCardGap);
+    const int needed = n * (cardWidth + kCardGap) + kPlusWidth;
+    const int h = needed > getWidth() ? getHeight() - viewport.getScrollBarThickness() : getHeight();
+    row.setSize (juce::jmax (needed, getWidth()), juce::jmax (40, h));
+    layoutCards();
 }
 
-void PluginChainView::showAddMenu()
+void PluginChainView::layoutCards()
+{
+    const int h = row.getHeight();
+    int slot = 0;
+    for (int i = 0; i < (int) cards.size(); ++i)
+    {
+        if (i == dragIndex) continue;            // follows the mouse
+        if (slot == dropIndex) ++slot;           // gap where the dragged card would land
+        cards[(size_t) i]->setBounds (slot * (cardWidth + kCardGap), 0, cardWidth, h);
+        ++slot;
+    }
+    plusCard.setBounds ((int) cards.size() * (cardWidth + kCardGap), 0, kPlusWidth, h);
+}
+
+void PluginChainView::cardDragged (int index, int x)
+{
+    auto& card = *cards[(size_t) index];
+    const int n = (int) cards.size();
+    const int maxX = (n - 1) * (cardWidth + kCardGap);
+    card.setTopLeftPosition (juce::jlimit (0, juce::jmax (0, maxX), x), 0);
+    const int target = juce::jlimit (0, n - 1, (card.getX() + cardWidth / 2) / (cardWidth + kCardGap));
+    if (dragIndex != index || dropIndex != target)
+    {
+        dragIndex = index;
+        dropIndex = target;
+        layoutCards();
+    }
+    viewport.autoScroll (card.getX() - viewport.getViewPositionX() + cardWidth / 2, 10, 30, 8);
+}
+
+void PluginChainView::cardDropped (int index)
+{
+    const int to = dropIndex;
+    dragIndex = dropIndex = -1;
+    if (to < 0 || to == index) { layoutCards(); return; }
+    // Rebuilding the cards destroys the one that called us: do it after its mouse handler returned.
+    juce::Component::SafePointer<PluginChainView> safe (this);
+    juce::MessageManager::callAsync ([safe, index, to]
+    {
+        if (safe == nullptr) return;
+        safe->chain.move (index, to);
+        safe->refresh();
+    });
+}
+
+void PluginChainView::showAddMenu (juce::Component& target)
 {
     auto types = ctx.engine.pluginHost.known.getTypes();
     juce::PopupMenu m;
@@ -1020,7 +1132,7 @@ void PluginChainView::showAddMenu()
         m.addItem ("(no plugins found yet)", false, false, nullptr);
     m.addSeparator();
     m.addItem ("Scan for VST3 plugins...", [this] { if (onScanRequested) onScanRequested(); });
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&addButton));
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target));
 }
 
 void PluginChainView::openEditor (int index)
@@ -1386,7 +1498,7 @@ void EqGraph::mouseDown (const juce::MouseEvent& e)
         if (! plot.contains (e.position)) return;
         const auto at = onGhost ? ghostAt : e.position; // on the curve: the band lands where the ghost was
         k = addBand (xToFreq (at.x), juce::jlimit (-18.0f, 18.0f, yToDb (at.y)));
-        if (k < 0) return; // all six bands in use
+        if (k < 0) return; // all bands in use
         justAdded = k;
         justAddedTime = juce::Time::getMillisecondCounterHiRes();
     }
@@ -1462,8 +1574,7 @@ struct EqEditor::BandColumn final : public juce::Component, private ParamPoller:
         if (inUse()) { owner.selectBand (band); return; }
         if (e.eventComponent == this)
         {
-            static const float defFreq[ParamEq::kBands] = { 80, 250, 800, 2500, 6000, 12000 };
-            if (const int k = owner.graph.addBand (defFreq[band], 0.0f); k >= 0) owner.selectBand (k);
+            if (const int k = owner.graph.addBand (ParamEq::defaultFreq (band), 0.0f); k >= 0) owner.selectBand (k);
         }
     }
 
@@ -1546,10 +1657,10 @@ struct EqEditor::BandColumn final : public juce::Component, private ParamPoller:
 
 EqEditor::EqEditor (UiContext& c, int sel)
     : ctx (c), selectIndex (sel),
-      eq (sel < kNumInputs ? c.engine.inputs[(size_t) sel].eq : c.engine.buses[(size_t) (sel - kNumInputs)].eq),
-      colour (sel < kNumInputs ? theme::accentIn : theme::busColour (sel - kNumInputs)),
+      eq (sel < kMaxInputs ? c.engine.inputs[(size_t) sel].eq : c.engine.buses[(size_t) (sel - kMaxInputs)].eq),
+      colour (sel < kMaxInputs ? theme::accentIn : theme::busColour (sel - kMaxInputs)),
       onToggle (c, *eq.on, "EQ ON", colour), graph (c, eq, colour, true),
-      tap (sel < kNumInputs ? c.engine.inputs[(size_t) sel].spectrum : c.engine.buses[(size_t) (sel - kNumInputs)].spectrum),
+      tap (sel < kMaxInputs ? c.engine.inputs[(size_t) sel].spectrum : c.engine.buses[(size_t) (sel - kMaxInputs)].spectrum),
       fft (std::make_unique<juce::dsp::FFT> (kFftOrder))
 {
     history.assign (kFftSize, 0.0f);
@@ -1560,8 +1671,8 @@ EqEditor::EqEditor (UiContext& c, int sel)
     tap.ring.skip (tap.ring.available()); // stale audio from an earlier view
     tap.users.fetch_add (1);
 
-    title = sel < kNumInputs ? "IN " + juce::String (sel + 1) + "   " + c.engine.inputs[(size_t) sel].name
-                             : busCode (sel - kNumInputs) + "   " + c.engine.buses[(size_t) (sel - kNumInputs)].name;
+    title = sel < kMaxInputs ? "IN " + juce::String (sel + 1) + "   " + c.engine.inputs[(size_t) sel].name
+                             : busCode (sel - kMaxInputs) + "   " + c.engine.buses[(size_t) (sel - kMaxInputs)].name;
     addAndMakeVisible (onToggle);
     addAndMakeVisible (graph);
     for (int k = 0; k < ParamEq::kBands; ++k)
@@ -1570,9 +1681,15 @@ EqEditor::EqEditor (UiContext& c, int sel)
         addAndMakeVisible (*bands.back());
     }
     graph.onBandSelected = [this] (int) { for (auto& b : bands) b->repaint(); };
+    setWantsKeyboardFocus (true);
     for (int k = 0; k < ParamEq::kBands; ++k) // start on the first band in use
         if (eq.bandOn[(size_t) k]->isOn()) { graph.setSelectedBand (k); break; }
-    setSize (1240, 780);
+    setSize (1240, 820);
+}
+
+bool EqEditor::keyPressed (const juce::KeyPress& k)
+{
+    return ctx.handleEqUndoKey (k, selectIndex);
 }
 
 EqEditor::~EqEditor()
@@ -1674,7 +1791,7 @@ void EqEditor::paint (juce::Graphics& g)
     g.setColour (theme::textFaint);
     g.setFont (theme::font (11.5f));
     g.drawText ("Click: add band.  Drag: frequency / gain.  Wheel: Q.  Double-click / right-click a point: remove, type.  "
-                "Background: live spectrum after the EQ (dBFS on the right).",
+                "Ctrl+Z / Ctrl+Y: undo / redo.  Background: live spectrum after the EQ (dBFS on the right).",
                 head.withTrimmedLeft (260).withTrimmedRight (120), juce::Justification::centredLeft);
 }
 
@@ -1683,11 +1800,16 @@ void EqEditor::resized()
     auto r = getLocalBounds().reduced (14, 0);
     auto head = r.removeFromTop (44);
     onToggle.setBounds (head.removeFromRight (96).withSizeKeepingCentre (96, 26));
-    auto bottom = r.removeFromBottom (juce::jlimit (170, 230, r.getHeight() / 3)).withTrimmedBottom (10);
+    // All bands in one row on wide windows, otherwise two rows of four.
+    const int perRow = r.getWidth() / ParamEq::kBands >= 210 ? ParamEq::kBands : ParamEq::kBands / 2;
+    const int rows = ParamEq::kBands / perRow;
+    const int rowH = juce::jlimit (150, 220, r.getHeight() / (rows == 1 ? 3 : 4));
+    auto bottom = r.removeFromBottom (rowH * rows + 10).withTrimmedBottom (10);
     r.removeFromBottom (8);
     graph.setBounds (r);
-    const int w = bottom.getWidth() / ParamEq::kBands;
-    for (auto& b : bands) b->setBounds (bottom.removeFromLeft (w));
+    const int w = bottom.getWidth() / perRow;
+    for (int k = 0; k < (int) bands.size(); ++k)
+        bands[(size_t) k]->setBounds (bottom.getX() + (k % perRow) * w, bottom.getY() + (k / perRow) * rowH, w, rowH);
 }
 
 //==============================================================================
@@ -1700,8 +1822,8 @@ void Inspector::showChannel (int sel)
     current = sel;
     auto scan = [this] { if (onScanRequested) onScanRequested(); };
     if (sel == kRecorderSelect) content = std::make_unique<RecorderDetail> (ctx);
-    else if (sel < kNumInputs)  content = std::make_unique<InputDetail> (ctx, sel, scan);
-    else                        content = std::make_unique<BusDetail> (ctx, sel - kNumInputs, scan);
+    else if (sel < kMaxInputs)  content = std::make_unique<InputDetail> (ctx, sel, scan);
+    else                        content = std::make_unique<BusDetail> (ctx, sel - kMaxInputs, scan);
     addAndMakeVisible (*content);
     shownLatency = latencyText();
     resized();
@@ -1723,7 +1845,7 @@ juce::String Inspector::latencyText() const
         if (rec.isPlaying())   return "PLAYING";
         return {};
     }
-    if (current < kNumInputs)
+    if (current < kMaxInputs)
     {
         const auto& s = e.inputs[(size_t) current];
         if (s.source.kind == IoTarget::Kind::None) return "LATENCY   no source selected";
@@ -1737,7 +1859,7 @@ juce::String Inspector::latencyText() const
     }
     else
     {
-        const auto& b = e.buses[(size_t) (current - kNumInputs)];
+        const auto& b = e.buses[(size_t) (current - kMaxInputs)];
         const double fx = 1000.0 * b.plugins.getTotalLatency() / sr;
         const double dev = e.getIoLatencyMs (b.output, false);
         t << "LATENCY   output " << (dev < 0 ? juce::String ("offline") : ms (dev));
@@ -1765,8 +1887,8 @@ void Inspector::paint (juce::Graphics& g)
         g.drawText (shownLatency, title, juce::Justification::centredRight);
         return;
     }
-    const bool isBus = current >= kNumInputs;
-    const int idx = isBus ? current - kNumInputs : current;
+    const bool isBus = current >= kMaxInputs;
+    const int idx = isBus ? current - kMaxInputs : current;
     const auto colour = isBus ? theme::busColour (idx) : theme::accentIn;
     const auto name = isBus ? ctx.engine.buses[(size_t) idx].name : ctx.engine.inputs[(size_t) idx].name;
     g.setColour (colour);

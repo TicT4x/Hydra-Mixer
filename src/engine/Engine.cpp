@@ -78,10 +78,10 @@ Engine::Engine()
     types.add (juce::AudioIODeviceType::createAudioIODeviceType_WASAPI (juce::WASAPIDeviceMode::exclusive));
     types.add (juce::AudioIODeviceType::createAudioIODeviceType_WASAPI (juce::WASAPIDeviceMode::sharedLowLatency));
     types.add (juce::AudioIODeviceType::createAudioIODeviceType_WASAPI (juce::WASAPIDeviceMode::shared));
-    types.removeObject (nullptr);
+    while (types.contains (nullptr)) types.removeObject (nullptr);
     rescanDevices();
 
-    for (int i = 0; i < kNumInputs; ++i)
+    for (int i = 0; i < kMaxInputs; ++i)
     {
         inputs[(size_t) i].index = i;
         inputs[(size_t) i].name = "Input " + juce::String (i + 1);
@@ -89,7 +89,7 @@ Engine::Engine()
         inputs[(size_t) i].l.assign (kMaxBlock, 0.0f);
         inputs[(size_t) i].r.assign (kMaxBlock, 0.0f);
     }
-    for (int b = 0; b < kNumBuses; ++b)
+    for (int b = 0; b < kMaxBuses; ++b)
     {
         buses[(size_t) b].index = b;
         buses[(size_t) b].name = busCode (b);
@@ -114,12 +114,13 @@ Engine::~Engine()
 
 void Engine::createParams()
 {
-    for (int i = 0; i < kNumInputs; ++i)
+    for (int i = 0; i < kMaxInputs; ++i)
     {
         auto& s = inputs[(size_t) i];
         const auto p = "in" + juce::String (i + 1) + ".";
         const auto n = "In " + juce::String (i + 1) + " ";
 
+        s.active     = &params.addToggle (p + "active", n + "In Use", i < kDefaultInputs);
         s.gain       = &params.add (p + "gain", n + "Fader", ParamType::Continuous, faderRange(), 0.0f, " dB");
         s.trim       = &params.add (p + "trim", n + "Gain", ParamType::Continuous, linRange (-24, 24, 0.1f), 0.0f, " dB");
         s.pan        = &params.add (p + "pan", n + "Pan", ParamType::Continuous, linRange (-1, 1, 0.01f), 0.0f);
@@ -151,18 +152,20 @@ void Engine::createParams()
         s.dnAmount     = &params.add (p + "dn.amount", n + "Denoiser Amount", ParamType::Continuous, linRange (0, 100, 1.0f), 100.0f, " %");
         s.dnMode       = &params.addChoice (p + "dn.mode", n + "Denoiser Latency Mode", dsp::Denoiser::modeNames(), dsp::Denoiser::Low);
         s.fxBypass   = &params.addToggle (p + "fx.bypass", n + "FX Bypass");
-        for (int b = 0; b < kNumBuses; ++b)
+        for (int b = 0; b < kMaxBuses; ++b)
             s.route[(size_t) b] = &params.addToggle (p + "route." + busCode (b), n + "-> " + busCode (b), b == 0);
-        for (int b = 0; b < kNumBuses; ++b)
+        for (int b = 0; b < kMaxBuses; ++b)
             s.send[(size_t) b] = &params.add (p + "send." + busCode (b), n + "Level -> " + busCode (b), ParamType::Continuous, faderRange(), 0.0f, " dB");
     }
 
-    for (int b = 0; b < kNumBuses; ++b)
+    for (int b = 0; b < kMaxBuses; ++b)
     {
         auto& bus = buses[(size_t) b];
         const auto p = "bus." + busCode (b) + ".";
         const auto n = "Bus " + busCode (b) + " ";
 
+        bus.active   = &params.addToggle (p + "active", n + "In Use",
+                                          isHwBus (b) ? b < hwBusIndex (kDefaultHwBuses) : b < virtBusIndex (kDefaultVirtBuses));
         bus.gain     = &params.add (p + "gain", n + "Fader", ParamType::Continuous, faderRange(), 0.0f, " dB");
         bus.mute     = &params.addToggle (p + "mute", n + "Mute");
         bus.mono     = &params.addToggle (p + "mono", n + "Mono");
@@ -174,8 +177,112 @@ void Engine::createParams()
     }
 
     monOn  = &params.addToggle ("mon.on", "Monitor Selected Bus");
-    monBus = &params.addChoice ("mon.bus", "Monitor Output", { "A1", "A2", "A3", "A4", "A5" }, 0);
+    juce::StringArray hwCodes;
+    for (int a = 0; a < kMaxHwBuses; ++a) hwCodes.add (busCode (hwBusIndex (a)));
+    monBus = &params.addChoice ("mon.bus", "Monitor Output", hwCodes, 0);
     recorder.createParams (params);
+}
+
+//==============================================================================
+int Engine::numActiveInputs() const noexcept
+{
+    int n = 0;
+    for (auto& s : inputs) n += s.active->isOn() ? 1 : 0;
+    return n;
+}
+
+int Engine::numActiveBuses (bool virtualBuses) const noexcept
+{
+    int n = 0;
+    for (int b = 0; b < kMaxBuses; ++b)
+        if (isHwBus (b) != virtualBuses && buses[(size_t) b].active->isOn()) ++n;
+    return n;
+}
+
+uint32_t Engine::getLayoutVersion() const noexcept
+{
+    uint32_t v = 0;
+    for (auto& s : inputs) v += s.active->getVersion();
+    for (auto& b : buses)  v += b.active->getVersion();
+    return v;
+}
+
+int Engine::addInput()
+{
+    for (int i = 0; i < kMaxInputs; ++i)
+        if (! inputs[(size_t) i].active->isOn())
+        {
+            inputs[(size_t) i].active->set (1.0f);
+            sendChangeMessage();
+            return i;
+        }
+    return -1;
+}
+
+int Engine::addBus (bool virtualBus)
+{
+    const int first = virtualBus ? virtBusIndex (0) : hwBusIndex (0);
+    const int count = virtualBus ? kMaxVirtBuses : kMaxHwBuses;
+    for (int b = first; b < first + count; ++b)
+        if (! buses[(size_t) b].active->isOn())
+        {
+            buses[(size_t) b].active->set (1.0f);
+            sendChangeMessage();
+            return b;
+        }
+    return -1;
+}
+
+namespace
+{
+/** Resets every parameter whose id starts with prefix (except the slot's "active" switch). */
+void resetWithPrefix (ParamRegistry& reg, const juce::String& prefix, std::vector<Param*>& out)
+{
+    for (auto& p : reg.all())
+        if (p->id.startsWith (prefix) && ! p->id.endsWith (".active"))
+        {
+            p->reset();
+            out.push_back (p.get());
+        }
+}
+} // namespace
+
+std::vector<Param*> Engine::removeInput (int i)
+{
+    std::vector<Param*> reset;
+    if (! juce::isPositiveAndBelow (i, kMaxInputs) || ! isInputActive (i) || numActiveInputs() <= 1)
+        return reset;
+
+    auto& s = inputs[(size_t) i];
+    s.active->set (0.0f);   // the audio thread skips the strip from the next block on
+    resetWithPrefix (params, "in" + juce::String (i + 1) + ".", reset);
+    s.name = "Input " + juce::String (i + 1);
+    s.source = {};
+    s.plugins.clear();
+    rebuildGraph();
+    sendChangeMessage();
+    return reset;
+}
+
+std::vector<Param*> Engine::removeBus (int b)
+{
+    std::vector<Param*> reset;
+    if (! juce::isPositiveAndBelow (b, kMaxBuses) || ! isBusActive (b)) return reset;
+    if (isHwBus (b) && numActiveBuses (false) <= 1) return reset; // keep at least one A bus
+
+    auto& bus = buses[(size_t) b];
+    bus.active->set (0.0f);
+    resetWithPrefix (params, "bus." + busCode (b) + ".", reset);
+    for (auto& s : inputs)
+        for (auto* p : { s.route[(size_t) b], s.send[(size_t) b] }) { p->reset(); reset.push_back (p); }
+    if (auto* p = recorder.out[(size_t) b]) { p->set (0.0f); reset.push_back (p); }
+    bus.name = busCode (b);
+    bus.output = {};
+    bus.plugins.clear();
+    if (selOwner == b) selOwner = -1;
+    rebuildGraph();
+    sendChangeMessage();
+    return reset;
 }
 
 //==============================================================================
@@ -390,8 +497,8 @@ void Engine::rebuildGraph()
         v.push_back (t.channel);
         if (! t.mono) v.push_back (t.channel + 1);
     };
-    for (auto& s : inputs) if (isSecondaryAsio (s.source)) addChannels (asioIns[s.source.deviceName], s.source);
-    for (auto& b : buses)  if (isSecondaryAsio (b.output)) addChannels (asioOuts[b.output.deviceName], b.output);
+    for (auto& s : inputs) if (s.active->isOn() && isSecondaryAsio (s.source)) addChannels (asioIns[s.source.deviceName], s.source);
+    for (auto& b : buses)  if (b.active->isOn() && isSecondaryAsio (b.output)) addChannels (asioOuts[b.output.deviceName], b.output);
     auto channelsFor = [&] (const IoTarget& t, std::map<juce::String, std::vector<int>>& m)
     {
         return isSecondaryAsio (t) ? m[t.deviceName] : std::vector<int>();
@@ -423,12 +530,14 @@ void Engine::rebuildGraph()
         return nullptr;
     };
 
-    for (int i = 0; i < kNumInputs; ++i)
+    for (int i = 0; i < kMaxInputs; ++i)
     {
         const auto& t = inputs[(size_t) i].source;
         auto& m = g->in[(size_t) i];
         m.ch = t.channel; m.chR = t.channel + 1; m.mono = t.mono; m.kind = t.kind;
-        if (isMasterAsio (t))
+        if (! inputs[(size_t) i].active->isOn())
+            m.kind = IoTarget::Kind::None; // removed channel: never opens its device
+        else if (isMasterAsio (t))
             m.kind = IoTarget::Kind::Master; // the master's own driver: use its channels directly
         else if (t.kind == IoTarget::Kind::Device || t.kind == IoTarget::Kind::Loopback || t.kind == IoTarget::Kind::App)
         {
@@ -446,12 +555,14 @@ void Engine::rebuildGraph()
             m.kind = IoTarget::Kind::None; // virtual driver: not installed yet
     }
 
-    for (int b = 0; b < kNumBuses; ++b)
+    for (int b = 0; b < kMaxBuses; ++b)
     {
         const auto& t = buses[(size_t) b].output;
         auto& m = g->out[(size_t) b];
         m.ch = t.channel; m.chR = t.channel + 1; m.mono = t.mono; m.kind = t.kind;
-        if (isMasterAsio (t))
+        if (! buses[(size_t) b].active->isOn())
+            m.kind = IoTarget::Kind::None;
+        else if (isMasterAsio (t))
             m.kind = IoTarget::Kind::Master;
         else if (t.kind == IoTarget::Kind::Device)
         {
@@ -487,8 +598,8 @@ void Engine::publishGraph (std::unique_ptr<Graph> g)
 
 int Engine::getSelectedBus() const noexcept
 {
-    for (int b = 0; b < kNumBuses; ++b)
-        if (buses[(size_t) b].sel->isOn()) return b;
+    for (int b = 0; b < kMaxBuses; ++b)
+        if (buses[(size_t) b].sel->isOn() && buses[(size_t) b].active->isOn()) return b;
     return -1;
 }
 
@@ -496,8 +607,8 @@ int Engine::getMonitorBus() const noexcept
 {
     const int sel = getSelectedBus();
     if (sel < 0 || ! monOn->isOn()) return -1;
-    const int mon = juce::jlimit (0, kNumHwBuses - 1, juce::roundToInt (monBus->get()));
-    return mon == sel ? -1 : mon;
+    const int mon = juce::jlimit (0, kMaxHwBuses - 1, juce::roundToInt (monBus->get()));
+    return mon == sel || ! buses[(size_t) mon].active->isOn() ? -1 : mon;
 }
 
 Param* Engine::faderTarget (Param* p) const noexcept
@@ -513,10 +624,10 @@ void Engine::enforceExclusiveSelect()
 {
     // Only one bus can be selected: the most recently switched on one wins.
     int newest = -1, count = 0;
-    for (int b = 0; b < kNumBuses; ++b)
+    for (int b = 0; b < kMaxBuses; ++b)
         if (buses[(size_t) b].sel->isOn()) { ++count; if (b != selOwner || newest < 0) newest = b; }
     if (count > 1)
-        for (int b = 0; b < kNumBuses; ++b)
+        for (int b = 0; b < kMaxBuses; ++b)
             if (b != newest) buses[(size_t) b].sel->set (0.0f);
     selOwner = count > 0 ? newest : -1;
 }
@@ -629,10 +740,10 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
     }
 
     bool anySolo = false;
-    for (auto& s : inputs) anySolo |= s.solo->isOn();
+    for (auto& s : inputs) anySolo |= s.solo->isOn() && s.active->isOn();
 
     // 2. Input strips -> bus sums.
-    for (int i = 0; i < kNumInputs; ++i)
+    for (int i = 0; i < kMaxInputs; ++i)
     {
         auto& s = inputs[(size_t) i];
         const auto& m = g.in[(size_t) i];
@@ -652,7 +763,7 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
             R = m.mono ? L : m.s->channel (m.chR);
         }
 
-        if (L == nullptr)
+        if (L == nullptr || ! s.active->isOn())
         {
             s.lastL = s.lastR = 0.0f;
             s.lastRoute.fill (0.0f);
@@ -665,7 +776,7 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
     if (recorder.pullPlayback (playL.data(), playR.data(), n))
     {
         const float lvl = dbToGain (recorder.level->get());
-        for (int b = 0; b < kNumBuses; ++b)
+        for (int b = 0; b < kMaxBuses; ++b)
         {
             const float target = recorder.out[(size_t) b]->isOn() ? lvl : 0.0f;
             const float prev = lastPlayRoute[(size_t) b];
@@ -683,13 +794,15 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
     const int selBus = getSelectedBus();
     int monBusIndex = -1; // derived from the same SEL snapshot (SEL may change concurrently)
     if (selBus >= 0 && monOn->isOn())
-        if (const int m = juce::jlimit (0, kNumHwBuses - 1, juce::roundToInt (monBus->get())); m != selBus)
+        if (const int m = juce::jlimit (0, kMaxHwBuses - 1, juce::roundToInt (monBus->get()));
+            m != selBus && buses[(size_t) m].active->isOn())
             monBusIndex = m;
     if (monBusIndex >= 0) processBus (buses[(size_t) selBus], n);
-    for (int b = 0; b < kNumBuses; ++b)
+    for (int b = 0; b < kMaxBuses; ++b)
     {
         if (monBusIndex >= 0 && b == selBus) continue;
         auto& bus = buses[(size_t) b];
+        if (! bus.active->isOn()) continue; // removed bus: nothing is routed to it
         if (b == monBusIndex)
         {
             std::memcpy (bus.l.data(), buses[(size_t) selBus].l.data(), (size_t) n * sizeof (float));
@@ -709,7 +822,7 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
         if (out[c] != nullptr) std::memset (out[c] + offset, 0, (size_t) n * sizeof (float));
     for (auto& s : g.outs) s->clearMix (n);
 
-    for (int b = 0; b < kNumBuses; ++b)
+    for (int b = 0; b < kMaxBuses; ++b)
     {
         auto& bus = buses[(size_t) b];
         const auto& m = g.out[(size_t) b];
@@ -824,12 +937,13 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
         return;
     }
 
-    for (int b = 0; b < kNumBuses; ++b)
+    for (int b = 0; b < kMaxBuses; ++b)
     {
         const float target = s.route[(size_t) b]->isOn() ? dbToGain (s.send[(size_t) b]->get()) : 0.0f;
         const float prev = s.lastRoute[(size_t) b];
         if (target == 0.0f && prev == 0.0f) continue;
         auto& bus = buses[(size_t) b];
+        if (! bus.active->isOn()) { s.lastRoute[(size_t) b] = 0.0f; continue; }
         dsp::addRamp (bus.l.data(), l, n, prev, target);
         dsp::addRamp (bus.r.data(), r, n, prev, target);
         s.lastRoute[(size_t) b] = target;

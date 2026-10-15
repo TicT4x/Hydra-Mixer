@@ -47,14 +47,15 @@ struct InputStrip
     std::atomic<float> compGr { 0 };
 
     // parameters
+    Param *active {};   // slot in use (shown as a strip and processed); see Engine::addInput / removeInput
     Param *gain {}, *trim {}, *pan {}, *mute {}, *solo {}, *mono {}, *phase {};
     ParamEq eq;
     Param *gateOn {}, *gateThr {}, *gateRange {}, *gateAttack {}, *gateHold {}, *gateRelease {}, *gateScOn {}, *gateScFreq {}, *gateVoice {}, *gateVoiceThr {};
     Param *compOn {}, *compInput {}, *compThr {}, *compRatio {}, *compKnee {}, *compAttack {}, *compRelease {}, *compMakeup {}, *compAuto {};
     Param *dnOn {}, *dnAmount {}, *dnMode {};
     Param *fxBypass {};
-    std::array<Param*, kNumBuses> route {};
-    std::array<Param*, kNumBuses> send {};   // per-bus fader level (edited while a bus is selected with SEL)
+    std::array<Param*, kMaxBuses> route {};
+    std::array<Param*, kMaxBuses> send {};   // per-bus fader level (edited while a bus is selected with SEL)
 
     dsp::GateSettings gateSettings() const;
     dsp::CompSettings compSettings() const;
@@ -69,7 +70,7 @@ struct InputStrip
     std::unique_ptr<dsp::Denoiser> denoiser = std::make_unique<dsp::Denoiser>();
     bool dnWasOn = false;
     float lastTrim = 1, lastL = 0, lastR = 0;
-    std::array<float, kNumBuses> lastRoute {};   // last applied send gain per bus (0 = not routed)
+    std::array<float, kMaxBuses> lastRoute {};   // last applied send gain per bus (0 = not routed)
     std::vector<float> l, r;
 };
 
@@ -82,6 +83,7 @@ struct Bus
     Meter meter;
     SpectrumTap spectrum;
 
+    Param *active {};   // slot in use (shown as a strip and processed); see Engine::addBus / removeBus
     Param *gain {}, *mute {}, *mono {}, *limOn {}, *limCeil {}, *fxBypass {};
     Param *sel {};   // SEL: input faders edit the sends to this bus (exclusive), optional monitoring
     ParamEq eq;
@@ -111,8 +113,8 @@ public:
 
     ParamRegistry params;
     PluginHost pluginHost;
-    std::array<InputStrip, kNumInputs> inputs;
-    std::array<Bus, kNumBuses> buses;
+    std::array<InputStrip, kMaxInputs> inputs;
+    std::array<Bus, kMaxBuses> buses;
     Recorder recorder;
 
     /** Monitoring: while a bus is selected (SEL), its signal replaces the normal mix of the monitor bus. */
@@ -126,6 +128,25 @@ public:
     Param* faderTarget (Param* p) const noexcept;
     /** Keeps SEL exclusive (the most recently switched on bus wins). Message thread. */
     void enforceExclusiveSelect();
+
+    //--------------------------------------------------------------------------
+    // Channel layout (message thread). Slots are switched on / off, never created or renumbered.
+    bool isInputActive (int i) const noexcept { return inputs[(size_t) i].active->isOn(); }
+    bool isBusActive (int b) const noexcept   { return buses[(size_t) b].active->isOn(); }
+    int numActiveInputs() const noexcept;
+    int numActiveBuses (bool virtualBuses) const noexcept;
+    /** Changes whenever a slot is added or removed. */
+    uint32_t getLayoutVersion() const noexcept;
+    /** Switches on the first free input slot (a fresh strip). Returns its index or -1 if all are in use. */
+    int addInput();
+    /** Switches on the first free A (virtualBus = false) or B bus. Returns the bus index or -1. */
+    int addBus (bool virtualBus);
+    /** Removes a channel: the slot is switched off and reset to defaults (parameters, name, source /
+        output, plugins). For a bus, the routing / sends of all inputs and the recorder to it are reset too.
+        At least one input and one A bus always remain. Returns every parameter that was reset, so the
+        caller can drop MIDI mappings and shortcuts bound to them; empty if nothing was removed. */
+    std::vector<Param*> removeInput (int i);
+    std::vector<Param*> removeBus (int b);
 
     juce::OwnedArray<juce::AudioIODeviceType>& getDeviceTypes() noexcept { return types; }
     juce::AudioIODeviceType* findType (const juce::String& name) const;
@@ -171,8 +192,8 @@ private:
         // (chR = -1: the stream has no right channel).
         struct In  { IoTarget::Kind kind = IoTarget::Kind::None; int ch = 0, chR = 1; bool mono = false; AsyncInput* s = nullptr; };
         struct Out { IoTarget::Kind kind = IoTarget::Kind::None; int ch = 0, chR = 1; bool mono = false; AsyncOutput* s = nullptr; };
-        std::array<In, kNumInputs> in;
-        std::array<Out, kNumBuses> out;
+        std::array<In, kMaxInputs> in;
+        std::array<Out, kMaxBuses> out;
     };
 
     void createParams();
@@ -204,7 +225,7 @@ private:
     std::atomic<uint64_t> callbackCount { 0 };
     int selOwner = -1;     // SEL exclusivity (message thread)
     std::vector<float> playL, playR;
-    std::array<float, kNumBuses> lastPlayRoute {};
+    std::array<float, kMaxBuses> lastPlayRoute {};
 
     std::atomic<float> cpuLoad { 0 };
     double ticksToSeconds = 1.0;

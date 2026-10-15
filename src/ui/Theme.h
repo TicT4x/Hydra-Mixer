@@ -21,24 +21,29 @@ inline const juce::Colour good       { 0xff3ee08f };
 inline const juce::Colour warn       { 0xffffa53d };
 inline const juce::Colour learn      { 0xffffd400 };
 
-inline juce::Colour busColour (int b) { return b < kNumHwBuses ? accentHw : accentVirt; }
+inline juce::Colour busColour (int b) { return b < kMaxHwBuses ? accentHw : accentVirt; }
 
-/** Colour code of EQ band k (0..5), used for its point, its curve and its controls. */
+/** Colour code of EQ band k (0..7), used for its point, its curve and its controls. */
 inline juce::Colour bandColour (int k)
 {
     static const juce::Colour c[] = { juce::Colour (0xffff5f6d), juce::Colour (0xffffa53d), juce::Colour (0xffffd84a),
-                                      juce::Colour (0xff3ee08f), juce::Colour (0xff35c8f4), juce::Colour (0xffa47cff) };
-    return c[juce::jlimit (0, 5, k)];
+                                      juce::Colour (0xff3ee08f), juce::Colour (0xff35c8f4), juce::Colour (0xffa47cff),
+                                      juce::Colour (0xff5b7cff), juce::Colour (0xffff6ac1) };
+    return c[juce::jlimit (0, 7, k)];
 }
+
+/** Text size factor (Settings > General > Text size). Applies to fonts created after a change,
+    so the UI rebuilds its strips / inspector when it changes. Message thread only. */
+inline float fontScale = 1.0f;
 
 inline juce::Font font (float size, bool bold = false)
 {
-    return juce::Font (juce::FontOptions ("Segoe UI", size, bold ? juce::Font::bold : juce::Font::plain));
+    return juce::Font (juce::FontOptions ("Segoe UI", size * fontScale, bold ? juce::Font::bold : juce::Font::plain));
 }
 
 inline juce::Font mono (float size)
 {
-    return juce::Font (juce::FontOptions ("Cascadia Mono", size, juce::Font::plain));
+    return juce::Font (juce::FontOptions ("Cascadia Mono", size * fontScale, juce::Font::plain));
 }
 
 /** The Hydra logo (three gradient bars) drawn into area; also used for the tray icon. */

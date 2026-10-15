@@ -13,17 +13,26 @@
 
 namespace hydra
 {
-constexpr int kNumInputs    = 8;   // input strips 1..8 (hardware or software)
-constexpr int kNumHwBuses   = 5;   // A1..A5
-constexpr int kNumVirtBuses = 3;   // B1..B3
-constexpr int kNumBuses     = kNumHwBuses + kNumVirtBuses;
+// Channel slots. Every slot exists (parameters, buffers) from the start; the user adds / removes
+// channels by switching slots on and off (inX.active / bus.X.active), so nothing is allocated or
+// renumbered while the engine runs. Bus index layout: 0..7 = A1..A8, 8..15 = B1..B8.
+constexpr int kMaxInputs    = 16;  // input strips 1..16 (hardware or software)
+constexpr int kMaxHwBuses   = 8;   // A1..A8
+constexpr int kMaxVirtBuses = 8;   // B1..B8
+constexpr int kMaxBuses     = kMaxHwBuses + kMaxVirtBuses;
+// Layout of a new session (= Voicemeeter Potato): 8 inputs, A1-A5, B1-B3.
+constexpr int kDefaultInputs = 8, kDefaultHwBuses = 5, kDefaultVirtBuses = 3;
 constexpr int kMaxBlock     = 4096; // engine processes in chunks of at most this size
 constexpr int kMaxDeviceChannels = 32;
-constexpr int kMaxStreamChannels = 16; // channels carried by one asynchronous stream (8 stereo strips / buses)
+constexpr int kMaxStreamChannels = 32; // channels carried by one asynchronous stream (16 stereo strips / buses)
+
+constexpr bool isHwBus (int b) noexcept      { return b < kMaxHwBuses; }
+constexpr int hwBusIndex (int a) noexcept    { return a; }                 // A(a+1)
+constexpr int virtBusIndex (int v) noexcept  { return kMaxHwBuses + v; }   // B(v+1)
 
 inline juce::String busCode (int b)
 {
-    return b < kNumHwBuses ? "A" + juce::String (b + 1) : "B" + juce::String (b - kNumHwBuses + 1);
+    return isHwBus (b) ? "A" + juce::String (b + 1) : "B" + juce::String (b - kMaxHwBuses + 1);
 }
 
 inline juce::File appDataDir()
