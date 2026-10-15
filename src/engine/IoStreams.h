@@ -33,6 +33,9 @@ struct IoTarget
     static IoTarget fromXml (const juce::XmlElement* e);
 };
 
+/** JUCE device type name of ASIO drivers. */
+inline const char* const kAsioTypeName = "ASIO";
+
 /** Shared state for asynchronous (non-master-clock) streams. */
 class AsyncStream
 {
@@ -46,8 +49,35 @@ public:
     std::atomic<bool> idle { false };      // e.g. captured app is not running
     juce::String error;
 
+    /** Device channels this stream carries, ascending (secondary ASIO drivers carry only the
+        routed channels). Empty = device channels 0..n-1. */
+    std::vector<int> deviceChannels;
+    int deviceChannelCount = 0;           // channels the device has (only set with deviceChannels)
+    int deviceLatencyFrames = 0;          // fixed latency the driver reports (ASIO), in device frames
+
     double getDeviceRate() const noexcept { return deviceRate; }
     int getNumChannels() const noexcept   { return channels; }
+
+    /** Stream channel that carries a device channel, or -1. */
+    int localChannel (int deviceChannel) const noexcept
+    {
+        if (deviceChannels.empty()) return deviceChannel < channels ? deviceChannel : -1;
+        for (size_t i = 0; i < deviceChannels.size(); ++i)
+            if (deviceChannels[i] == deviceChannel) return (int) i;
+        return -1;
+    }
+
+    /** True if every wanted device channel (that the device has) is carried by this stream. */
+    bool carries (const std::vector<int>& wanted) const noexcept
+    {
+        if (deviceChannels.empty()) return true;
+        for (int c : wanted)
+            if (c < deviceChannelCount && localChannel (c) < 0) return false;
+        return true;
+    }
+
+    /** Message thread, ~10 Hz (watchdogs). */
+    virtual void poll() {}
 
 protected:
     SpscAudioRing ring;
@@ -55,12 +85,16 @@ protected:
     DriftController drift;
     double deviceRate = 48000.0, engineRate = 48000.0;
     int deviceBlock = 480, engineBlock = 256, channels = 2;
-    std::array<std::vector<float>, 8> buf;
-    float* bufPtrs[8] {};
+    std::array<std::vector<float>, kMaxStreamChannels> buf;
+    float* bufPtrs[kMaxStreamChannels] {};
 
     void allocBuffers()
     {
-        for (int c = 0; c < 8; ++c) { buf[(size_t) c].assign (kMaxBlock, 0.0f); bufPtrs[c] = buf[(size_t) c].data(); }
+        for (int c = 0; c < kMaxStreamChannels; ++c)
+        {
+            buf[(size_t) c].assign (c < channels ? (size_t) kMaxBlock : 0, 0.0f);
+            bufPtrs[c] = c < channels ? buf[(size_t) c].data() : nullptr;
+        }
     }
 };
 
@@ -84,6 +118,7 @@ protected:
 
 private:
     bool primed = false;
+    double slipMargin = 0;  // device frames kept for clock slips (see setup)
 };
 
 /** Engine -> device. */
@@ -106,15 +141,31 @@ protected:
 private:
     std::atomic<int> primeTarget { 0 };
     std::atomic<bool> devUnderrun { false };
+    double minSafeFill = 0;  // device frames the ring must hold after an engine block
     bool primed = false; // device thread
 };
 
 //==============================================================================
-/** Factory: opens the right kind of stream for an IoTarget. Returns nullptr + error on failure. */
+/** Factory: opens the right kind of stream for an IoTarget. Returns nullptr + error on failure.
+    asioChannels: for a secondary ASIO driver, the device channels the stream must carry. */
 std::shared_ptr<AsyncInput>  openAsyncInput  (const IoTarget& t, juce::OwnedArray<juce::AudioIODeviceType>& types,
-                                              double engineRate, int engineBlock, juce::String& error);
+                                              double engineRate, int engineBlock, juce::String& error,
+                                              const std::vector<int>& asioChannels = {});
 std::shared_ptr<AsyncOutput> openAsyncOutput (const IoTarget& t, juce::OwnedArray<juce::AudioIODeviceType>& types,
-                                              double engineRate, int engineBlock, juce::String& error);
+                                              double engineRate, int engineBlock, juce::String& error,
+                                              const std::vector<int>& asioChannels = {});
+
+//==============================================================================
+/** Secondary ASIO drivers (AsioSecondary.cpp). A driver is opened once with all of its channels;
+    its input and output streams attach to that one device, which runs on its own clock and is
+    bound to the master like any other secondary device (ring + resampler + drift control). */
+std::shared_ptr<AsyncInput>  openAsioInput  (juce::AudioIODeviceType& type, const juce::String& driver, double engineRate,
+                                             int engineBlock, const std::vector<int>& channels, juce::String& error);
+std::shared_ptr<AsyncOutput> openAsioOutput (juce::AudioIODeviceType& type, const juce::String& driver, double engineRate,
+                                             int engineBlock, const std::vector<int>& channels, juce::String& error);
+/** Channel names of an ASIO driver: live names if it is open as a secondary, otherwise probed
+    once (loads the driver briefly) and cached. Empty if the driver cannot be loaded. Message thread. */
+juce::StringArray asioChannelNames (juce::AudioIODeviceType& type, const juce::String& driver, bool inputs);
 
 /** Friendly names of active Windows render endpoints (for loopback capture). */
 juce::StringArray listRenderEndpoints();

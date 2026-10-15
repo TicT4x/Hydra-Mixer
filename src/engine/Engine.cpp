@@ -1,5 +1,7 @@
 #include "Engine.h"
 
+#include <map>
+
 namespace hydra
 {
 namespace
@@ -201,6 +203,28 @@ juce::StringArray Engine::getMasterOutputNames() const
     return masterDevice != nullptr ? masterDevice->getOutputChannelNames() : juce::StringArray();
 }
 
+bool Engine::isMasterAsio (const IoTarget& t) const
+{
+    return t.kind == IoTarget::Kind::Device && t.typeName == kAsioTypeName && masterDevice != nullptr
+        && masterDevice->getTypeName() == kAsioTypeName && masterDevice->getName() == t.deviceName;
+}
+
+juce::StringArray Engine::getSecondaryAsioDrivers() const
+{
+    juce::StringArray names;
+    if (auto* type = findType (kAsioTypeName))
+        names = type->getDeviceNames (false);
+    if (masterDevice != nullptr && masterDevice->getTypeName() == kAsioTypeName)
+        names.removeString (masterDevice->getName());
+    return names;
+}
+
+juce::StringArray Engine::getAsioChannelNames (const juce::String& driver, bool inputs) const
+{
+    auto* type = findType (kAsioTypeName);
+    return type != nullptr ? asioChannelNames (*type, driver, inputs) : juce::StringArray();
+}
+
 double Engine::getMasterLatencyMs() const
 {
     if (masterDevice == nullptr || sampleRate <= 0) return 0.0;
@@ -211,7 +235,7 @@ double Engine::getMasterLatencyMs() const
 
 double Engine::getIoLatencyMs (const IoTarget& t, bool input) const
 {
-    if (t.kind == IoTarget::Kind::Master)
+    if (t.kind == IoTarget::Kind::Master || isMasterAsio (t))
     {
         if (masterDevice == nullptr) return -1.0;
         const int frames = masterDevice->getCurrentBufferSizeSamples()
@@ -219,14 +243,15 @@ double Engine::getIoLatencyMs (const IoTarget& t, bool input) const
         return 1000.0 * frames / sampleRate;
     }
     if (current == nullptr) return -1.0;
-    if (input) { for (auto& s : current->ins)  if (s->target.sameStream (t)) return 1000.0 * s->latencyFrames.load() / juce::jmax (1.0, s->getDeviceRate()); }
-    else       { for (auto& s : current->outs) if (s->target.sameStream (t)) return 1000.0 * s->latencyFrames.load() / juce::jmax (1.0, s->getDeviceRate()); }
+    auto ms = [] (const AsyncStream& s) { return 1000.0 * (s.latencyFrames.load() + s.deviceLatencyFrames) / juce::jmax (1.0, s.getDeviceRate()); };
+    if (input) { for (auto& s : current->ins)  if (s->target.sameStream (t)) return ms (*s); }
+    else       { for (auto& s : current->outs) if (s->target.sameStream (t)) return ms (*s); }
     return -1.0;
 }
 
 juce::String Engine::getStreamStatus (const IoTarget& t, bool input) const
 {
-    if (t.kind == IoTarget::Kind::Master)
+    if (t.kind == IoTarget::Kind::Master || isMasterAsio (t))
         return masterDevice != nullptr ? juce::String (1000.0 * blockSize / sampleRate, 1) + " ms" : "offline";
 
     if (current == nullptr) return "offline";
@@ -353,26 +378,47 @@ void Engine::rebuildGraph()
     auto g = std::make_unique<Graph>();
     juce::StringArray errors;
 
+    // A secondary ASIO driver gets one stream per direction carrying every routed channel of it,
+    // so all channels of that interface stay sample-aligned to each other.
+    std::map<juce::String, std::vector<int>> asioIns, asioOuts;
+    auto isSecondaryAsio = [this] (const IoTarget& t)
+    {
+        return t.kind == IoTarget::Kind::Device && t.typeName == kAsioTypeName && ! isMasterAsio (t);
+    };
+    auto addChannels = [] (std::vector<int>& v, const IoTarget& t)
+    {
+        v.push_back (t.channel);
+        if (! t.mono) v.push_back (t.channel + 1);
+    };
+    for (auto& s : inputs) if (isSecondaryAsio (s.source)) addChannels (asioIns[s.source.deviceName], s.source);
+    for (auto& b : buses)  if (isSecondaryAsio (b.output)) addChannels (asioOuts[b.output.deviceName], b.output);
+    auto channelsFor = [&] (const IoTarget& t, std::map<juce::String, std::vector<int>>& m)
+    {
+        return isSecondaryAsio (t) ? m[t.deviceName] : std::vector<int>();
+    };
+
     auto findIn = [&] (const IoTarget& t) -> AsyncInput*
     {
-        for (auto& s : g->ins) if (s->target.sameStream (t)) return s.get();
+        const auto chans = channelsFor (t, asioIns);
+        for (auto& s : g->ins) if (s->target.sameStream (t) && s->carries (chans)) return s.get();
         if (current != nullptr)
             for (auto& s : current->ins)
-                if (s->target.sameStream (t) && ! s->failed.load()) { g->ins.push_back (s); return s.get(); }
+                if (s->target.sameStream (t) && s->carries (chans) && ! s->failed.load()) { g->ins.push_back (s); return s.get(); }
         juce::String err;
-        if (auto s = openAsyncInput (t, types, sampleRate, blockSize, err)) { s->start(); g->ins.push_back (s); return s.get(); }
+        if (auto s = openAsyncInput (t, types, sampleRate, blockSize, err, chans)) { s->start(); g->ins.push_back (s); return s.get(); }
         errors.add (t.describe() + ": " + err);
         return nullptr;
     };
 
     auto findOut = [&] (const IoTarget& t) -> AsyncOutput*
     {
-        for (auto& s : g->outs) if (s->target.sameStream (t)) return s.get();
+        const auto chans = channelsFor (t, asioOuts);
+        for (auto& s : g->outs) if (s->target.sameStream (t) && s->carries (chans)) return s.get();
         if (current != nullptr)
             for (auto& s : current->outs)
-                if (s->target.sameStream (t) && ! s->failed.load()) { g->outs.push_back (s); return s.get(); }
+                if (s->target.sameStream (t) && s->carries (chans) && ! s->failed.load()) { g->outs.push_back (s); return s.get(); }
         juce::String err;
-        if (auto s = openAsyncOutput (t, types, sampleRate, blockSize, err)) { s->start(); g->outs.push_back (s); return s.get(); }
+        if (auto s = openAsyncOutput (t, types, sampleRate, blockSize, err, chans)) { s->start(); g->outs.push_back (s); return s.get(); }
         errors.add (t.describe() + ": " + err);
         return nullptr;
     };
@@ -381,11 +427,20 @@ void Engine::rebuildGraph()
     {
         const auto& t = inputs[(size_t) i].source;
         auto& m = g->in[(size_t) i];
-        m.ch = t.channel; m.mono = t.mono; m.kind = t.kind;
-        if (t.kind == IoTarget::Kind::Device || t.kind == IoTarget::Kind::Loopback || t.kind == IoTarget::Kind::App)
+        m.ch = t.channel; m.chR = t.channel + 1; m.mono = t.mono; m.kind = t.kind;
+        if (isMasterAsio (t))
+            m.kind = IoTarget::Kind::Master; // the master's own driver: use its channels directly
+        else if (t.kind == IoTarget::Kind::Device || t.kind == IoTarget::Kind::Loopback || t.kind == IoTarget::Kind::App)
         {
             m.s = findIn (t);
             if (m.s == nullptr) m.kind = IoTarget::Kind::None;
+            else if (! m.s->deviceChannels.empty())
+            {
+                m.ch = m.s->localChannel (t.channel);
+                m.chR = t.mono ? m.ch : m.s->localChannel (t.channel + 1);
+                if (m.ch < 0) m.kind = IoTarget::Kind::None;
+                else if (m.chR < 0) m.chR = m.ch;
+            }
         }
         else if (t.kind == IoTarget::Kind::Virtual)
             m.kind = IoTarget::Kind::None; // virtual driver: not installed yet
@@ -395,11 +450,19 @@ void Engine::rebuildGraph()
     {
         const auto& t = buses[(size_t) b].output;
         auto& m = g->out[(size_t) b];
-        m.ch = t.channel; m.mono = t.mono; m.kind = t.kind;
-        if (t.kind == IoTarget::Kind::Device)
+        m.ch = t.channel; m.chR = t.channel + 1; m.mono = t.mono; m.kind = t.kind;
+        if (isMasterAsio (t))
+            m.kind = IoTarget::Kind::Master;
+        else if (t.kind == IoTarget::Kind::Device)
         {
             m.s = findOut (t);
             if (m.s == nullptr) m.kind = IoTarget::Kind::None;
+            else if (! m.s->deviceChannels.empty())
+            {
+                m.ch = m.s->localChannel (t.channel);
+                m.chR = m.s->localChannel (t.channel + 1);
+                if (m.ch < 0) m.kind = IoTarget::Kind::None;
+            }
         }
         else if (t.kind == IoTarget::Kind::Virtual || t.kind == IoTarget::Kind::Loopback)
             m.kind = IoTarget::Kind::None;
@@ -479,6 +542,11 @@ void Engine::timerCallback()
 
     // Auto-recover failed secondary devices (unplugged / re-plugged) every ~3 s.
     static int recoverTick = 0;
+    if (current != nullptr)
+    {
+        for (auto& s : current->ins)  s->poll();
+        for (auto& s : current->outs) s->poll();
+    }
     if (current != nullptr && ++recoverTick >= 30)
     {
         recoverTick = 0;
@@ -581,7 +649,7 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
         else if (m.s != nullptr)
         {
             L = m.s->channel (m.ch);
-            R = m.mono ? L : m.s->channel (m.ch + 1);
+            R = m.mono ? L : m.s->channel (m.chR);
         }
 
         if (L == nullptr)
@@ -655,7 +723,7 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
         else if (m.s != nullptr)
         {
             oL = m.s->mixChannel (m.ch);
-            if (! m.mono && m.ch + 1 < m.s->getNumChannels()) oR = m.s->mixChannel (m.ch + 1);
+            if (! m.mono && m.chR >= 0 && m.chR < m.s->getNumChannels()) oR = m.s->mixChannel (m.chR);
         }
 
         if (oL == nullptr) continue;

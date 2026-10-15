@@ -10,23 +10,53 @@ const char* kLowLatency = "Windows Audio (Low Latency Mode)";
 const char* kExclusive  = "Windows Audio (Exclusive Mode)";
 const char* kShared     = "Windows Audio";
 
-void addMasterChannels (juce::PopupMenu& menu, const juce::StringArray& names, const IoTarget& current,
-                        std::function<void (IoTarget)> pick)
+/** Stereo pairs + mono channels of a multichannel device (the master or a secondary ASIO driver). */
+void addChannelList (juce::PopupMenu& menu, const juce::StringArray& names, const IoTarget& base, const IoTarget& current,
+                     std::function<void (IoTarget)> pick)
 {
     for (int c = 0; c + 1 < names.size(); c += 2)
     {
-        IoTarget t; t.kind = IoTarget::Kind::Master; t.channel = c;
+        IoTarget t = base; t.channel = c; t.mono = false;
         menu.addItem (juce::String (c + 1) + "/" + juce::String (c + 2) + ":  " + names[c] + " + " + names[c + 1],
                       true, current == t, [pick, t] { pick (t); });
     }
     juce::PopupMenu monoMenu;
     for (int c = 0; c < names.size(); ++c)
     {
-        IoTarget t; t.kind = IoTarget::Kind::Master; t.channel = c; t.mono = true;
+        IoTarget t = base; t.channel = c; t.mono = true;
         monoMenu.addItem (juce::String (c + 1) + ":  " + names[c], true, current == t, [pick, t] { pick (t); });
     }
     if (names.size() > 0)
         menu.addSubMenu ("Mono channel", monoMenu);
+}
+
+void addMasterChannels (juce::PopupMenu& menu, const juce::StringArray& names, const IoTarget& current,
+                        std::function<void (IoTarget)> pick)
+{
+    IoTarget base; base.kind = IoTarget::Kind::Master;
+    addChannelList (menu, names, base, current, std::move (pick));
+}
+
+/** Further ASIO interfaces next to the master: each has its own clock and is synchronised to the
+    master like a Windows device, but with ASIO's low latency and all of its channels. */
+void addSecondaryAsio (juce::PopupMenu& menu, Engine& engine, bool inputs, const IoTarget& current,
+                       std::function<void (IoTarget)> pick)
+{
+    const auto drivers = engine.getSecondaryAsioDrivers();
+    if (drivers.isEmpty()) return;
+
+    menu.addSectionHeader ("Other ASIO Devices (synced to the master clock)");
+    for (auto& driver : drivers)
+    {
+        IoTarget base; base.kind = IoTarget::Kind::Device; base.typeName = kAsioTypeName; base.deviceName = driver;
+        juce::PopupMenu sub;
+        const auto names = engine.getAsioChannelNames (driver, inputs);
+        if (names.isEmpty())
+            sub.addItem (juce::String ("(driver cannot be loaded or has no ") + (inputs ? "inputs" : "outputs")
+                         + " - in use by another program?)", false, false, nullptr);
+        addChannelList (sub, names, base, current, pick);
+        menu.addSubMenu (driver, sub, true, nullptr, current.sameStream (base));
+    }
 }
 
 void addDeviceList (juce::PopupMenu& menu, Engine& engine, const juce::String& typeName, bool inputs,
@@ -64,6 +94,7 @@ void showInputMenu (juce::Component& target, UiContext& ctx, int strip, std::fun
         if (engine.getMasterInputNames().isEmpty())
             m.addItem ("(master device has no inputs - choose an ASIO driver for direct inputs)", false, false, nullptr);
     }
+    addSecondaryAsio (m, engine, true, current, pick);
 
     m.addSectionHeader ("Windows Recording Devices");
     juce::PopupMenu ll, ex, sh;
@@ -125,6 +156,7 @@ void showOutputMenu (juce::Component& target, UiContext& ctx, int bus, std::func
         m.addSectionHeader ("Master - " + dev->getName() + " (" + dev->getTypeName() + ")");
         addMasterChannels (m, engine.getMasterOutputNames(), current, pick);
     }
+    addSecondaryAsio (m, engine, false, current, pick);
 
     m.addSectionHeader ("Windows Playback Devices");
     juce::PopupMenu ll, ex, sh;

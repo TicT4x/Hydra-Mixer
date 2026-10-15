@@ -53,20 +53,35 @@ IoTarget IoTarget::fromXml (const juce::XmlElement* e)
 }
 
 //==============================================================================
+/** Engine blocks the drift controller takes its fill minimum over: four device periods (all
+    phases of the device/engine block pattern), at least 8 blocks. */
+static int minWindow (double perBlock, int deviceBlock)
+{
+    return juce::jmax (8, (int) std::ceil (4.0 * (deviceBlock + perBlock) / juce::jmax (1.0, perBlock)));
+}
+
 void AsyncInput::setup (double devRate, int devBlock, int numChannels, double engRate, int engBlock)
 {
     deviceRate = devRate; deviceBlock = juce::jmax (16, devBlock);
     engineRate = engRate; engineBlock = engBlock;
-    channels = juce::jlimit (1, 8, numChannels);
+    channels = juce::jlimit (1, kMaxStreamChannels, numChannels);
     allocBuffers();
 
     const double ratio = deviceRate / engineRate;              // device frames per engine frame
     const double perBlock = engineBlock * ratio;
     ring.allocate (channels, (int) (perBlock * 4 + deviceBlock * 8 + 16384));
     resampler.prepare (channels, ratio, kMaxBlock);
+    // The two clocks slip against each other: now and then an engine block finds one device
+    // block less than usual. With a fractional block ratio that happens all the time and the
+    // drift controller sees it; with a (near) whole-number ratio (64 vs 128 at the same rate)
+    // only every few seconds, so it is kept as a fixed margin.
+    const double big = juce::jmax (perBlock, (double) deviceBlock), small = juce::jmin (perBlock, (double) deviceBlock);
+    const double frac = big / small - std::floor (big / small);
+    slipMargin = (frac < 0.25 || frac > 0.75) ? small : 0.0;
     // Fill measured *before* the engine reads: must cover one engine block + the device's burst size.
-    drift.prepare (perBlock + deviceBlock + 32, perBlock + 16, perBlock + deviceBlock * 6 + 4096,
-                   juce::jmax (16.0, deviceBlock * 0.25), engineRate, engineBlock);
+    drift.prepare (juce::jmax (perBlock + deviceBlock + 32, perBlock + slipMargin + 32), perBlock + slipMargin + 16,
+                   perBlock + deviceBlock * 6 + 4096,
+                   juce::jmax (16.0, deviceBlock * 0.25), engineRate, engineBlock, deviceRate, minWindow (perBlock, deviceBlock));
     primed = false;
 }
 
@@ -90,13 +105,13 @@ void AsyncInput::pullBlock (int n) noexcept
     if (avail > (int) drift.getTarget() + deviceBlock * 8 + 2048)
         ring.skip (avail - (int) drift.getTarget());
 
-    const double corr = drift.update ((double) ring.available(), (double) need, false);
+    const double corr = drift.update ((double) ring.available(), need + slipMargin, false);
     resampler.setCorrection (corr);
 
     if (! resampler.pull (ring, bufPtrs, n))
     {
         underruns.fetch_add (1, std::memory_order_relaxed);
-        drift.update ((double) ring.available(), (double) need, true);
+        drift.update ((double) ring.available(), need + slipMargin, true);
         primed = false;
     }
 
@@ -108,30 +123,33 @@ void AsyncOutput::setup (double devRate, int devBlock, int numChannels, double e
 {
     deviceRate = devRate; deviceBlock = juce::jmax (16, devBlock);
     engineRate = engRate; engineBlock = engBlock;
-    channels = juce::jlimit (1, 8, numChannels);
+    channels = juce::jlimit (1, kMaxStreamChannels, numChannels);
     allocBuffers();
 
     const double ratio = engineRate / deviceRate;               // engine frames per device frame
     const double perBlock = engineBlock / ratio;                 // device frames produced per engine block
     ring.allocate (channels, (int) (perBlock * 4 + deviceBlock * 8 + 16384));
     resampler.prepare (channels, ratio, (int) (kMaxBlock / ratio) + 64);
-    // Fill measured *after* the engine wrote: must survive until the next engine block.
-    drift.prepare (perBlock + deviceBlock + 32, deviceBlock + 16, perBlock + deviceBlock * 6 + 4096,
-                   juce::jmax (16.0, deviceBlock * 0.25), engineRate, engineBlock);
+    // Fill measured *after* the engine wrote: must survive until the next engine block. Until then
+    // the device takes one block, or more when its blocks are shorter than the engine's (an ASIO
+    // device at 64 next to a master at 128 takes up to 3 blocks between two engine blocks).
+    minSafeFill = (std::floor (perBlock / deviceBlock) + 1.0) * deviceBlock;
+    drift.prepare (juce::jmax (perBlock + deviceBlock + 32, minSafeFill + 32), minSafeFill + 16, perBlock + deviceBlock * 6 + 4096,
+                   juce::jmax (16.0, deviceBlock * 0.25), engineRate, engineBlock, deviceRate, minWindow (perBlock, deviceBlock));
     primeTarget.store ((int) drift.getTarget());
     primed = false;
 }
 
 void AsyncOutput::pushBlock (int n) noexcept
 {
-    const float* in[8];
+    const float* in[kMaxStreamChannels];
     for (int c = 0; c < channels; ++c) in[c] = bufPtrs[c];
     resampler.push (in, n, ring);
 
     const int avail = ring.available();
     const bool under = devUnderrun.exchange (false, std::memory_order_relaxed);
     if (under) underruns.fetch_add (1, std::memory_order_relaxed);
-    resampler.setCorrection (drift.update ((double) avail, (double) deviceBlock, under));
+    resampler.setCorrection (drift.update ((double) avail, minSafeFill, under));
     primeTarget.store ((int) drift.getTarget(), std::memory_order_relaxed);
     latencyFrames.store (avail + resampler.getLatencyFrames(), std::memory_order_relaxed);
 }
@@ -691,12 +709,19 @@ private:
 
 //==============================================================================
 std::shared_ptr<AsyncInput> openAsyncInput (const IoTarget& t, juce::OwnedArray<juce::AudioIODeviceType>& types,
-                                            double engineRate, int engineBlock, juce::String& error)
+                                            double engineRate, int engineBlock, juce::String& error,
+                                            const std::vector<int>& asioChannels)
 {
     if (t.kind == IoTarget::Kind::Device)
     {
         auto* type = findType (types, t.typeName);
         if (type == nullptr) { error = "Unknown driver type " + t.typeName; return nullptr; }
+        if (t.typeName == kAsioTypeName)
+        {
+            auto s = openAsioInput (*type, t.deviceName, engineRate, engineBlock, asioChannels, error);
+            if (s != nullptr) s->target = t;
+            return s;
+        }
         auto s = std::make_shared<DeviceInput>();
         if (! s->open (*type, t.deviceName, engineRate, engineBlock)) { error = s->error; return nullptr; }
         s->target = t;
@@ -724,12 +749,19 @@ std::shared_ptr<AsyncInput> openAsyncInput (const IoTarget& t, juce::OwnedArray<
 }
 
 std::shared_ptr<AsyncOutput> openAsyncOutput (const IoTarget& t, juce::OwnedArray<juce::AudioIODeviceType>& types,
-                                              double engineRate, int engineBlock, juce::String& error)
+                                              double engineRate, int engineBlock, juce::String& error,
+                                              const std::vector<int>& asioChannels)
 {
     if (t.kind == IoTarget::Kind::Device)
     {
         auto* type = findType (types, t.typeName);
         if (type == nullptr) { error = "Unknown driver type " + t.typeName; return nullptr; }
+        if (t.typeName == kAsioTypeName)
+        {
+            auto s = openAsioOutput (*type, t.deviceName, engineRate, engineBlock, asioChannels, error);
+            if (s != nullptr) s->target = t;
+            return s;
+        }
         auto s = std::make_shared<DeviceOutput>();
         if (! s->open (*type, t.deviceName, engineRate, engineBlock)) { error = s->error; return nullptr; }
         s->target = t;
