@@ -75,9 +75,10 @@ void AsyncInput::setup (double devRate, int devBlock, int numChannels, double en
     // block less than usual. With a fractional block ratio that happens all the time and the
     // drift controller sees it; with a (near) whole-number ratio (64 vs 128 at the same rate)
     // only every few seconds, so it is kept as a fixed margin.
-    const double big = juce::jmax (perBlock, (double) deviceBlock), small = juce::jmin (perBlock, (double) deviceBlock);
-    const double frac = big / small - std::floor (big / small);
-    slipMargin = (frac < 0.25 || frac > 0.75) ? small : 0.0;
+    // (not "small": <rpcndr.h> defines it as a macro for char)
+    const double larger = juce::jmax (perBlock, (double) deviceBlock), smaller = juce::jmin (perBlock, (double) deviceBlock);
+    const double frac = larger / smaller - std::floor (larger / smaller);
+    slipMargin = (frac < 0.25 || frac > 0.75) ? smaller : 0.0;
     // Fill measured *before* the engine reads: must cover one engine block + the device's burst size.
     drift.prepare (juce::jmax (perBlock + deviceBlock + 32, perBlock + slipMargin + 32), perBlock + slipMargin + 16,
                    perBlock + deviceBlock * 6 + 4096,
