@@ -32,6 +32,10 @@ public:
     void assign (Param& p, const juce::KeyPress& key);
     void remove (const Param* p);
     void clearAll();
+    /** Channels were reordered: shortcuts of the parameters in moves (first) now trigger the parameter
+        that holds their value (second). */
+    void remapParams (const std::vector<std::pair<Param*, Param*>>& moves);
+    int countBindings (const std::vector<std::pair<Param*, Param*>>& moves) const;
     juce::KeyPress getKeyFor (const Param* p) const;
     std::vector<Binding> getBindings() const { return bindings; }
 

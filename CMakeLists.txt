@@ -82,7 +82,7 @@ endif()
 
 # Offline DSP tests (run: build\<cfg>\HydraTests_artefacts\<cfg>\HydraTests.exe)
 juce_add_console_app(HydraTests PRODUCT_NAME "HydraTests")
-target_sources(HydraTests PRIVATE tests/DenoiserTest.cpp tests/SessionTest.cpp tests/MidiRangeTest.cpp tests/AppCaptureTest.cpp tests/LedTest.cpp tests/RecorderTest.cpp tests/AsioSecondaryTest.cpp tests/UndoTest.cpp
+target_sources(HydraTests PRIVATE tests/DenoiserTest.cpp tests/SessionTest.cpp tests/MidiRangeTest.cpp tests/AppCaptureTest.cpp tests/LedTest.cpp tests/RecorderTest.cpp tests/AsioSecondaryTest.cpp tests/UndoTest.cpp tests/ReorderTest.cpp
     src/core/Denoiser.cpp src/engine/Engine.cpp src/engine/IoStreams.cpp src/engine/AsioSecondary.cpp src/engine/Recorder.cpp src/engine/PluginChain.cpp
     src/midi/MidiMapper.cpp src/midi/Hotkeys.cpp src/state/Session.cpp src/state/VoicemeeterImport.cpp src/state/UndoHistory.cpp)
 target_include_directories(HydraTests PRIVATE "${CMAKE_SOURCE_DIR}/src")

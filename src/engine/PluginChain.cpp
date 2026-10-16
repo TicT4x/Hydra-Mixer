@@ -123,7 +123,7 @@ void PluginChain::release()
     prepared = false;
 }
 
-void PluginChain::process (float* l, float* r, int n) noexcept
+void PluginChain::process (float* l, float* r, int n, bool timed) noexcept
 {
     const juce::SpinLock::ScopedTryLockType tl (lock);
     if (! tl.isLocked() || ! prepared || slots.empty())
@@ -156,7 +156,11 @@ void PluginChain::process (float* l, float* r, int n) noexcept
             buf.clear (c, 0, n);
 
         midi.clear();
+        const auto t0 = timed ? juce::Time::getHighResolutionTicks() : 0;
         p.processBlock (buf, midi);
+        if (timed)
+            s->dspTicks.store (s->dspTicks.load (std::memory_order_relaxed) + (uint64_t) juce::jmax ((juce::int64) 0, juce::Time::getHighResolutionTicks() - t0),
+                               std::memory_order_relaxed);
 
         std::memcpy (l, buf.getReadPointer (0), (size_t) n * sizeof (float));
         std::memcpy (r, buf.getReadPointer (outs > 1 ? 1 : 0), (size_t) n * sizeof (float));
@@ -202,6 +206,30 @@ void PluginChain::move (int from, int to)
     auto s = std::move (slots[(size_t) from]);
     slots.erase (slots.begin() + from);
     slots.insert (slots.begin() + to, std::move (s));
+}
+
+std::vector<std::unique_ptr<PluginSlot>> PluginChain::takeAll()
+{
+    std::vector<std::unique_ptr<PluginSlot>> out;
+    const juce::SpinLock::ScopedLockType sl (lock);
+    std::swap (out, slots);
+    return out;
+}
+
+void PluginChain::putAll (std::vector<std::unique_ptr<PluginSlot>> plugins)
+{
+    int chans = 8;
+    for (auto& s : plugins)
+        chans = juce::jmax (chans, s->instance->getTotalNumInputChannels(), s->instance->getTotalNumOutputChannels());
+    juce::AudioBuffer<float> bigger;
+    if (chans > work.getNumChannels() || work.getNumSamples() < block)
+        bigger.setSize (chans, block, false, true, false);
+
+    const juce::SpinLock::ScopedLockType sl (lock);
+    if (bigger.getNumChannels() > 0)
+        std::swap (work, bigger);
+    for (auto& s : plugins)
+        slots.push_back (std::move (s));
 }
 
 void PluginChain::clear()

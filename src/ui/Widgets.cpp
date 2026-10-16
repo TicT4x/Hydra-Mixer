@@ -434,8 +434,62 @@ void Knob::paint (juce::Graphics& g)
 }
 
 //==============================================================================
-Toggle::Toggle (UiContext& c, Param& p, juce::String t, juce::Colour on)
-    : ParamControl (c, p), text (std::move (t)), onColour (on) {}
+Toggle::Toggle (UiContext& c, Param& p, juce::String t, juce::Colour on, Icon i)
+    : ParamControl (c, p), text (std::move (t)), onColour (on), icon (i) {}
+
+void Toggle::drawIcon (juce::Graphics& g, Icon icon, bool on, juce::Rectangle<float> area, juce::Colour colour)
+{
+    const float s = juce::jmin (area.getWidth(), area.getHeight());
+    const auto c = area.getCentre();
+    g.setColour (colour);
+    switch (icon)
+    {
+        case Icon::record:
+            g.fillEllipse (juce::Rectangle<float> (s * 0.62f, s * 0.62f).withCentre (c));
+            break;
+        case Icon::playPause:
+            if (on)
+            {
+                const float h = s * 0.62f, w = s * 0.19f, gap = s * 0.14f;
+                g.fillRoundedRectangle (c.x - gap * 0.5f - w, c.y - h * 0.5f, w, h, w * 0.3f);
+                g.fillRoundedRectangle (c.x + gap * 0.5f, c.y - h * 0.5f, w, h, w * 0.3f);
+            }
+            else
+            {
+                const float h = s * 0.66f, w = h * 0.88f;
+                juce::Path p;
+                p.addTriangle (c.x - w * 0.4f, c.y - h * 0.5f, c.x - w * 0.4f, c.y + h * 0.5f, c.x + w * 0.6f, c.y);
+                g.strokePath (p, juce::PathStrokeType (s * 0.06f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                g.fillPath (p);
+            }
+            break;
+        case Icon::stop:
+            g.fillRoundedRectangle (juce::Rectangle<float> (s * 0.52f, s * 0.52f).withCentre (c), s * 0.07f);
+            break;
+        case Icon::loop:
+        {
+            // Repeat symbol: two half loops, each ending in an arrow (top to the right, bottom to the left).
+            auto r = juce::Rectangle<float> (s * 0.8f, s * 0.52f).withCentre (c);
+            const float stroke = juce::jmax (1.3f, s * 0.08f), rad = r.getHeight() * 0.5f, a = s * 0.12f;
+            const float cxL = r.getX() + rad, cxR = r.getRight() - rad, pi = juce::MathConstants<float>::pi;
+            const float tipTop = cxR - a * 0.2f, tipBottom = cxL + a * 0.2f;
+            juce::Path p;
+            p.addCentredArc (cxL, c.y, rad, rad, 0.0f, pi, 2.0f * pi, true);
+            p.lineTo (tipTop - a * 1.2f, r.getY());
+            p.addCentredArc (cxR, c.y, rad, rad, 0.0f, 0.0f, pi, true);
+            p.lineTo (tipBottom + a * 1.2f, r.getBottom());
+            g.strokePath (p, juce::PathStrokeType (stroke, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            juce::Path heads;
+            heads.addTriangle (tipTop, r.getY(), tipTop - a * 1.6f, r.getY() - a, tipTop - a * 1.6f, r.getY() + a);
+            heads.addTriangle (tipBottom, r.getBottom(), tipBottom + a * 1.6f, r.getBottom() - a, tipBottom + a * 1.6f, r.getBottom() + a);
+            g.fillPath (heads);
+            break;
+        }
+        case Icon::none:
+        default:
+            break;
+    }
+}
 
 void Toggle::paint (juce::Graphics& g)
 {
@@ -447,6 +501,14 @@ void Toggle::paint (juce::Graphics& g)
     {
         g.setColour (theme::outline);
         g.drawRoundedRectangle (r, 5.0f, 1.0f);
+    }
+    if (icon != Icon::none)
+    {
+        // Off: the symbol in its colour (record red, play green); on: dark symbol on the coloured button.
+        const auto colour = on ? theme::bg : icon == Icon::stop ? (hover ? theme::text : theme::textDim)
+                                                                : onColour.withAlpha (hover ? 1.0f : 0.85f);
+        drawIcon (g, icon, on, r.withSizeKeepingCentre (juce::jmin (r.getHeight(), 22.0f), juce::jmin (r.getHeight(), 22.0f)), colour);
+        return;
     }
     g.setColour (on ? theme::bg : theme::textDim);
     auto f = theme::font (juce::jmin (11.5f, r.getHeight() * 0.6f), true);
@@ -713,11 +775,12 @@ void TrashButton::drawIcon (juce::Graphics& g, juce::Rectangle<float> area, juce
 void TrashButton::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (0.5f);
-    g.setColour (hover ? theme::mute.withAlpha (0.2f) : theme::panel2);
+    const bool hot = hover && isEnabled();
+    g.setColour (hot ? theme::mute.withAlpha (0.2f) : theme::panel2);
     g.fillRoundedRectangle (r, 6.0f);
-    g.setColour (hover ? theme::mute.withAlpha (0.8f) : theme::outline);
+    g.setColour (hot ? theme::mute.withAlpha (0.8f) : theme::outline);
     g.drawRoundedRectangle (r, 6.0f, 1.0f);
-    drawIcon (g, r.withSizeKeepingCentre (14.0f, 14.0f), hover ? theme::mute : theme::textDim);
+    drawIcon (g, r.withSizeKeepingCentre (14.0f, 14.0f), hot ? theme::mute : isEnabled() ? theme::textDim : theme::textFaint.withAlpha (0.5f));
 }
 
 //==============================================================================

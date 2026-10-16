@@ -1,4 +1,5 @@
 #include "MidiMapper.h"
+#include <unordered_set>
 #include <map>
 
 namespace hydra
@@ -264,6 +265,33 @@ void MidiMapper::removeMappingsFor (const Param* p)
     const juce::ScopedLock sl (lock);
     ++mapVersion;
     mappings.erase (std::remove_if (mappings.begin(), mappings.end(), [p] (auto& m) { return m.param == p; }), mappings.end());
+}
+
+void MidiMapper::remapParams (const std::vector<std::pair<Param*, Param*>>& moves)
+{
+    std::unordered_map<Param*, Param*> to;
+    for (auto& [a, b] : moves) to[a] = b;
+    const juce::ScopedLock sl (lock);
+    for (auto& m : mappings)
+        if (auto it = to.find (m.param); it != to.end())
+        {
+            m.param = it->second;
+            m.paramId = it->second->id;
+            m.lastSent = -1;          // send the new value as feedback
+            m.lastTarget = nullptr;
+        }
+    lastVersions.clear();
+    ++mapVersion;
+}
+
+int MidiMapper::countMappings (const std::vector<std::pair<Param*, Param*>>& moves) const
+{
+    std::unordered_set<const Param*> from;
+    for (auto& [a, b] : moves) from.insert (a);
+    const juce::ScopedLock sl (lock);
+    int n = 0;
+    for (auto& m : mappings) n += from.count (m.param) > 0 ? 1 : 0;
+    return n;
 }
 
 void MidiMapper::removeMapping (int index)

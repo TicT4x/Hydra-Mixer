@@ -123,8 +123,10 @@ void Recorder::createParams (ParamRegistry& params)
 
     record = &params.addToggle ("rec.record", "Recorder Record");
     play   = &params.addToggle ("rec.play", "Recorder Play");
+    stop   = &params.addToggle ("rec.stop", "Recorder Stop");   // momentary: switched off again once handled
     record->persistent = false; // never resume recording / playback on the next start
     play->persistent = false;
+    stop->persistent = false;
     loop   = &params.addToggle ("rec.loop", "Recorder Loop");
     juce::StringArray virtCodes;
     for (int v = 0; v < kMaxVirtBuses; ++v) virtCodes.add (busCode (virtBusIndex (v)));
@@ -178,6 +180,17 @@ void Recorder::run()
 
 void Recorder::timerCallback()
 {
+    // Stop: ends recording and playback and goes back to the start of the file.
+    if (stop->isOn())
+    {
+        stop->set (0.0f);
+        record->set (0.0f);
+        play->set (0.0f);
+        if (playing.load()) stopPlayback();
+        startSeconds.store (0.0);
+        changed();
+    }
+
     const bool wantRec = record->isOn();
     if (wantRec && ! recording.load())
     {
@@ -190,6 +203,7 @@ void Recorder::timerCallback()
     {
         playing.store (false);
         play->set (0.0f);
+        startSeconds.store (0.0); // played to the end: the next play starts from the beginning
         changed();
     }
 
@@ -354,6 +368,47 @@ bool Recorder::loadFile (const juce::File& f, juce::String& error)
     return true;
 }
 
+void Recorder::unloadFile()
+{
+    play->set (0.0f);
+    if (playing.load()) stopPlayback();
+    scanner.reset(); // closes its reader of the file
+    {
+        const juce::ScopedLock sl (writerLock);
+        resampler.reset();
+        readerSource.reset();
+        playFile = juce::File();
+        fileLength = 0;
+        playFrames.store (0);
+        playBase.store (0.0);
+        startSeconds.store (0.0);
+    }
+    playWave.clear();
+}
+
+bool Recorder::deleteLoadedFile (juce::String& error)
+{
+    const auto f = playFile;
+    if (recording.load()) { error = "Stop the recording first."; return false; }
+    if (f == juce::File()) { error = "No file loaded."; return false; }
+
+    unloadFile(); // the file must not be open while it is deleted
+    if (f == lastRecording)
+    {
+        lastRecording = juce::File();
+        recWave.clear();
+    }
+    changed();
+    if (f.existsAsFile() && ! f.moveToTrash() && ! f.deleteFile())
+    {
+        error = "Cannot delete " + f.getFullPathName();
+        lastError = error;
+        return false;
+    }
+    logLine ("recording deleted: " + f.getFullPathName());
+    return true;
+}
+
 void Recorder::scanFile (const juce::File& f)
 {
     scanner.reset();
@@ -431,6 +486,8 @@ bool Recorder::startPlayback()
 
 void Recorder::stopPlayback()
 {
+    // Pause: the next play continues where it stopped.
+    if (! finished.load()) startSeconds.store (juce::jlimit (0.0, juce::jmax (0.0, getPlayLengthSeconds()), getPlaySeconds()));
     playing.store (false, std::memory_order_release);
     flushPending.store (true, std::memory_order_release);
     changed();
