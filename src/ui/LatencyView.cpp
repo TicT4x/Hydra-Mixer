@@ -412,113 +412,14 @@ private:
 };
 
 //==============================================================================
-/** Chart of the focused path: donut with the total in the middle, components ranked by their share. */
-class LatencyView::Breakdown final : public juce::Component
-{
-public:
-    juce::String title;
-    std::vector<Node> nodes;
-    double total = 0.0;
-
-    void paint (juce::Graphics& g) override
-    {
-        auto r = getLocalBounds().reduced (18, 0);
-        g.setColour (theme::outline.withAlpha (0.7f));
-        g.fillRect (r.removeFromTop (1));
-        auto head = r.removeFromTop (34);
-        g.setColour (theme::text);
-        g.setFont (theme::font (14.0f, true));
-        const juce::String caption = "Latency share";
-        const int cw = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), caption);
-        g.drawText (caption, head.removeFromLeft (cw + 12), juce::Justification::centredLeft);
-        g.setColour (theme::textDim);
-        g.setFont (theme::font (12.0f));
-        g.drawFittedText (title, head, juce::Justification::centredLeft, 1, 0.8f);
-        r.removeFromBottom (12);
-
-        std::vector<const Node*> parts;
-        for (auto& n : nodes) if (n.ms > 0.0) parts.push_back (&n);
-        if (parts.empty() || total <= 0.0)
-        {
-            g.setColour (theme::textDim);
-            g.setFont (theme::font (12.5f));
-            g.drawText (nodes.empty() ? "Nothing to show." : "No latency on this path.", r.removeFromTop (24), juce::Justification::centredLeft);
-            return;
-        }
-        std::stable_sort (parts.begin(), parts.end(), [] (const Node* a, const Node* b) { return a->ms > b->ms; });
-
-        // Donut
-        const float d = (float) juce::jmin (r.getHeight(), 150);
-        auto pie = r.removeFromLeft ((int) d + 30).toFloat().withSizeKeepingCentre (d, d);
-        float angle = 0.0f;
-        const float thickness = d * 0.2f;
-        for (auto* n : parts)
-        {
-            const float span = juce::MathConstants<float>::twoPi * (float) (n->ms / total);
-            juce::Path seg;
-            seg.addCentredArc (pie.getCentreX(), pie.getCentreY(), d * 0.5f - thickness * 0.5f, d * 0.5f - thickness * 0.5f, 0.0f,
-                               angle + (parts.size() > 1 ? 0.012f : 0.0f), angle + span - (parts.size() > 1 ? 0.012f : 0.0f), true);
-            g.setColour (n->colour);
-            g.strokePath (seg, juce::PathStrokeType (thickness, juce::PathStrokeType::curved, juce::PathStrokeType::butt));
-            angle += span;
-        }
-        g.setColour (theme::text);
-        g.setFont (theme::mono (d > 110.0f ? 15.0f : 12.5f));
-        g.drawText (ms (total), pie.withSizeKeepingCentre (d - 2.0f * thickness, 20.0f).translated (0.0f, -6.0f),
-                    juce::Justification::centred);
-        g.setColour (theme::textDim);
-        g.setFont (theme::font (10.5f));
-        g.drawText ("total", pie.withSizeKeepingCentre (d - 2.0f * thickness, 14.0f).translated (0.0f, 10.0f),
-                    juce::Justification::centred);
-
-        // Ranked bars
-        r.removeFromLeft (10);
-        const int rowH = juce::jlimit (16, 24, r.getHeight() / juce::jmax (1, (int) parts.size()));
-        const int rowsShown = juce::jmin ((int) parts.size(), r.getHeight() / rowH);
-        const int labelW = juce::jlimit (120, 260, r.getWidth() / 3), valueW = 150;
-        for (int i = 0; i < rowsShown; ++i)
-        {
-            auto row = r.removeFromTop (rowH);
-            const bool last = i == rowsShown - 1 && rowsShown < (int) parts.size();
-            double partMs = parts[(size_t) i]->ms;
-            juce::String label = parts[(size_t) i]->label;
-            juce::Colour colour = parts[(size_t) i]->colour;
-            if (last)   // the rest in one row
-            {
-                partMs = 0.0;
-                for (size_t k = (size_t) i; k < parts.size(); ++k) partMs += parts[k]->ms;
-                label = juce::String ((int) parts.size() - i) + " more";
-                colour = theme::textFaint;
-            }
-            g.setColour (colour);
-            g.fillRoundedRectangle (row.removeFromLeft (10).withSizeKeepingCentre (10, 10).toFloat(), 2.5f);
-            row.removeFromLeft (8);
-            g.setColour (theme::text);
-            g.setFont (theme::font (12.5f));
-            g.drawFittedText (label, row.removeFromLeft (labelW), juce::Justification::centredLeft, 1, 0.8f);
-            auto value = row.removeFromRight (valueW);
-            g.setFont (theme::mono (12.5f));
-            g.setColour (theme::textDim);
-            g.drawText (ms (partMs), value.removeFromLeft (80), juce::Justification::centredRight);
-            g.setColour (theme::text);
-            g.setFont (theme::font (12.5f, true));
-            g.drawText (percent (partMs, total), value, juce::Justification::centredRight);
-            row.removeFromRight (6);
-            auto bar = row.withSizeKeepingCentre (row.getWidth(), juce::jmin (12, rowH - 6)).toFloat();
-            g.setColour (theme::panel2);
-            g.fillRoundedRectangle (bar, 3.0f);
-            g.setColour (colour.withAlpha (0.9f));
-            g.fillRoundedRectangle (bar.withWidth (juce::jmax (3.0f, bar.getWidth() * (float) (partMs / total))), 3.0f);
-        }
-    }
-};
-
-//==============================================================================
 LatencyView::LatencyView (UiContext& c) : ctx (c)
 {
     picker = std::make_unique<OutputPicker> (c);
     flowView = std::make_unique<FlowView> (c);
-    breakdown = std::make_unique<Breakdown>();
+    breakdown = std::make_unique<ShareChart> (c);
+    breakdown->caption = "Latency share";
+    breakdown->emptyText = "No latency on this path.";
+    breakdown->format = [] (double v) { return ms (v); };
     picker->onPick = [this] (int b) { bus = b; focusInput = -1; refresh(); };
     flowView->onFocus = [this] (int lane)
     {
@@ -621,17 +522,20 @@ void LatencyView::refresh()
     summary = text;
 
     // Chart: the focused path (input side + output side)
-    breakdown->nodes.clear();
+    std::vector<Node> path;
     if (! flow.lanes.empty())
     {
         const auto& lane = flow.lanes[(size_t) flow.focus];
-        breakdown->nodes = lane.nodes;
-        breakdown->title = lane.title + "   ->   " + flow.busTitle;
+        path = lane.nodes;
+        breakdown->subtitle = lane.title + "   ->   " + flow.busTitle;
     }
     else
-        breakdown->title = flow.busTitle + "  (output side only)";
-    for (auto& n : flow.busNodes) breakdown->nodes.push_back (n);
-    breakdown->total = sum (breakdown->nodes);
+        breakdown->subtitle = flow.busTitle + "  (output side only)";
+    for (auto& n : flow.busNodes) path.push_back (n);
+    std::vector<ShareChart::Part> parts;
+    for (size_t k = 0; k < path.size(); ++k)
+        parts.push_back ({ juce::String ((int) k), path[k].label, path[k].detail, path[k].ms, path[k].colour, path[k].selectIndex });
+    breakdown->setParts (std::move (parts), sum (path));
 
     flowView->flow = std::move (flow);
     resized();
@@ -651,7 +555,11 @@ void LatencyView::paint (juce::Graphics& g)
     g.setFont (theme::font (12.0f));
     g.drawFittedText (summary, head.removeFromTop (20), juce::Justification::centredLeft, 1, 0.8f);
 
-    drawBarLegend (g, getLocalBounds().reduced (18, 0).removeFromTop (36).withTrimmedTop (8),
+    // Separator above the chart
+    g.setColour (theme::outline.withAlpha (0.7f));
+    g.fillRect (breakdown->getBounds().getX(), breakdown->getY() - 8, breakdown->getWidth(), 1);
+
+    drawLegend (g, getLocalBounds().reduced (18, 0).removeFromTop (36).withTrimmedTop (8),
                    { { "Input device", kDeviceIn }, { "Denoiser", kDenoiser }, { "Plugin", kPlugin },
                      { "Output device", theme::busColour (juce::jmax (0, bus)) } });
 }
@@ -661,7 +569,8 @@ void LatencyView::resized()
     auto r = getLocalBounds().withTrimmedTop (68);
     picker->setBounds (r.removeFromTop (30).reduced (18, 0));
     r.removeFromTop (8);
-    breakdown->setBounds (r.removeFromBottom (juce::jlimit (120, 220, getHeight() * 33 / 100)));
+    breakdown->setBounds (r.removeFromBottom (juce::jlimit (120, 220, getHeight() * 33 / 100)).reduced (18, 0).withTrimmedBottom (12));
+    r.removeFromBottom (16);
     viewport.setBounds (r);
     const auto size = flowView->layout (r.getWidth());
     const bool scrollsDown = size.y > r.getHeight();
