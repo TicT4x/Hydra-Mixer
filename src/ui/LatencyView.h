@@ -1,5 +1,5 @@
 #pragma once
-#include "BarList.h"   // drawBarLegend
+#include "Charts.h"
 
 namespace hydra
 {
@@ -48,7 +48,6 @@ public:
 private:
     class OutputPicker;
     class FlowView;
-    class Breakdown;
     void timerCallback() override;
     void refresh();
     Flow build (int bus) const;
@@ -58,7 +57,7 @@ private:
     std::unique_ptr<OutputPicker> picker;
     juce::Viewport viewport;
     std::unique_ptr<FlowView> flowView;
-    std::unique_ptr<Breakdown> breakdown;
+    std::unique_ptr<ShareChart> breakdown;   // latency share of the focused path
     juce::String summary, shownSignature;
     int bus = -1, focusInput = -1;   // picked output, clicked lane (-1 = longest)
 };

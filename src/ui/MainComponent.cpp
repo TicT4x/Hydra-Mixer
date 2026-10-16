@@ -862,8 +862,8 @@ void MainComponent::openLatencyFinder()
 void MainComponent::openDspView()
 {
     if (dspWindow == nullptr)
-        makeToolWindow (dspWindow, "Hydra Mixer - DSP Load", new DspView (ctx), 1000, 640);
-    dspWindow->setResizeLimits (640, 360, 8000, 4000);
+        makeToolWindow (dspWindow, "Hydra Mixer - DSP Load", new DspView (ctx), 1100, 720);
+    dspWindow->setResizeLimits (760, 480, 8000, 4000);
     dspWindow->setVisible (true);
     dspWindow->toFront (true);
 }
