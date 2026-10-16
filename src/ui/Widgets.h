@@ -182,10 +182,17 @@ public:
 
     juce::String text;
     juce::Colour onColour;
+    /** -1: on/off parameter. Otherwise one value of a choice parameter: lit while the parameter has this
+        value, a click selects it (a row of such toggles works like radio buttons). */
+    int choiceValue = -1;
     Icon icon;
 
 private:
-    void press (const juce::MouseEvent&) override { param.toggle(); }
+    void press (const juce::MouseEvent&) override
+    {
+        if (choiceValue >= 0) param.set ((float) choiceValue);
+        else                  param.toggle();
+    }
     bool hover = false;
 };
 
@@ -272,6 +279,7 @@ public:
     juce::String text;
     juce::Colour colour;
     bool active = false, showArrow = true, centred = false;
+    bool warning = false;   // problem marker (yellow dot + outline), details in the tooltip
 
     void paint (juce::Graphics&) override;
     void mouseUp (const juce::MouseEvent& e) override { if (e.mouseWasClicked() && onClick) onClick(); }

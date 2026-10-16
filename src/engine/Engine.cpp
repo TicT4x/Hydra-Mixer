@@ -512,17 +512,15 @@ std::vector<std::pair<juce::String, uint64_t>> Engine::getStreamDspTicks() const
 juce::String Engine::getStreamStatus (const IoTarget& t, bool input) const
 {
     if (t.kind == IoTarget::Kind::Master || isMasterAsio (t))
-        return masterDevice != nullptr ? juce::String (1000.0 * blockSize / sampleRate, 1) + " ms" : "offline";
+        return masterDevice != nullptr ? juce::String() : "offline";
 
     if (current == nullptr) return "offline";
 
     auto fmt = [] (const AsyncStream& s)
     {
-        const double ms = 1000.0 * s.latencyFrames.load() / juce::jmax (1.0, s.getDeviceRate());
         if (s.idle.load()) return juce::String ("waiting for app");
-        auto txt = "+" + juce::String (ms, 1) + " ms";
-        if (const int u = s.underruns.load(); u > 0) txt << "  (" << u << " dropouts)";
-        return txt;
+        if (const int u = s.underruns.load(); u > 0) return juce::String (u) + (u == 1 ? " dropout" : " dropouts");
+        return juce::String();
     };
 
     if (input) { for (auto& s : current->ins)  if (s->target.sameStream (t)) return fmt (*s); }

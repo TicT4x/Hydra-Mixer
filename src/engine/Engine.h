@@ -215,6 +215,8 @@ public:
     double getSampleRate() const noexcept { return sampleRate; }
     int getBlockSize() const noexcept { return blockSize; }
     double getMasterLatencyMs() const;
+    /** Problem of a strip's source / a bus's output ("offline", "waiting for app", "3 dropouts"),
+        empty while it runs fine. Latency is shown in the Latency Finder. */
     juce::String getStreamStatus (const IoTarget& t, bool input) const;
     /** Device-side latency of a strip's source / a bus's output in ms (-1 = offline). */
     double getIoLatencyMs (const IoTarget& t, bool input) const;

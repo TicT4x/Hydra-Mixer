@@ -321,7 +321,7 @@ InputStripView::InputStripView (UiContext& c, int i)
       mute (c, *strip.mute, "MUTE", theme::mute),
       meter (strip.meter)
 {
-    for (auto* comp : std::initializer_list<juce::Component*> { &header, &source, &sourceStatus, &trim, &pan,
+    for (auto* comp : std::initializer_list<juce::Component*> { &header, &source, &trim, &pan,
                                                                &mono, &solo, &mute, &meter, &dbLabel })
         addAndMakeVisible (comp);
 
@@ -336,7 +336,6 @@ InputStripView::InputStripView (UiContext& c, int i)
 
     source.onClick = [this] { IoMenus::showInputMenu (source, ctx, index, [this] { refresh(); }); };
     source.setTooltip ("Select input source (hardware, Windows device, virtual input or loopback)");
-    styleSmallLabel (sourceStatus);
     addMouseListener (this, true);
 
     dbPoll.v = this;
@@ -348,7 +347,7 @@ InputStripView::InputStripView (UiContext& c, int i)
 int InputStripView::minimumHeight (int numHw, int numVirt)
 {
     auto group = [] (int count) { const int rows = (count + 2) / 3; return count > 0 ? rows * 20 + (rows - 1) * 3 + 6 + 6 : 0; };
-    return 16 + 28 + 4 + 24 + 15 + 54 + 10 + group (numHw) + group (numVirt) + 2
+    return 16 + 28 + 4 + 24 + 4 + 54 + 10 + group (numHw) + group (numVirt) + 2
          + 90 /* fader */ + 16 + 4 + 20 + 3 + 24;
 }
 
@@ -412,6 +411,8 @@ void InputStripView::refresh()
     source.text = strip.source.describe();
     source.active = strip.source.kind != IoTarget::Kind::None;
     source.colour = source.active ? theme::text : theme::textDim;
+    sourceProblem = "?";   // check the new source's state with the next meter update
+    statusTick = 15;
     source.repaint();
     repaint();
 }
@@ -421,10 +422,17 @@ void InputStripView::updateMeters (float dt)
     meter.update (dt);
     if ((++statusTick & 15) == 0)
     {
-        const bool needsDriver = strip.source.kind == IoTarget::Kind::Virtual;
-        sourceStatus.setText (strip.source.kind == IoTarget::Kind::None ? juce::String()
-                              : needsDriver ? juce::String ("no driver - use a cable")
-                              : ctx.engine.getStreamStatus (strip.source, true), juce::dontSendNotification);
+        const auto problem = strip.source.kind == IoTarget::Kind::None    ? juce::String()
+                           : strip.source.kind == IoTarget::Kind::Virtual ? juce::String ("no driver - use a cable")
+                                                                           : ctx.engine.getStreamStatus (strip.source, true);
+        if (problem != sourceProblem)
+        {
+            sourceProblem = problem;
+            source.warning = problem.isNotEmpty();
+            source.setTooltip ((problem.isNotEmpty() ? strip.source.describe() + ":  " + problem + "\n" : juce::String())
+                               + "Select input source (hardware, Windows device, virtual input or loopback)");
+            source.repaint();
+        }
     }
 }
 
@@ -455,7 +463,7 @@ void InputStripView::resized()
     header.setBounds (r.removeFromTop (28));
     r.removeFromTop (4);
     source.setBounds (r.removeFromTop (24));
-    sourceStatus.setBounds (r.removeFromTop (15));
+    r.removeFromTop (4);
     auto knobs = r.removeFromTop (54);
     layoutRow (knobs, { &trim, &pan }, 4);
     r.removeFromTop (10);
@@ -520,6 +528,7 @@ BusStripView::BusStripView (UiContext& c, int i)
                     + " (separate from the other buses). With monitoring enabled in Settings > General, "
                       "this bus is also heard on the monitor output.");
     styleSmallLabel (outputStatus);
+    outputStatus.setColour (juce::Label::textColourId, theme::warn);
     makeEditableDbLabel (dbLabel, *bus.gain);
     addMouseListener (this, true);
 
@@ -561,12 +570,13 @@ void BusStripView::updateMeters (float dt)
     if ((monSrc >= 0) != monitorShown)
     {
         monitorShown = monSrc >= 0;
-        outputStatus.setColour (juce::Label::textColourId, monitorShown ? theme::learn : theme::textFaint);
+        outputStatus.setColour (juce::Label::textColourId, monitorShown ? theme::learn : theme::warn);
         tick = 15;
         repaint();
     }
     if ((++tick & 15) == 0)
     {
+        // Monitoring note, otherwise only problems (latency is shown in the Latency Finder).
         if (monitorShown)
             outputStatus.setText ("monitoring " + busCode (monSrc), juce::dontSendNotification);
         else
@@ -1001,7 +1011,7 @@ int StripArea::defaultSplit() const
     // Both panes get the same (widest possible) strip width. If even the narrowest strips do not
     // fit, each pane gets a share proportional to what it needs, so both scroll alike.
     const int avail = getWidth() - kDividerWidth;
-    const float s = scaleFor (getHeight() - kCaptionHeight);
+    const float s = scaleFor (getHeight() - kCaptionHeight - StripPane::kScrollBar);
     auto fits = [&] (int w) { return (float) (inputsWidth (w) + outputsWidth (w)) * s <= (float) avail; };
     int w = kMaxStripWidth;
     while (w > kMinStripWidth && ! fits (w)) --w;
@@ -1029,22 +1039,13 @@ void StripArea::setSplit (int x)
 void StripArea::layoutPane (StripPane& pane, bool outputs, int paneWidth, int paneHeight)
 {
     // Strips stretch to fill the pane (up to kMaxStripWidth); below kMinStripWidth the pane scrolls.
-    float s = scaleFor (paneHeight);
+    // The scroll bar's height is always kept free, so the strips do not change size when it appears.
+    const int stripsHeight = paneHeight - StripPane::kScrollBar;
+    const float s = scaleFor (stripsHeight);
     auto contentWidth = [&] (int w) { return outputs ? outputsWidth (w) : inputsWidth (w); };
-    auto fit = [&]
-    {
-        int w = kMaxStripWidth;
-        while (w > kMinStripWidth && (float) contentWidth (w) * s > (float) paneWidth) --w;
-        return w;
-    };
-    int w = fit();
-    if ((float) contentWidth (w) * s > (float) paneWidth) // scrolls: the scroll bar takes some height
-    {
-        s = scaleFor (paneHeight - StripPane::kScrollBar);
-        w = fit();
-    }
-    const bool scrolls = (float) contentWidth (w) * s > (float) paneWidth + 0.5f;
-    const int h = juce::roundToInt ((float) (paneHeight - (scrolls ? StripPane::kScrollBar : 0)) / s);
+    int w = kMaxStripWidth;
+    while (w > kMinStripWidth && (float) contentWidth (w) * s > (float) paneWidth) --w;
+    const int h = juce::roundToInt ((float) stripsHeight / s);
     pane.setContentSize (juce::jmax (contentWidth (w), juce::roundToInt ((float) paneWidth / s)), h, s);
 
     auto place = [&] (Section& sec, int x, int count)

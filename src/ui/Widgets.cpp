@@ -494,7 +494,7 @@ void Toggle::drawIcon (juce::Graphics& g, Icon icon, bool on, juce::Rectangle<fl
 void Toggle::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (1.0f);
-    const bool on = param.isOn();
+    const bool on = choiceValue >= 0 ? juce::roundToInt (param.get()) == choiceValue : param.isOn();
     g.setColour (on ? onColour : (hover ? theme::raised.brighter (0.08f) : theme::raised));
     g.fillRoundedRectangle (r, 5.0f);
     if (! on)
@@ -721,10 +721,16 @@ void Chip::paint (juce::Graphics& g)
     auto r = getLocalBounds().toFloat().reduced (0.5f);
     g.setColour (active ? colour.withAlpha (0.22f) : (hover ? theme::raised.brighter (0.06f) : theme::panel2));
     g.fillRoundedRectangle (r, 6.0f);
-    g.setColour (active ? colour.withAlpha (0.8f) : theme::outline);
+    g.setColour (warning ? theme::warn.withAlpha (0.8f) : active ? colour.withAlpha (0.8f) : theme::outline);
     g.drawRoundedRectangle (r, 6.0f, 1.0f);
 
     auto tr = r.reduced (7.0f, 0.0f);
+    if (warning)
+    {
+        g.setColour (theme::warn);
+        g.fillEllipse (tr.removeFromLeft (6.0f).withSizeKeepingCentre (6.0f, 6.0f));
+        tr.removeFromLeft (4.0f);
+    }
     if (showArrow)
     {
         auto ar = tr.removeFromRight (8.0f);
