@@ -417,10 +417,11 @@ private:
 };
 
 //==============================================================================
-class ImportTab final : public juce::Component
+/** Import of a Voicemeeter settings XML (part of the Backup & Transfer tab). */
+class VoicemeeterSection final : public juce::Component
 {
 public:
-    ImportTab (UiContext& c, std::function<void()> changed) : ctx (c), onChanged (std::move (changed))
+    VoicemeeterSection (UiContext& c, std::function<void()> changed) : ctx (c), onChanged (std::move (changed))
     {
         addAndMakeVisible (title); styleLabel (title, false, 15.0f);
         addAndMakeVisible (hint); styleLabel (hint);
@@ -465,16 +466,17 @@ public:
             if (ctx.session != nullptr) { ctx.session->saveDefault(); ctx.session->backup ("before-voicemeeter-import"); }
             const auto result = VoicemeeterImport::run (candidates[i], ctx.engine, ctx.midi, true);
             report.setText (result.report.joinIntoString ("\n"), false);
+            report.setVisible (true);
             if (onChanged) onChanged();
         };
+        report.setVisible (false);   // shown after an import
     }
 
     void resized() override
     {
-        auto r = getLocalBounds().reduced (24, 20);
+        auto r = getLocalBounds();
         title.setBounds (r.removeFromTop (26));
-        hint.setBounds (r.removeFromTop (54));
-        r.removeFromTop (8);
+        hint.setBounds (r.removeFromTop (40));
         auto row = r.removeFromTop (30);
         import.setBounds (row.removeFromRight (120));
         row.removeFromRight (8);
@@ -497,12 +499,19 @@ private:
 };
 
 //==============================================================================
-/** Export / import of the complete settings and restore of automatic backups. */
+/** Export / import of the complete settings, restore of automatic backups and the Voicemeeter import. */
 class BackupTab final : public juce::Component
 {
 public:
-    BackupTab (UiContext& c, std::function<void()> replaced) : ctx (c), onReplaced (std::move (replaced))
+    BackupTab (UiContext& c, std::function<void()> replaced, std::function<void()> engineChanged)
+        : ctx (c), onReplaced (std::move (replaced)),
+          voicemeeter (c, [this, engineChanged]
+          {
+              reloadList();   // the import made a backup first
+              if (engineChanged) engineChanged();
+          })
     {
+        addAndMakeVisible (voicemeeter);
         for (auto* l : { &title, &backupTitle }) { addAndMakeVisible (l); styleLabel (*l, false, 15.0f); }
         for (auto* l : { &hint, &backupHint, &status }) { addAndMakeVisible (l); styleLabel (*l); l->setJustificationType (juce::Justification::topLeft); }
         hint.setText ("Saves everything (devices, routing, names, faders, EQ, dynamics, denoiser, plugins, MIDI map, "
@@ -540,11 +549,11 @@ public:
         auto r = getLocalBounds().reduced (24, 20);
         title.setBounds (r.removeFromTop (26));
         hint.setBounds (r.removeFromTop (40));
-        auto row = r.removeFromTop (32);
+        auto row = r.removeFromTop (30);
         exportButton.setBounds (row.removeFromLeft (180));
         row.removeFromLeft (10);
         importButton.setBounds (row.removeFromLeft (180));
-        r.removeFromTop (30);
+        r.removeFromTop (24);
         backupTitle.setBounds (r.removeFromTop (26));
         backupHint.setBounds (r.removeFromTop (40));
         row = r.removeFromTop (30);
@@ -553,8 +562,10 @@ public:
         restoreButton.setBounds (row.removeFromRight (120));
         row.removeFromRight (8);
         backups.setBounds (row);
-        r.removeFromTop (16);
-        status.setBounds (r.removeFromTop (60));
+        r.removeFromTop (6);
+        status.setBounds (r.removeFromTop (36));
+        r.removeFromTop (14);
+        voicemeeter.setBounds (r);
     }
 
 private:
@@ -628,6 +639,7 @@ private:
     juce::ComboBox backups;
     juce::Array<juce::File> files;
     std::unique_ptr<juce::FileChooser> chooser;
+    VoicemeeterSection voicemeeter;
 };
 
 //==============================================================================
@@ -909,9 +921,9 @@ SettingsPanel::SettingsPanel (UiContext& c) : ctx (c)
     tabs.addTab ("Audio Engine", theme::panel, new AudioTab (c, [this] { if (onEngineChanged) onEngineChanged(); }), true);
     tabs.addTab ("MIDI", theme::panel, new MidiTab (c), true);
     tabs.addTab ("Plugins", theme::panel, new PluginTab (c), true);
-    tabs.addTab ("Import", theme::panel, new ImportTab (c, [this] { if (onEngineChanged) onEngineChanged(); }), true);
     tabs.addTab ("Virtual Cables", theme::panel, new CablesTab (c, [this] { if (onEngineChanged) onEngineChanged(); }), true);
-    tabs.addTab ("Backup & Transfer", theme::panel, new BackupTab (c, [this] { if (onSessionReplaced) onSessionReplaced(); }), true);
+    tabs.addTab ("Backup & Transfer", theme::panel, new BackupTab (c, [this] { if (onSessionReplaced) onSessionReplaced(); },
+                                                                  [this] { if (onEngineChanged) onEngineChanged(); }), true);
 }
 
 SettingsPanel::~SettingsPanel() = default;

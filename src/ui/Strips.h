@@ -69,8 +69,8 @@ private:
     juce::Rectangle<float> hwGroup, virtGroup;
 
     StripHeader header;
-    Chip source;
-    juce::Label sourceStatus;
+    Chip source;   // marked when the source has a problem (offline, dropouts...)
+    juce::String sourceProblem;
     Knob trim, pan;
     // Routing buttons of the buses in use (EQ / gate / comp / denoiser are switched in the inspector).
     std::vector<std::unique_ptr<Toggle>> hwRoutes, virtRoutes;

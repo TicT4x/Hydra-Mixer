@@ -650,19 +650,6 @@ private:
 };
 
 //==============================================================================
-/** Choice segments for the buses in use of one kind (A or B): labels and the matching choice values. */
-std::pair<juce::StringArray, std::vector<int>> activeBusChoices (const Engine& e, bool virtualBuses)
-{
-    juce::StringArray labels;
-    std::vector<int> values;
-    const int first = virtualBuses ? virtBusIndex (0) : hwBusIndex (0);
-    const int count = virtualBuses ? kMaxVirtBuses : kMaxHwBuses;
-    for (int k = 0; k < count; ++k)
-        if (e.isBusActive (first + k)) { labels.add (busCode (first + k)); values.push_back (k); }
-    if (labels.isEmpty()) { labels.add (virtualBuses ? "no B bus" : "no A bus"); values.push_back (0); }
-    return { labels, values };
-}
-
 juce::String formatTime (double seconds)
 {
     const auto t = (int) seconds;
@@ -804,12 +791,11 @@ public:
           sourceSec ("Record Source", theme::accentVirt), takeSec ("Recording", theme::mute), outSec ("Play To", theme::accentHw),
           recBtn (c, *rec.record, "REC", theme::mute), playBtn (c, *rec.play, "PLAY", theme::good),
           loopBtn (c, *rec.loop, "LOOP", theme::good),
-          source (c, *rec.source, theme::accentVirt, activeBusChoices (c.engine, true).first, activeBusChoices (c.engine, true).second),
           level (c, *rec.level, "LEVEL", theme::good),
           wave (rec)
     {
         for (juce::Component* s : std::initializer_list<juce::Component*> { &sourceSec, &takeSec, &outSec }) addAndMakeVisible (s);
-        for (juce::Component* k : std::initializer_list<juce::Component*> { &source, &folderChip, &formatChip }) sourceSec.addAndMakeVisible (k);
+        for (juce::Component* k : std::initializer_list<juce::Component*> { &folderChip, &formatChip }) sourceSec.addAndMakeVisible (k);
         for (juce::Component* k : std::initializer_list<juce::Component*> { &recBtn, &playBtn, &loopBtn, &wave, &openChip, &lastChip, &showChip })
             takeSec.addAndMakeVisible (k);
         outSec.addAndMakeVisible (level);
@@ -818,6 +804,16 @@ public:
             if (! c.engine.isBusActive (b)) continue;
             (isHwBus (b) ? hwOuts : virtOuts).push_back (std::make_unique<Toggle> (c, *rec.out[(size_t) b], busCode (b), theme::busColour (b)));
             outSec.addAndMakeVisible (*(isHwBus (b) ? hwOuts : virtOuts).back());
+        }
+        // Record source: the B buses as the same kind of buttons as Play To (one of them is lit).
+        for (int k = 0; k < kMaxVirtBuses; ++k)
+        {
+            const int b = virtBusIndex (k);
+            if (! c.engine.isBusActive (b)) continue;
+            sources.push_back (std::make_unique<Toggle> (c, *rec.source, busCode (b), theme::busColour (b)));
+            sources.back()->choiceValue = k;
+            sources.back()->setTooltip ("Record " + busCode (b) + " (" + c.engine.buses[(size_t) b].name + ")");
+            sourceSec.addAndMakeVisible (*sources.back());
         }
         for (auto* chip : { &folderChip, &formatChip, &openChip, &lastChip, &showChip })
         {
@@ -858,16 +854,36 @@ public:
     {
         // Source and outputs take what they need, the recording gets the rest.
         auto r = getLocalBounds();
-        sourceSec.setBounds (r.removeFromLeft (juce::jlimit (210, 300, 40 + 34 * juce::jmax (4, source.getNumSegments()))));
         const int most = (int) juce::jmax (hwOuts.size(), virtOuts.size());
         const int perRow = most == 5 ? 5 : 4;   // 5 A buses in one row, otherwise rows of four
+        sourceSec.setBounds (r.removeFromLeft (juce::jmax (210, 24 + perRow * 40 + 8)));
         outSec.setBounds (r.removeFromRight (24 + perRow * 40 + 8 + 70));
         takeSec.setBounds (r);
 
-        // Source: bus choice, what it records, folder / format
+        // Rows of bus buttons under a small caption (record source and Play To look the same).
+        auto group = [perRow] (juce::Rectangle<int>& area, std::vector<std::unique_ptr<Toggle>>& list, juce::Rectangle<int>& label,
+                               juce::Point<int> origin)
+        {
+            label = {};
+            if (list.empty()) return;
+            label = area.removeFromTop (14) + origin;
+            for (size_t k = 0; k < list.size(); k += (size_t) perRow)
+            {
+                auto row = area.removeFromTop (22);
+                area.removeFromTop (4);
+                for (size_t j = k; j < juce::jmin (list.size(), k + (size_t) perRow); ++j)
+                {
+                    list[j]->setBounds (row.removeFromLeft (36));
+                    row.removeFromLeft (4);
+                }
+            }
+            area.removeFromTop (4);
+        };
+
+        // Source: B bus, what it records, folder / format
         auto s = sourceSec.content();
-        source.setBounds (s.removeFromTop (26));
-        s.removeFromTop (6);
+        group (s, sources, sourceLabel, sourceSec.getPosition());
+        s.removeFromTop (2);
         sourceInfo = s.removeFromTop (30).translated (sourceSec.getX(), sourceSec.getY());
         s.removeFromTop (6);
         auto chips = s.removeFromTop (26);
@@ -901,25 +917,8 @@ public:
         auto o = outSec.content();
         level.setBounds (o.removeFromRight (64).withSizeKeepingCentre (64, 74));
         o.removeFromRight (8);
-        hwLabel = virtLabel = {};
-        auto group = [&] (std::vector<std::unique_ptr<Toggle>>& list, juce::Rectangle<int>& label)
-        {
-            if (list.empty()) return;
-            label = o.removeFromTop (14).translated (outSec.getX(), outSec.getY());
-            for (size_t k = 0; k < list.size(); k += (size_t) perRow)
-            {
-                auto row = o.removeFromTop (22);
-                o.removeFromTop (4);
-                for (size_t j = k; j < juce::jmin (list.size(), k + (size_t) perRow); ++j)
-                {
-                    list[j]->setBounds (row.removeFromLeft (36));
-                    row.removeFromLeft (4);
-                }
-            }
-            o.removeFromTop (4);
-        };
-        group (hwOuts, hwLabel);
-        group (virtOuts, virtLabel);
+        group (o, hwOuts, hwLabel, outSec.getPosition());
+        group (o, virtOuts, virtLabel, outSec.getPosition());
     }
 
     void paintOverChildren (juce::Graphics& g) override
@@ -941,6 +940,7 @@ public:
         g.setFont (theme::font (10.5f, true));
         if (! hwLabel.isEmpty())   { g.setColour (theme::accentHw.withAlpha (0.8f));   g.drawText ("HARDWARE (A)", hwLabel, juce::Justification::centredLeft); }
         if (! virtLabel.isEmpty()) { g.setColour (theme::accentVirt.withAlpha (0.8f)); g.drawText ("VIRTUAL (B)", virtLabel, juce::Justification::centredLeft); }
+        if (! sourceLabel.isEmpty()) { g.setColour (theme::accentVirt.withAlpha (0.8f)); g.drawText ("VIRTUAL (B)", sourceLabel, juce::Justification::centredLeft); }
 
         auto f = fileArea;
         g.setColour (rec.getLoadedFile() != juce::File() ? theme::text : theme::textFaint);
@@ -976,8 +976,9 @@ private:
         else if (rec.getLastError().isNotEmpty()) stateText = rec.getLastError();
         else              stateText = "Stopped";
 
-        sourceText = "Records " + busCode (rec.getRecordSourceBus()) + " after its fader and limiter into  "
-                     + rec.getFolder().getFileName();
+        sourceText = sources.empty() ? juce::String ("No virtual output (B bus) in use - add one to record.")
+                                     : "Records " + busCode (rec.getRecordSourceBus()) + " after its fader and limiter into  "
+                                           + rec.getFolder().getFileName();
         folderChip.text = "Folder...";
         formatChip.text = rec.bitDepth >= 32 ? "WAV 32f" : "WAV " + juce::String (rec.bitDepth);
 
@@ -1029,14 +1030,13 @@ private:
     Recorder& rec;
     Section sourceSec, takeSec, outSec;
     Toggle recBtn, playBtn, loopBtn;
-    ChoiceSegments source;
     Knob level;
     WaveformView wave;
     Chip folderChip { "Folder...", theme::text }, formatChip { "WAV 24", theme::text };
     Chip openChip { "Open File...", theme::text }, lastChip { "Last Take", theme::text }, showChip { "Show", theme::text };
-    std::vector<std::unique_ptr<Toggle>> hwOuts, virtOuts;
+    std::vector<std::unique_ptr<Toggle>> sources, hwOuts, virtOuts;
     std::unique_ptr<juce::FileChooser> chooser;
-    juce::Rectangle<int> timeArea, sourceInfo, fileArea, hwLabel, virtLabel;
+    juce::Rectangle<int> timeArea, sourceInfo, fileArea, hwLabel, virtLabel, sourceLabel;
     juce::String shownTime, stateText, sourceText, fileTitle, fileInfo;
     uint64_t seenVersion = 0;
 };
