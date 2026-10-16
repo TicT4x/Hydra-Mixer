@@ -36,6 +36,7 @@ struct PluginSlot
     std::unique_ptr<juce::AudioPluginInstance> instance;
     juce::PluginDescription description;
     std::atomic<bool> bypassed { false };
+    std::atomic<uint64_t> dspTicks { 0 };               // processing time while profiling (DSP view)
     std::unique_ptr<juce::DocumentWindow> editorWindow; // UI only
 };
 
@@ -47,14 +48,18 @@ public:
     void prepare (double sampleRate, int maxBlock);
     void release();
 
-    /** Audio thread. In-place stereo processing. */
-    void process (float* l, float* r, int n) noexcept;
+    /** Audio thread. In-place stereo processing. timed: add each plugin's processing time to its dspTicks. */
+    void process (float* l, float* r, int n, bool timed = false) noexcept;
 
     // Message thread
     void add (std::unique_ptr<juce::AudioPluginInstance> p, const juce::PluginDescription& d);
     void remove (int index);
     void move (int from, int to);
     void clear();
+    /** Moves all plugins out of / into the chain (reordering channels). The plugins stay prepared;
+        putAll expects the chain to be empty. */
+    std::vector<std::unique_ptr<PluginSlot>> takeAll();
+    void putAll (std::vector<std::unique_ptr<PluginSlot>> plugins);
     int size() const noexcept                 { return (int) slots.size(); }
     PluginSlot* getSlot (int i) const noexcept { return juce::isPositiveAndBelow (i, (int) slots.size()) ? slots[(size_t) i].get() : nullptr; }
     int getTotalLatency() const;

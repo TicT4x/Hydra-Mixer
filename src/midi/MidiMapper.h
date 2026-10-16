@@ -108,6 +108,11 @@ public:
     /** Changes the range of every mapping of a parameter. Pass a negative value to keep that end. */
     void setRangeForParam (const Param* p, float minN, float maxN);
     void clearAll();
+    /** Channels were reordered: every mapping of a parameter in moves (first) now drives the parameter
+        that holds its value (second), so the controller keeps controlling the same channel. */
+    void remapParams (const std::vector<std::pair<Param*, Param*>>& moves);
+    /** Number of mappings on the given parameters (first of each pair). */
+    int countMappings (const std::vector<std::pair<Param*, Param*>>& moves) const;
 
     std::unique_ptr<juce::XmlElement> toXml() const;
     void fromXml (const juce::XmlElement& xml);

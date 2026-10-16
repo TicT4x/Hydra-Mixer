@@ -57,6 +57,9 @@ struct UiContext
     /** Adds a channel: 0 = input, 1 = hardware output (A), 2 = virtual output (B). */
     std::function<void (int)> addChannel;
 
+    /** Enters Change Order mode (drag the strips into a new order). */
+    std::function<void()> changeOrder;
+
     /** EQ of a channel (selection index), or nullptr for the recorder. */
     ParamEq* eqFor (int selectIndex) const
     {
@@ -167,14 +170,19 @@ private:
 class Toggle final : public ParamControl
 {
 public:
-    Toggle (UiContext& c, Param& p, juce::String text, juce::Colour onColour);
+    /** Symbol drawn instead of the text (transport buttons). playPause shows pause while the parameter is on. */
+    enum class Icon { none, record, playPause, stop, loop };
+
+    Toggle (UiContext& c, Param& p, juce::String text, juce::Colour onColour, Icon icon = Icon::none);
     void paint (juce::Graphics&) override;
+    static void drawIcon (juce::Graphics&, Icon, bool on, juce::Rectangle<float> area, juce::Colour);
     void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
     void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
     void mouseDoubleClick (const juce::MouseEvent&) override {}
 
     juce::String text;
     juce::Colour onColour;
+    Icon icon;
 
 private:
     void press (const juce::MouseEvent&) override { param.toggle(); }
@@ -274,7 +282,7 @@ protected:
     bool hover = false;
 };
 
-/** Chip with a trash-can icon (remove a plugin); turns red on hover. */
+/** Chip with a trash-can icon (remove a plugin, delete a recording); turns red on hover, dimmed when disabled. */
 class TrashButton final : public Chip
 {
 public:

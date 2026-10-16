@@ -1,5 +1,5 @@
 #pragma once
-#include "Widgets.h"
+#include "BarList.h"
 
 namespace hydra
 {
@@ -17,34 +17,20 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    struct Segment
-    {
-        juce::String label;   // "Input device", "Denoiser", plugin name...
-        double ms = 0.0;
-        juce::Colour colour;
-    };
-    struct Row
-    {
-        juce::String title, detail;   // e.g. "IN 1 Mic  ->  A1 Speakers", "offline"
-        juce::Colour colour;
-        std::vector<Segment> segments;
-        double total = 0.0;
-        int selectIndex = -1;         // channel selected on click
-        bool operator== (const Row&) const;
-    };
+    using Segment = BarList::Segment;   // value in ms
+    using Row = BarList::Row;
 
     /** Input side (device, denoiser, plugins) / output side (plugins, device) of a channel. */
     static std::vector<Segment> inputSegments (Engine&, int input);
     static std::vector<Segment> busSegments (Engine&, int bus);
 
 private:
-    class List;
     void timerCallback() override;
     void refresh();
 
     UiContext& ctx;
     juce::Viewport viewport;
-    std::unique_ptr<List> list;
+    BarList list;
     juce::String summary;
 };
 } // namespace hydra

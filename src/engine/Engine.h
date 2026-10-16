@@ -35,6 +35,21 @@ struct SpectrumTap
     }
 };
 
+/** CPU time spent in each processing stage of a channel, for the DSP view. The audio thread only measures
+    while a view is open (Engine::profileUsers > 0). Counters accumulate high-resolution ticks and are
+    never reset: the view takes differences between two readings. Single writer (audio thread). */
+struct DspTimes
+{
+    enum Stage { denoiser, eq, gate, comp, plugins, limiter, other, numStages };
+    std::array<std::atomic<uint64_t>, numStages> ticks {};
+    void add (Stage s, int64_t t) noexcept
+    {
+        auto& a = ticks[(size_t) s];
+        a.store (a.load (std::memory_order_relaxed) + (uint64_t) juce::jmax ((int64_t) 0, t), std::memory_order_relaxed);
+    }
+    uint64_t get (Stage s) const noexcept { return ticks[(size_t) s].load (std::memory_order_relaxed); }
+};
+
 //==============================================================================
 struct InputStrip
 {
@@ -63,6 +78,7 @@ struct InputStrip
 
     /** Processing latency added inside this strip (denoiser + plugins), in samples. */
     std::atomic<int> dspLatency { 0 };
+    DspTimes dspTimes;
 
     // audio-thread state
     dsp::Gate gate;
@@ -82,6 +98,7 @@ struct Bus
     PluginChain plugins;
     Meter meter;
     SpectrumTap spectrum;
+    DspTimes dspTimes;
 
     Param *active {};   // slot in use (shown as a strip and processed); see Engine::addBus / removeBus
     Param *gain {}, *mute {}, *mono {}, *limOn {}, *limCeil {}, *fxBypass {};
@@ -148,6 +165,20 @@ public:
     std::vector<Param*> removeInput (int i);
     std::vector<Param*> removeBus (int b);
 
+    /** Channel groups that can be reordered among themselves. */
+    enum class Group { inputs = 0, hwBuses, virtBuses };
+    /** Pairs (parameter, parameter that holds its value after the reorder) of every parameter whose
+        value moves when the channels of a group are put into the given order. order lists the group's
+        active slots (input index / bus index) in the wanted order; empty if the order is invalid or
+        unchanged. A MIDI mapping / shortcut that should follow its channel moves from first to second. */
+    std::vector<std::pair<Param*, Param*>> reorderPlan (Group, const std::vector<int>& order) const;
+    /** Puts the channels of a group into the given order (see reorderPlan): every slot takes over the
+        settings, name, source / output and plugins of the channel that moves there. The set of slots in
+        use stays the same, so a channel takes the number of the position it is moved to. For buses, the
+        routing / sends of all inputs, the recorder outputs / source, the monitor bus and SEL follow too.
+        Message thread. Returns false if nothing was changed. */
+    bool reorderChannels (Group, const std::vector<int>& order);
+
     juce::OwnedArray<juce::AudioIODeviceType>& getDeviceTypes() noexcept { return types; }
     juce::AudioIODeviceType* findType (const juce::String& name) const;
     void rescanDevices();
@@ -165,6 +196,22 @@ public:
 
     // Status
     float getCpuLoad() const noexcept { return cpuLoad.load(); }
+
+    //--------------------------------------------------------------------------
+    // DSP profiling (DSP view): per channel / stage (DspTimes), per plugin (PluginSlot::dspTicks), per
+    // asynchronous stream (AsyncStream::dspTicks) and these engine-wide counters, all in high-resolution ticks.
+    // Measured only while profileUsers > 0, so a closed view costs nothing.
+    struct Profile
+    {
+        std::atomic<int> users { 0 };
+        std::atomic<uint64_t> total { 0 };      // whole audio callback
+        std::atomic<uint64_t> frames { 0 };     // frames processed while measuring (the time budget)
+        std::atomic<uint64_t> recorder { 0 };   // recorder playback mix + recording
+        std::atomic<float> peak { 0 };          // highest single-callback load since the view last took it
+    } profile;
+    double getTicksPerSecond() const noexcept { return 1.0 / ticksToSeconds; }
+    /** Engine time of the asynchronous streams (resampling, drift control): label + ticks. Message thread. */
+    std::vector<std::pair<juce::String, uint64_t>> getStreamDspTicks() const;
     double getSampleRate() const noexcept { return sampleRate; }
     int getBlockSize() const noexcept { return blockSize; }
     double getMasterLatencyMs() const;
@@ -208,8 +255,8 @@ private:
     void audioDeviceError (const juce::String&) override;
 
     void processChunk (const Graph& g, const float* const* in, int numIn, float* const* out, int numOut, int offset, int n) noexcept;
-    void processStrip (InputStrip& s, const float* srcL, const float* srcR, int n, bool anySolo, bool monoSource) noexcept;
-    void processBus (Bus& b, int n) noexcept;
+    void processStrip (InputStrip& s, const float* srcL, const float* srcR, int n, bool anySolo, bool monoSource, bool timed) noexcept;
+    void processBus (Bus& b, int n, bool timed) noexcept;
 
     juce::OwnedArray<juce::AudioIODeviceType> types;
     std::unique_ptr<juce::AudioIODevice> masterDevice;

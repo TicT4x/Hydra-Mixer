@@ -3,6 +3,7 @@
 #include "Inspector.h"
 #include "Settings.h"
 #include "LatencyView.h"
+#include "DspView.h"
 #include "state/UndoHistory.h"
 
 namespace hydra
@@ -19,7 +20,7 @@ public:
 
 private:
     UiContext& ctx;
-    Toggle rec, play;
+    Toggle rec, play, stop;
     juce::String shown;
     bool shownActive = false;
 };
@@ -52,6 +53,23 @@ private:
     bool hover = false, down = false;
 };
 
+/** DSP load meter in the top bar (bar + percentage); click opens the DSP Load window. */
+class DspMeter final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    DspMeter();
+    std::function<void()> onClick;
+    void setLoad (float load);
+    void paint (juce::Graphics&) override;
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
+    void mouseUp (const juce::MouseEvent& e) override  { if (e.mouseWasClicked() && onClick) onClick(); }
+
+private:
+    float load = 0;
+    bool hover = false;
+};
+
 /** Top bar (also the window's title bar): logo, engine status, CPU, MIDI activity, recorder,
     learn mode, MIDI map, settings, shutdown and the window controls. */
 class TopBar final : public juce::Component
@@ -67,6 +85,7 @@ public:
     Chip midiMap { "MIDI Map", theme::text }, learn { "MIDI Learn", theme::text }, latency { "Latency", theme::text };
     IconButton settings { IconButton::Kind::gear }, power { IconButton::Kind::power };
     IconButton minimiseBtn { IconButton::Kind::minimise }, maximiseBtn { IconButton::Kind::maximise }, closeBtn { IconButton::Kind::close };
+    DspMeter dsp;
 
 private:
     UiContext& ctx;
@@ -111,6 +130,7 @@ public:
     void openSettings (int tab = 0);
     void openMidiMap();
     void openLatencyFinder();
+    void openDspView();
     void openEqWindow (int selectIndex, bool bringToFront = true);
     void refreshAll();
     /** Interface zoom (1 = 100 %): everything in the main window is drawn larger / smaller;
@@ -133,6 +153,12 @@ private:
     void scrollToChannel (int selectIndex);
     void addChannel (int group);
     void removeChannel (int selectIndex);
+    void beginReorder();
+    /** Done in Change Order mode: asks what the MIDI assignments / shortcuts of moved channels should do
+        (only if there are any), then applies the shown order. */
+    void finishReorder();
+    void applyReorder (const std::array<std::vector<int>, 3>& order, bool assignmentsFollow);
+    void discardReorder();
     /** Size of the main window's contents in unscaled (logical) units. */
     int logicalWidth() const  { return juce::roundToInt ((float) getWidth() / uiScale); }
     int logicalHeight() const { return juce::roundToInt ((float) getHeight() / uiScale); }
@@ -150,7 +176,7 @@ private:
     StripArea strips;
     Inspector inspector;
     PanelHost panelHost;
-    std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow, latencyWindow;
+    std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow, latencyWindow, dspWindow;
     int shownSelBus = -1;     // bus selected with SEL as shown by the input faders
     uint32_t shownLayout = 0; // engine channel layout the strips were built for
     float uiScale = 1.0f;
