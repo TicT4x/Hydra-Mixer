@@ -214,6 +214,30 @@ void Hotkeys::clearAll()
     ++version;
 }
 
+void Hotkeys::remapParams (const std::vector<std::pair<Param*, Param*>>& moves)
+{
+    unregisterAll();
+    for (auto& b : bindings)
+        for (auto& [from, to] : moves)
+            if (b.param == from)
+            {
+                b.param = to;
+                b.paramId = to->id;
+                break;
+            }
+    registerAll();
+    ++version;
+}
+
+int Hotkeys::countBindings (const std::vector<std::pair<Param*, Param*>>& moves) const
+{
+    int n = 0;
+    for (auto& b : bindings)
+        for (auto& m : moves)
+            if (b.param == m.first) { ++n; break; }
+    return n;
+}
+
 juce::KeyPress Hotkeys::getKeyFor (const Param* p) const
 {
     for (auto& b : bindings)

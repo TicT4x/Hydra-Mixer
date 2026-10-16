@@ -14,7 +14,7 @@ namespace IoMenus
 /** Fader value readout under a strip; click to type a value. */
 void makeEditableDbLabel (juce::Label& label, Param& gain);
 
-/** Right-click menu of a strip: rename, remove the channel. */
+/** Right-click menu of a strip: rename, change order, remove / add a channel. */
 void showChannelMenu (UiContext& ctx, int selectIndex, juce::Component& target, std::function<void()> rename);
 
 /** Editable channel name + numbered badge; click selects the channel, right-click opens the channel menu. */
@@ -120,6 +120,8 @@ class StripPane final : public juce::Component
 public:
     StripPane();
     juce::Component& getContent() noexcept { return content; }
+    /** While dragging near the left / right edge: scrolls that way (position in this component). */
+    void autoScroll (juce::Point<int> position) { view.autoScroll (position.x, position.y, 40, 16); }
     /** Logical size of the strips and the factor they are drawn with; scrolls sideways when wider than the pane. */
     void setContentSize (int logicalWidth, int logicalHeight, float scale);
     /** Scroll position in logical units (0 = start). */
@@ -171,6 +173,7 @@ class StripArea final : public juce::Component
 {
 public:
     explicit StripArea (UiContext& c);
+    ~StripArea() override;
 
     /** Recreates the strips for the current channel layout. */
     void rebuild();
@@ -186,7 +189,17 @@ public:
     /** Bus selected with SEL / monitored bus, shown next to the Inputs caption. */
     void setSelInfo (int selBus, int monBus);
 
-    static constexpr int kMinStripWidth = 92, kMaxStripWidth = 140, kCaptionHeight = 34, kDividerWidth = 16;
+    /** Change Order mode: the strips can be dragged to a new place within their group (inputs, hardware
+        outputs, virtual outputs); a bar with Done / Discard appears above them. The engine is not touched
+        until onReorderDone applies getShownOrder(); rebuild() leaves the mode (and shows the real order). */
+    void beginReorder();
+    void endReorder();
+    bool isReordering() const noexcept { return reordering; }
+    /** Shown order of each group as slot indices: [0] inputs, [1] A buses, [2] B buses. */
+    std::array<std::vector<int>, 3> getShownOrder() const;
+    std::function<void()> onReorderDone, onReorderDiscard;
+
+    static constexpr int kMinStripWidth = 92, kMaxStripWidth = 140, kCaptionHeight = 34, kDividerWidth = 16, kBannerHeight = 46;
 
     std::vector<std::unique_ptr<InputStripView>> inStrips;
     std::vector<std::unique_ptr<BusStripView>> busStrips;   // A buses first, then B buses
@@ -208,6 +221,16 @@ private:
     void layoutPane (StripPane&, bool outputs, int paneWidth, int paneHeight);
     void layoutCaptions();
     void setSplit (int centreX);
+    /** Puts the strips of a pane at the places of their current order (except the one being dragged). */
+    void placeStrips (bool outputs, juce::Component* except = nullptr);
+    int captionTop() const noexcept { return reordering ? kBannerHeight : 0; }
+
+    class DragLayer;
+    class ReorderBar;
+    std::unique_ptr<DragLayer> inLayer, outLayer;
+    std::unique_ptr<ReorderBar> reorderBar;
+    bool reordering = false;
+    int stripWidth[2] {}, stripHeight[2] {};   // per pane (inputs, outputs), logical units
 
     UiContext& ctx;
     StripPane inPane, outPane;

@@ -1,6 +1,7 @@
 #include "Engine.h"
 
 #include <map>
+#include <numeric>
 
 namespace hydra
 {
@@ -286,6 +287,141 @@ std::vector<Param*> Engine::removeBus (int b)
 }
 
 //==============================================================================
+namespace
+{
+/** Bus index of a code like "A3" / "B1", or -1. */
+int busFromCode (const juce::String& code)
+{
+    if (code.length() < 2) return -1;
+    const int n = code.substring (1).getIntValue() - 1;
+    if (code[0] == 'A' && juce::isPositiveAndBelow (n, kMaxHwBuses))   return hwBusIndex (n);
+    if (code[0] == 'B' && juce::isPositiveAndBelow (n, kMaxVirtBuses)) return virtBusIndex (n);
+    return -1;
+}
+
+/** Id of the parameter that takes over p's value when the slots move as dest says (dest[slot] = new slot). */
+juce::String movedId (const juce::String& id, bool buses, const std::vector<int>& dest)
+{
+    juce::StringArray t;
+    t.addTokens (id, ".", {});
+    if (! buses)
+    {
+        // inN.<anything>
+        if (! t[0].startsWith ("in")) return id;
+        const int i = t[0].substring (2).getIntValue() - 1;
+        if (! juce::isPositiveAndBelow (i, (int) dest.size()) || dest[(size_t) i] == i) return id;
+        return "in" + juce::String (dest[(size_t) i] + 1) + id.fromFirstOccurrenceOf (".", true, false);
+    }
+    // bus.X.<anything>, inN.route.X, inN.send.X, rec.out.X
+    int part = -1;
+    if (t[0] == "bus" && t.size() >= 3) part = 1;
+    else if (t.size() == 3 && t[0].startsWith ("in") && (t[1] == "route" || t[1] == "send")) part = 2;
+    else if (t.size() == 3 && t[0] == "rec" && t[1] == "out") part = 2;
+    if (part < 0) return id;
+    const int b = busFromCode (t[part]);
+    if (b < 0 || dest[(size_t) b] == b) return id;
+    t.set (part, busCode (dest[(size_t) b]));
+    return t.joinIntoString (".");
+}
+} // namespace
+
+std::vector<std::pair<Param*, Param*>> Engine::reorderPlan (Group group, const std::vector<int>& order) const
+{
+    std::vector<std::pair<Param*, Param*>> plan;
+    const bool forBuses = group != Group::inputs;
+    const int first = group == Group::virtBuses ? virtBusIndex (0) : 0;
+    const int count = group == Group::inputs ? kMaxInputs : group == Group::hwBuses ? kMaxHwBuses : kMaxVirtBuses;
+
+    // The slots in use keep being used: the k-th of them receives order[k].
+    std::vector<int> used;
+    for (int k = first; k < first + count; ++k)
+        if (forBuses ? isBusActive (k) : isInputActive (k)) used.push_back (k);
+    auto sorted = order;
+    std::sort (sorted.begin(), sorted.end());
+    if (sorted != used || order == used) return plan;
+
+    std::vector<int> dest ((size_t) (forBuses ? kMaxBuses : kMaxInputs));
+    std::iota (dest.begin(), dest.end(), 0);
+    for (size_t k = 0; k < order.size(); ++k) dest[(size_t) order[k]] = used[k];
+
+    for (auto& p : params.all())
+    {
+        const auto to = movedId (p->id, forBuses, dest);
+        if (to == p->id) continue;
+        if (auto* q = params.find (to)) plan.emplace_back (p.get(), q);
+    }
+    return plan;
+}
+
+bool Engine::reorderChannels (Group group, const std::vector<int>& order)
+{
+    const auto plan = reorderPlan (group, order);
+    if (plan.empty()) return false;
+    const bool forBuses = group != Group::inputs;
+    const int first = group == Group::virtBuses ? virtBusIndex (0) : 0;
+    std::vector<int> used (order);
+    std::sort (used.begin(), used.end());
+    std::vector<int> dest ((size_t) (forBuses ? kMaxBuses : kMaxInputs));
+    std::iota (dest.begin(), dest.end(), 0);
+    for (size_t k = 0; k < order.size(); ++k) dest[(size_t) order[k]] = used[k];
+
+    // Parameter values: snapshot first, the moves form a permutation.
+    std::vector<float> values;
+    values.reserve (plan.size());
+    for (auto& [from, to] : plan) values.push_back (from->get());
+    for (size_t k = 0; k < plan.size(); ++k) plan[k].second->set (values[k]);
+
+    if (! forBuses)
+    {
+        std::array<juce::String, kMaxInputs> names;
+        std::array<IoTarget, kMaxInputs> sources;
+        std::array<std::vector<std::unique_ptr<PluginSlot>>, kMaxInputs> chains;
+        for (int i : used)
+        {
+            names[(size_t) i] = inputs[(size_t) i].name;
+            sources[(size_t) i] = inputs[(size_t) i].source;
+            chains[(size_t) i] = inputs[(size_t) i].plugins.takeAll();
+        }
+        for (int i : used)
+        {
+            auto& to = inputs[(size_t) dest[(size_t) i]];
+            to.name = names[(size_t) i];
+            to.source = sources[(size_t) i];
+            to.plugins.putAll (std::move (chains[(size_t) i]));
+        }
+    }
+    else
+    {
+        std::array<juce::String, kMaxBuses> names;
+        std::array<IoTarget, kMaxBuses> outputs;
+        std::array<std::vector<std::unique_ptr<PluginSlot>>, kMaxBuses> chains;
+        for (int b : used)
+        {
+            names[(size_t) b] = buses[(size_t) b].name;
+            outputs[(size_t) b] = buses[(size_t) b].output;
+            chains[(size_t) b] = buses[(size_t) b].plugins.takeAll();
+        }
+        for (int b : used)
+        {
+            auto& to = buses[(size_t) dest[(size_t) b]];
+            to.name = names[(size_t) b];
+            to.output = outputs[(size_t) b];
+            to.plugins.putAll (std::move (chains[(size_t) b]));
+        }
+        // Choices that name a bus follow it.
+        if (group == Group::virtBuses)
+            recorder.source->set ((float) (dest[(size_t) recorder.getRecordSourceBus()] - first));
+        else
+            monBus->set ((float) dest[(size_t) juce::jlimit (0, kMaxHwBuses - 1, juce::roundToInt (monBus->get()))]);
+        if (selOwner >= 0) selOwner = dest[(size_t) selOwner];
+    }
+
+    rebuildGraph();
+    sendChangeMessage();
+    return true;
+}
+
+//==============================================================================
 juce::AudioIODeviceType* Engine::findType (const juce::String& name) const
 {
     for (auto* t : types)
@@ -354,6 +490,23 @@ double Engine::getIoLatencyMs (const IoTarget& t, bool input) const
     if (input) { for (auto& s : current->ins)  if (s->target.sameStream (t)) return ms (*s); }
     else       { for (auto& s : current->outs) if (s->target.sameStream (t)) return ms (*s); }
     return -1.0;
+}
+
+std::vector<std::pair<juce::String, uint64_t>> Engine::getStreamDspTicks() const
+{
+    std::vector<std::pair<juce::String, uint64_t>> out;
+    if (current == nullptr) return out;
+    auto label = [] (const AsyncStream& s, bool input)
+    {
+        auto t = s.target;
+        t.channel = 0;
+        t.mono = false;
+        auto name = t.kind == IoTarget::Kind::Device ? t.deviceName : t.describe();
+        return juce::String (input ? "From  " : "To  ") + name;
+    };
+    for (auto& s : current->ins)  out.emplace_back (label (*s, true), s->dspTicks.load (std::memory_order_relaxed));
+    for (auto& s : current->outs) out.emplace_back (label (*s, false), s->dspTicks.load (std::memory_order_relaxed));
+    return out;
 }
 
 juce::String Engine::getStreamStatus (const IoTarget& t, bool input) const
@@ -722,18 +875,38 @@ void Engine::audioDeviceIOCallbackWithContext (const float* const* in, int numIn
             processChunk (*g, in, numIn, out, numOut, offset, juce::jmin (kMaxBlock, n - offset));
     }
 
-    const double secs = (double) (juce::Time::getHighResolutionTicks() - t0) * ticksToSeconds;
+    const auto elapsed = juce::Time::getHighResolutionTicks() - t0;
+    const double secs = (double) elapsed * ticksToSeconds;
     const float load = (float) (secs * sampleRate / juce::jmax (1, n));
     const float prev = cpuLoad.load (std::memory_order_relaxed);
     cpuLoad.store (load > prev ? load : prev + 0.05f * (load - prev), std::memory_order_relaxed);
+    if (profile.users.load (std::memory_order_relaxed) > 0)
+    {
+        auto add = [] (std::atomic<uint64_t>& a, uint64_t v) { a.store (a.load (std::memory_order_relaxed) + v, std::memory_order_relaxed); };
+        add (profile.total, (uint64_t) juce::jmax ((juce::int64) 0, elapsed));
+        add (profile.frames, (uint64_t) n);
+        if (load > profile.peak.load (std::memory_order_relaxed)) profile.peak.store (load, std::memory_order_relaxed);
+    }
     callbackCount.fetch_add (1, std::memory_order_release);
 }
 
 void Engine::processChunk (const Graph& g, const float* const* in, int numIn, float* const* out, int numOut,
                            int offset, int n) noexcept
 {
+    const bool timed = profile.users.load (std::memory_order_relaxed) > 0;
+    auto now = [] { return juce::Time::getHighResolutionTicks(); };
+    auto addTicks = [] (std::atomic<uint64_t>& a, juce::int64 t)
+    {
+        a.store (a.load (std::memory_order_relaxed) + (uint64_t) juce::jmax ((juce::int64) 0, t), std::memory_order_relaxed);
+    };
+
     // 1. Pull asynchronous inputs (resampled + drift corrected to the master clock).
-    for (auto& s : g.ins) s->pullBlock (n);
+    for (auto& s : g.ins)
+    {
+        const auto t0 = timed ? now() : 0;
+        s->pullBlock (n);
+        if (timed) addTicks (s->dspTicks, now() - t0);
+    }
 
     for (auto& b : buses)
     {
@@ -771,10 +944,11 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
             s.lastRoute.fill (0.0f);
             continue;
         }
-        processStrip (s, L, R, n, anySolo, L == R);
+        processStrip (s, L, R, n, anySolo, L == R, timed);
     }
 
     // 3. Recorder playback into the chosen buses.
+    const auto recStart = timed ? now() : 0;
     if (recorder.pullPlayback (playL.data(), playR.data(), n))
     {
         const float lvl = dbToGain (recorder.level->get());
@@ -790,6 +964,7 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
     }
     else
         lastPlayRoute.fill (0.0f);
+    if (timed) addTicks (profile.recorder, now() - recStart);
 
     // 4. Bus processing. Monitoring: the selected bus is processed first and replaces the
     //    monitor bus's own mix, so only the monitored signal is heard there (through its EQ / fader).
@@ -799,7 +974,7 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
         if (const int m = juce::jlimit (0, kMaxHwBuses - 1, juce::roundToInt (monBus->get()));
             m != selBus && buses[(size_t) m].active->isOn())
             monBusIndex = m;
-    if (monBusIndex >= 0) processBus (buses[(size_t) selBus], n);
+    if (monBusIndex >= 0) processBus (buses[(size_t) selBus], n, timed);
     for (int b = 0; b < kMaxBuses; ++b)
     {
         if (monBusIndex >= 0 && b == selBus) continue;
@@ -810,13 +985,15 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
             std::memcpy (bus.l.data(), buses[(size_t) selBus].l.data(), (size_t) n * sizeof (float));
             std::memcpy (bus.r.data(), buses[(size_t) selBus].r.data(), (size_t) n * sizeof (float));
         }
-        processBus (bus, n);
+        processBus (bus, n, timed);
     }
 
     if (recorder.wantsRecord())
     {
+        const auto t0 = timed ? now() : 0;
         const auto& rb = buses[(size_t) recorder.getRecordSourceBus()];
         recorder.pushRecord (rb.l.data(), rb.r.data(), n);
+        if (timed) addTicks (profile.recorder, now() - t0);
     }
 
     // 5. Buses -> outputs.
@@ -855,11 +1032,25 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
     }
 
     // 6. Push asynchronous outputs.
-    for (auto& s : g.outs) s->pushBlock (n);
+    for (auto& s : g.outs)
+    {
+        const auto t0 = timed ? now() : 0;
+        s->pushBlock (n);
+        if (timed) addTicks (s->dspTicks, now() - t0);
+    }
 }
 
-void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, int n, bool anySolo, bool monoSource) noexcept
+void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, int n, bool anySolo, bool monoSource, bool timed) noexcept
 {
+    // Profiling (DSP view open): each lap adds the time since the previous lap to a stage.
+    auto mark = timed ? juce::Time::getHighResolutionTicks() : 0;
+    auto lap = [&] (DspTimes::Stage stage)
+    {
+        if (! timed) return;
+        const auto t = juce::Time::getHighResolutionTicks();
+        s.dspTimes.add (stage, t - mark);
+        mark = t;
+    };
     float* l = s.l.data();
     float* r = s.r.data();
     std::memcpy (l, srcL, (size_t) n * sizeof (float));
@@ -877,6 +1068,8 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
     s.lastTrim = trim;
     s.preMeter.push (dsp::peak (l, n), dsp::peak (r, n));
 
+    lap (DspTimes::other);
+
     // Denoiser first, so EQ / gate / compressor work on the cleaned signal.
     const bool dn = s.dnOn->isOn();
     if (dn)
@@ -886,14 +1079,17 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
     }
     s.dnWasOn = dn;
     s.dspLatency.store (dn ? s.denoiser->getLatencySamples() : 0, std::memory_order_relaxed);
+    lap (DspTimes::denoiser);
 
     s.eq.process (l, r, n, sampleRate);
     s.spectrum.push (l, r, n);
+    lap (DspTimes::eq);
 
     if (s.gateOn->isOn())
         s.gate.process (l, r, n, s.gateSettings());
     else
         s.gate.shownGain.store (1.0f, std::memory_order_relaxed);
+    lap (DspTimes::gate);
 
     if (s.compOn->isOn())
     {
@@ -902,9 +1098,11 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
     }
     else
         s.compGr.store (0.0f, std::memory_order_relaxed);
+    lap (DspTimes::comp);
 
     if (! s.fxBypass->isOn())
-        s.plugins.process (l, r, n);
+        s.plugins.process (l, r, n, timed);
+    lap (DspTimes::plugins);
 
     if (s.mono->isOn())
     {
@@ -936,6 +1134,7 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
     if (wasSilent)
     {
         s.lastRoute.fill (0.0f);
+        lap (DspTimes::other);
         return;
     }
 
@@ -950,18 +1149,29 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
         dsp::addRamp (bus.r.data(), r, n, prev, target);
         s.lastRoute[(size_t) b] = target;
     }
+    lap (DspTimes::other);
 }
 
-void Engine::processBus (Bus& b, int n) noexcept
+void Engine::processBus (Bus& b, int n, bool timed) noexcept
 {
+    auto mark = timed ? juce::Time::getHighResolutionTicks() : 0;
+    auto lap = [&] (DspTimes::Stage stage)
+    {
+        if (! timed) return;
+        const auto t = juce::Time::getHighResolutionTicks();
+        b.dspTimes.add (stage, t - mark);
+        mark = t;
+    };
     float* l = b.l.data();
     float* r = b.r.data();
 
     b.eq.process (l, r, n, sampleRate);
     b.spectrum.push (l, r, n);
+    lap (DspTimes::eq);
 
     if (! b.fxBypass->isOn())
-        b.plugins.process (l, r, n);
+        b.plugins.process (l, r, n, timed);
+    lap (DspTimes::plugins);
 
     if (b.mono->isOn())
     {
@@ -984,10 +1194,14 @@ void Engine::processBus (Bus& b, int n) noexcept
     dsp::applyRamp (r, n, b.lastGain, g);
     b.lastGain = g;
 
+    lap (DspTimes::other);
+
     if (b.limOn->isOn())
         b.limiter.process (l, r, n, b.limCeil->get());
+    lap (DspTimes::limiter);
 
     if (! muted)
         b.meter.push (dsp::peak (l, n), dsp::peak (r, n));
+    lap (DspTimes::other);
 }
 } // namespace hydra

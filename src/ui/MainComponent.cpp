@@ -4,21 +4,27 @@ namespace hydra
 {
 //==============================================================================
 RecorderMini::RecorderMini (UiContext& c)
-    : ctx (c), rec (c, *c.engine.recorder.record, "REC", theme::mute), play (c, *c.engine.recorder.play, "PLAY", theme::good)
+    : ctx (c), rec (c, *c.engine.recorder.record, "REC", theme::mute, Toggle::Icon::record),
+      play (c, *c.engine.recorder.play, "PLAY", theme::good, Toggle::Icon::playPause),
+      stop (c, *c.engine.recorder.stop, "STOP", theme::text, Toggle::Icon::stop)
 {
     addAndMakeVisible (rec);
     addAndMakeVisible (play);
+    addAndMakeVisible (stop);
     rec.setTooltip ("Record the selected B bus (details: click the time)");
-    play.setTooltip ("Play the loaded file / last recording");
+    play.setTooltip ("Play / pause the loaded file or the last recording");
+    stop.setTooltip ("Stop recording / playback and go back to the start");
     setTooltip ("Recorder - click to show it below");
 }
 
 void RecorderMini::resized()
 {
     auto r = getLocalBounds().reduced (5, 5);
-    rec.setBounds (r.removeFromLeft (50));
-    r.removeFromLeft (4);
-    play.setBounds (r.removeFromLeft (54));
+    for (auto* b : { &rec, &play, &stop })
+    {
+        b->setBounds (r.removeFromLeft (32));
+        r.removeFromLeft (3);
+    }
 }
 
 void RecorderMini::mouseUp (const juce::MouseEvent& e)
@@ -57,7 +63,7 @@ void RecorderMini::paint (juce::Graphics& g)
     const auto& rc = ctx.engine.recorder;
     g.setColour (rc.isRecording() ? theme::mute : rc.isPlaying() ? theme::good : theme::textDim);
     g.setFont (theme::mono (12.5f));
-    g.drawText (shown, getLocalBounds().withTrimmedLeft (118).withTrimmedRight (8), juce::Justification::centred);
+    g.drawText (shown, getLocalBounds().withTrimmedLeft (110).withTrimmedRight (8), juce::Justification::centred);
 }
 
 //==============================================================================
@@ -140,9 +146,45 @@ void IconButton::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+DspMeter::DspMeter()
+{
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    setTooltip ("DSP load of the audio engine (share of each audio block's time). Click: what uses it, per channel and plugin");
+}
+
+void DspMeter::setLoad (float l)
+{
+    if (std::abs (l - load) <= 0.002f) return;
+    load = l;
+    repaint();
+}
+
+void DspMeter::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds();
+    if (hover)
+    {
+        g.setColour (theme::raised.brighter (0.07f));
+        g.fillRoundedRectangle (r.toFloat().reduced (0.0f, 6.0f), 6.0f);
+    }
+    r.reduce (6, 0);
+    g.setColour (hover ? theme::text : theme::textDim);
+    g.setFont (theme::font (12.0f));
+    g.drawText ("DSP", r.removeFromLeft (30), juce::Justification::centredLeft);
+    auto bar = r.removeFromLeft (70).withSizeKeepingCentre (70, 6).toFloat();
+    g.setColour (theme::bg);
+    g.fillRoundedRectangle (bar, 3.0f);
+    g.setColour (load < 0.5f ? theme::good : load < 0.8f ? theme::solo : theme::mute);
+    g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * juce::jlimit (0.0f, 1.0f, load)), 3.0f);
+    g.setColour (theme::text);
+    g.drawText (juce::String (load * 100.0f, 1) + "%", r, juce::Justification::centredRight);
+}
+
+//==============================================================================
 TopBar::TopBar (UiContext& c) : ctx (c), recorder (c)
 {
     addAndMakeVisible (recorder);
+    addAndMakeVisible (dsp);
     for (auto* chip : { &midiMap, &learn, &latency })
     {
         addAndMakeVisible (chip);
@@ -203,11 +245,12 @@ void TopBar::update()
     float newCpu = cpu;
     if (++cpuTick >= 8) { cpuTick = 0; newCpu = cpuSmooth; }
     const auto act = ctx.midi.activity.load();
-    bool dirty = s != status || std::abs (newCpu - cpu) > 0.002f;
+    bool dirty = s != status;
     if (act != lastActivity) { lastActivity = act; midiGlow = 1.0f; dirty = true; }
     else if (midiGlow > 0.0f) { midiGlow = juce::jmax (0.0f, midiGlow - 0.12f); dirty = true; }
     status = s;
     cpu = newCpu;
+    dsp.setLoad (cpu);
 
     if (learn.active != ctx.learnMode)
     {
@@ -246,17 +289,8 @@ void TopBar::paint (juce::Graphics& g)
     g.fillRoundedRectangle (st.toFloat(), 8.0f);
     auto inner = st.reduced (12, 0);
 
-    auto cpuArea = inner.removeFromRight (150);
-    g.setColour (theme::textDim);
+    inner.removeFromRight (150);   // DSP meter (own component, see resized)
     g.setFont (theme::font (12.0f));
-    g.drawText ("DSP", cpuArea.removeFromLeft (30), juce::Justification::centredLeft);
-    auto barR = cpuArea.removeFromLeft (70).withSizeKeepingCentre (70, 6).toFloat();
-    g.setColour (theme::bg);
-    g.fillRoundedRectangle (barR, 3.0f);
-    g.setColour (cpu < 0.5f ? theme::good : cpu < 0.8f ? theme::solo : theme::mute);
-    g.fillRoundedRectangle (barR.withWidth (barR.getWidth() * juce::jlimit (0.0f, 1.0f, cpu)), 3.0f);
-    g.setColour (theme::text);
-    g.drawText (juce::String (cpu * 100.0f, 1) + "%", cpuArea, juce::Justification::centredRight);
 
     auto midiArea = inner.removeFromRight (64);
     g.setColour (theme::learn.withAlpha (0.15f + 0.85f * midiGlow));
@@ -294,6 +328,8 @@ void TopBar::resized()
     recorder.setBounds (r.removeFromRight (220));
     r.removeFromRight (12);
     statusArea = r.withLeft (204);
+    // DSP meter at the right end of the status area (clickable, so not part of the caption).
+    dsp.setBounds (statusArea.getRight() - 12 - 150 - 6, statusArea.getY(), 150 + 12, statusArea.getHeight());
 }
 
 //==============================================================================
@@ -384,6 +420,18 @@ MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys
                                       inspector.getY() - panelHost.getHeight() - 10);
     };
     ctx.addChannel = [this] (int group) { addChannel (group); };
+    ctx.changeOrder = [this] { beginReorder(); };
+    // Async: the buttons that call these are destroyed when the strips are rebuilt.
+    strips.onReorderDone = [this]
+    {
+        juce::Component::SafePointer<MainComponent> safe (this);
+        juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->finishReorder(); });
+    };
+    strips.onReorderDiscard = [this]
+    {
+        juce::Component::SafePointer<MainComponent> safe (this);
+        juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->discardReorder(); });
+    };
     ctx.removeChannel = [this] (int sel) { removeChannel (sel); };
     inspector.onScanRequested = [this] { openSettings (3); }; // Plugins tab
     ctx.openEqWindow = [this] (int i) { openEqWindow (i); };
@@ -414,6 +462,7 @@ MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys
     };
     top.midiMap.onClick = [this] { openMidiMap(); };
     top.latency.onClick = [this] { openLatencyFinder(); };
+    top.dsp.onClick = [this] { openDspView(); };
     top.learn.onClick = [this]
     {
         ctx.learnMode = ! ctx.learnMode;
@@ -460,6 +509,7 @@ MainComponent::~MainComponent()
     midiWindow.reset();
     eqWindow.reset();
     latencyWindow.reset();
+    dspWindow.reset();
 }
 
 void MainComponent::select (int index)
@@ -572,6 +622,152 @@ void MainComponent::removeChannel (int sel)
     });
 }
 
+void MainComponent::beginReorder()
+{
+    panelHost.close();
+    if (ctx.learnMode)
+    {
+        ctx.learnMode = false;
+        ctx.midi.cancelLearn();
+        ctx.learnModeChanged();
+    }
+    strips.beginReorder();
+    grabKeyboardFocus(); // Esc = discard
+}
+
+void MainComponent::discardReorder()
+{
+    if (! strips.isReordering()) return;
+    rebuildStrips(); // back to the real order
+}
+
+void MainComponent::finishReorder()
+{
+    if (! strips.isReordering()) return;
+    auto& e = ctx.engine;
+    const auto order = strips.getShownOrder();
+    std::vector<std::pair<Param*, Param*>> moves;
+    for (int g = 0; g < 3; ++g)
+        for (auto& m : e.reorderPlan ((Engine::Group) g, order[(size_t) g]))
+            moves.push_back (m);
+    if (moves.empty())
+    {
+        rebuildStrips();
+        showToast ("Order unchanged", 1.5);
+        return;
+    }
+
+    const int maps = ctx.midi.countMappings (moves), keys = ctx.hotkeys.countBindings (moves);
+    if (maps + keys == 0)
+    {
+        applyReorder (order, true);
+        return;
+    }
+
+    // Assignments exist on moved channels: they can follow their channel or stay with the position.
+    // An example with the first MIDI mapping on a moved strip makes the choice concrete.
+    juce::String example;
+    auto nameOf = [&e] (int g, int slot) { return g == 0 ? e.inputs[(size_t) slot].name : e.buses[(size_t) slot].name; };
+    auto codeOf = [] (int g, int slot) { return g == 0 ? channelCode (slot) : busCode (slot); };
+    const auto mappings = ctx.midi.getMappings();
+    for (int g = 0; g < 3 && example.isEmpty(); ++g)
+    {
+        const auto& shown = order[(size_t) g];   // shown[k] moves to the k-th slot in use
+        auto used = shown;
+        std::sort (used.begin(), used.end());
+        for (size_t k = 0; k < shown.size() && example.isEmpty(); ++k)
+        {
+            const int from = shown[k], to = used[k];
+            if (from == to) continue;
+            const auto prefix = g == 0 ? "in" + juce::String (from + 1) + "." : "bus." + busCode (from) + ".";
+            int into = from;   // channel that takes over slot 'from'
+            for (size_t j = 0; j < used.size(); ++j)
+                if (used[j] == from) into = shown[j];
+            for (auto& m : mappings)
+                if (m.param != nullptr && m.param->id.startsWith (prefix))
+                {
+                    example << "Example: " << m.describe() << " now controls " << codeOf (g, from) << " \"" << nameOf (g, from) << "\".\n"
+                            << "Follow: it controls \"" << nameOf (g, from) << "\" at its new place " << codeOf (g, to) << ".\n"
+                            << "Keep positions: it controls " << codeOf (g, from) << ", which will be \"" << nameOf (g, into) << "\".";
+                    break;
+                }
+        }
+    }
+
+    juce::String what;
+    if (maps > 0) what << maps << (maps == 1 ? " MIDI assignment" : " MIDI assignments");
+    if (keys > 0) what << (maps > 0 ? " and " : "") << keys << (keys == 1 ? " keyboard shortcut" : " keyboard shortcuts");
+
+    juce::Component::SafePointer<MainComponent> safe (this);
+    juce::AlertWindow::showAsync (juce::MessageBoxOptions()
+                                      .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                                      .withTitle ("Apply the new order")
+                                      .withMessage (what + (maps + keys == 1 ? " belongs" : " belong") + " to channels that move.\n\n"
+                                                    "Follow the channels: your controller keeps controlling the same channels "
+                                                    "(e.g. the fader for your mic still moves the mic).\n"
+                                                    "Keep positions: each control stays on its position (fader 1 controls "
+                                                    "whatever channel is first now).\n\n" + example)
+                                      .withButton ("Follow the channels")
+                                      .withButton ("Keep positions")
+                                      .withButton ("Back")
+                                      .withAssociatedComponent (this),
+                                  [safe, order] (int result)
+                                  {
+                                      if (safe == nullptr || ! safe->strips.isReordering()) return;
+                                      if (result == 1) safe->applyReorder (order, true);
+                                      else if (result == 2) safe->applyReorder (order, false);
+                                      // Back (or closed): stay in Change Order mode.
+                                  });
+}
+
+void MainComponent::applyReorder (const std::array<std::vector<int>, 3>& order, bool follow)
+{
+    auto& e = ctx.engine;
+    // Where the selected channel / the EQ window's channel goes.
+    auto newIndex = [&order] (int sel)
+    {
+        if (sel < 0 || sel >= kRecorderSelect) return sel;
+        const int g = sel < kMaxInputs ? 0 : isHwBus (sel - kMaxInputs) ? 1 : 2;
+        const int slot = g == 0 ? sel : sel - kMaxInputs;
+        auto used = order[(size_t) g];
+        std::sort (used.begin(), used.end());
+        for (size_t k = 0; k < used.size(); ++k)
+            if (order[(size_t) g][k] == slot) return g == 0 ? used[k] : busSelectIndex (used[k]);
+        return sel;
+    };
+    int eqChannel = -1;
+    if (eqWindow != nullptr)
+        if (auto* ed = dynamic_cast<EqEditor*> (eqWindow->getContentComponent())) eqChannel = ed->getSelectIndex();
+    eqWindow.reset();       // holds references to the old slot's EQ
+    panelHost.close();
+
+    // One group after the other: a routing parameter can move with its input and then with its bus,
+    // so assignments are remapped step by step too.
+    int assigned = 0;
+    for (int g = 0; g < 3; ++g)
+    {
+        const auto plan = e.reorderPlan ((Engine::Group) g, order[(size_t) g]);
+        assigned += ctx.midi.countMappings (plan) + ctx.hotkeys.countBindings (plan);
+        if (! e.reorderChannels ((Engine::Group) g, order[(size_t) g])) continue;
+        if (follow)
+        {
+            ctx.midi.remapParams (plan);
+            ctx.hotkeys.remapParams (plan);
+        }
+    }
+    undo.clear(); // the values moved between channels: undo must not move them back one by one
+
+    const int sel = newIndex (ctx.selected);
+    rebuildStrips();
+    ctx.selected = -1;
+    select (sel);
+    inspector.reload();
+    if (eqChannel >= 0) openEqWindow (newIndex (eqChannel), false);
+    showToast (assigned == 0 ? juce::String ("New order applied")
+               : follow ? juce::String ("New order applied  -  MIDI assignments and shortcuts follow their channels")
+                        : juce::String ("New order applied  -  MIDI assignments and shortcuts stay on their positions"), 3.0);
+}
+
 void MainComponent::setUiScale (float scale)
 {
     scale = juce::jlimit (0.5f, 3.0f, scale);
@@ -663,6 +859,15 @@ void MainComponent::openLatencyFinder()
     latencyWindow->toFront (true);
 }
 
+void MainComponent::openDspView()
+{
+    if (dspWindow == nullptr)
+        makeToolWindow (dspWindow, "Hydra Mixer - DSP Load", new DspView (ctx), 1000, 640);
+    dspWindow->setResizeLimits (640, 360, 8000, 4000);
+    dspWindow->setVisible (true);
+    dspWindow->toFront (true);
+}
+
 void MainComponent::assignCapturedKey (const juce::KeyPress& k)
 {
     auto* p = hotkeyTarget;
@@ -706,6 +911,11 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
         }
         assignCapturedKey (k);
         return true;
+    }
+    if (strips.isReordering())
+    {
+        if (k == juce::KeyPress::escapeKey) { discardReorder(); return true; }
+        if (k == juce::KeyPress::returnKey) { finishReorder(); return true; }
     }
     if (handleUndoKey (k))
         return true;

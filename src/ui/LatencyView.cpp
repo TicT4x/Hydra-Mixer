@@ -651,22 +651,9 @@ void LatencyView::paint (juce::Graphics& g)
     g.setFont (theme::font (12.0f));
     g.drawFittedText (summary, head.removeFromTop (20), juce::Justification::centredLeft, 1, 0.8f);
 
-    // Legend
-    auto legend = getLocalBounds().reduced (18, 0).removeFromTop (36).withTrimmedTop (8);
-    int x = legend.getRight();
-    g.setFont (theme::font (12.0f));
-    for (auto [name, colour] : { std::pair<const char*, juce::Colour> { "Output device", theme::busColour (juce::jmax (0, bus)) },
-                                 { "Plugin", kPlugin }, { "Denoiser", kDenoiser }, { "Input device", kDeviceIn } })
-    {
-        const int w = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), name);
-        x -= w;
-        g.setColour (theme::textDim);
-        g.drawText (name, x, legend.getY(), w, legend.getHeight(), juce::Justification::centredLeft);
-        x -= 18;
-        g.setColour (colour);
-        g.fillRoundedRectangle ((float) x, (float) legend.getCentreY() - 5.0f, 12.0f, 10.0f, 2.5f);
-        x -= 18;
-    }
+    drawBarLegend (g, getLocalBounds().reduced (18, 0).removeFromTop (36).withTrimmedTop (8),
+                   { { "Input device", kDeviceIn }, { "Denoiser", kDenoiser }, { "Plugin", kPlugin },
+                     { "Output device", theme::busColour (juce::jmax (0, bus)) } });
 }
 
 void LatencyView::resized()

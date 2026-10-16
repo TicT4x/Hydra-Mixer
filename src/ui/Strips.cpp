@@ -239,6 +239,7 @@ void showChannelMenu (UiContext& ctx, int sel, juce::Component& target, std::fun
     juce::PopupMenu m;
     m.addSectionHeader (channelCode (sel) + "   " + name);
     m.addItem ("Rename", std::move (rename));
+    m.addItem ("Change Order...", [&ctx] { if (ctx.changeOrder) ctx.changeOrder(); });
     m.addSeparator();
     m.addItem ("Remove " + channelCode (sel) + (blocked.isEmpty() ? juce::String ("...") : "   (" + blocked + ")"),
                blocked.isEmpty(), false, [&ctx, sel] { if (ctx.removeChannel) ctx.removeChannel (sel); });
@@ -698,6 +699,238 @@ constexpr int kPad = 8, kBusGroupGap = 14, kPlusSize = 26, kMinPaneWidth = 120;
 juce::Font captionFont() { return theme::font (17.0f, true); }
 } // namespace
 
+//==============================================================================
+/** Covers a pane's strips in Change Order mode: drag a strip sideways to move it within its group.
+    The other strips make room as soon as the dragged one passes half of a neighbour. */
+class StripArea::DragLayer final : public juce::Component
+{
+public:
+    DragLayer (StripArea& o, bool isOutputs) : owner (o), outputs (isOutputs)
+    {
+        setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        dragIndex = -1;
+        for (int k = 0; k < count(); ++k)
+            if (auto* c = strip (k); c->getX() <= e.x && e.x < c->getRight())
+            {
+                dragIndex = k;
+                grabOffset = e.x - c->getX();
+                c->toFront (false);
+                toFront (false);   // stays on top for the next click
+                repaint();
+                return;
+            }
+    }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (dragIndex < 0) return;
+        auto* c = strip (dragIndex);
+        const auto [lo, hi, sec] = groupOf (dragIndex);
+        const int w = owner.stripWidth[outputs ? 1 : 0];
+        const int x = juce::jlimit (sec->x, sec->x + (hi - lo - 1) * w, e.x - grabOffset);
+        c->setTopLeftPosition (x, 0);
+        const int target = lo + juce::jlimit (0, hi - lo - 1, juce::roundToInt ((float) (x - sec->x) / (float) w));
+        if (target != dragIndex)
+        {
+            move (dragIndex, target);
+            dragIndex = target;
+            owner.placeStrips (outputs, c);
+        }
+        repaint();
+        auto& pane = outputs ? owner.outPane : owner.inPane;
+        pane.autoScroll (e.getEventRelativeTo (&pane).getPosition());
+        beginDragAutoRepeat (40);
+    }
+
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        dragIndex = -1;
+        owner.placeStrips (outputs);
+        repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        for (int k = 0; k < count(); ++k)
+        {
+            auto* c = strip (k);
+            auto r = c->getBounds().toFloat().reduced (2.0f, 1.0f);
+            const auto colour = std::get<2> (groupOf (k))->colour;
+            if (k == dragIndex)
+            {
+                g.setColour (colour.withAlpha (0.08f));
+                g.fillRoundedRectangle (r, 8.0f);
+                g.setColour (colour);
+                g.drawRoundedRectangle (r, 8.0f, 2.0f);
+                continue;
+            }
+            g.setColour (theme::bg.withAlpha (0.45f));
+            g.fillRoundedRectangle (r, 8.0f);
+            g.setColour (colour.withAlpha (0.35f));
+            g.drawRoundedRectangle (r.reduced (1.0f), 8.0f, 1.0f);
+            drawGrip (g, r.getCentre(), colour);
+        }
+    }
+
+private:
+    int count() const { return outputs ? (int) owner.busStrips.size() : (int) owner.inStrips.size(); }
+    juce::Component* strip (int k) const
+    {
+        return outputs ? (juce::Component*) owner.busStrips[(size_t) k].get() : (juce::Component*) owner.inStrips[(size_t) k].get();
+    }
+    /** Range [lo, hi) of the strips in the same group as strip k, and the group's section. */
+    std::tuple<int, int, Section*> groupOf (int k) const
+    {
+        if (! outputs) return { 0, count(), &owner.inSec };
+        if (k < owner.numHw) return { 0, owner.numHw, &owner.hwSec };
+        return { owner.numHw, count(), &owner.virtSec };
+    }
+    void move (int from, int to)
+    {
+        auto rotate = [from, to] (auto& v)
+        {
+            if (from < to) std::rotate (v.begin() + from, v.begin() + from + 1, v.begin() + to + 1);
+            else           std::rotate (v.begin() + to, v.begin() + from, v.begin() + from + 1);
+        };
+        if (outputs) rotate (owner.busStrips);
+        else         rotate (owner.inStrips);
+    }
+    static void drawGrip (juce::Graphics& g, juce::Point<float> c, juce::Colour colour)
+    {
+        // Pill with a left / right arrow: "drag me sideways".
+        auto pill = juce::Rectangle<float> (40.0f, 24.0f).withCentre (c);
+        g.setColour (theme::raised.withAlpha (0.95f));
+        g.fillRoundedRectangle (pill, 12.0f);
+        g.setColour (colour.withAlpha (0.8f));
+        g.drawRoundedRectangle (pill, 12.0f, 1.0f);
+        juce::Path p;
+        p.startNewSubPath (c.x - 9.0f, c.y);
+        p.lineTo (c.x + 9.0f, c.y);
+        p.addTriangle (c.x - 13.0f, c.y, c.x - 8.0f, c.y - 4.5f, c.x - 8.0f, c.y + 4.5f);
+        p.addTriangle (c.x + 13.0f, c.y, c.x + 8.0f, c.y - 4.5f, c.x + 8.0f, c.y + 4.5f);
+        g.strokePath (p, juce::PathStrokeType (1.6f));
+        g.fillPath (p);
+    }
+
+    StripArea& owner;
+    const bool outputs;
+    int dragIndex = -1, grabOffset = 0;
+};
+
+/** Bar above the strips in Change Order mode: what to do, Discard and Done. */
+class StripArea::ReorderBar final : public juce::Component
+{
+public:
+    explicit ReorderBar (StripArea& o) : owner (o)
+    {
+        for (auto* b : { &discard, &done })
+        {
+            addAndMakeVisible (b);
+            b->showArrow = false;
+            b->centred = true;
+        }
+        done.active = true;
+        discard.setTooltip ("Leave without changing the order (Esc)");
+        done.setTooltip ("Apply the new order");
+        discard.onClick = [this] { if (owner.onReorderDiscard) owner.onReorderDiscard(); };
+        done.onClick = [this] { if (owner.onReorderDone) owner.onReorderDone(); };
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        g.setColour (theme::learn.withAlpha (0.10f));
+        g.fillRoundedRectangle (r, 8.0f);
+        g.setColour (theme::learn.withAlpha (0.6f));
+        g.drawRoundedRectangle (r.reduced (0.5f), 8.0f, 1.0f);
+        auto text = getLocalBounds().reduced (14, 0).withRight (discard.getX() - 12);
+        g.setColour (theme::learn);
+        g.setFont (theme::font (13.5f, true));
+        const juce::String title ("Change Order");
+        const int tw = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), title);
+        g.drawText (title, text.removeFromLeft (tw + 14), juce::Justification::centredLeft);
+        g.setColour (theme::text);
+        g.setFont (theme::font (12.5f));
+        g.drawFittedText ("Drag the channels sideways into the new order. Inputs, hardware and virtual outputs each keep their "
+                          "own group; every channel takes the number of its new place.",
+                          text, juce::Justification::centredLeft, 2, 0.85f);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (8, 7);
+        done.setBounds (r.removeFromRight (96));
+        r.removeFromRight (8);
+        discard.setBounds (r.removeFromRight (96));
+    }
+
+private:
+    StripArea& owner;
+    Chip discard { "Discard", theme::text }, done { "Done", theme::good };
+};
+
+StripArea::~StripArea() = default;
+
+void StripArea::beginReorder()
+{
+    if (reordering) return;
+    reordering = true;
+    inLayer = std::make_unique<DragLayer> (*this, false);
+    outLayer = std::make_unique<DragLayer> (*this, true);
+    inPane.getContent().addAndMakeVisible (*inLayer);
+    outPane.getContent().addAndMakeVisible (*outLayer);
+    reorderBar = std::make_unique<ReorderBar> (*this);
+    addAndMakeVisible (*reorderBar);
+    resized();
+    repaint();
+}
+
+void StripArea::endReorder()
+{
+    if (! reordering) return;
+    reordering = false;
+    inLayer.reset();
+    outLayer.reset();
+    reorderBar.reset();
+    resized();
+    repaint();
+}
+
+std::array<std::vector<int>, 3> StripArea::getShownOrder() const
+{
+    std::array<std::vector<int>, 3> order;
+    for (auto& s : inStrips) order[0].push_back (s->getSelectIndex());
+    for (size_t k = 0; k < busStrips.size(); ++k)
+        order[(int) k < numHw ? 1 : 2].push_back (busStrips[k]->getSelectIndex() - kMaxInputs);
+    return order;
+}
+
+void StripArea::placeStrips (bool outputs, juce::Component* except)
+{
+    const int w = stripWidth[outputs ? 1 : 0], h = stripHeight[outputs ? 1 : 0];
+    auto put = [&] (const Section& sec, int k, juce::Component* c)
+    {
+        if (c != except) c->setBounds (sec.x + k * w, 0, w, h);
+    };
+    if (! outputs)
+        for (size_t k = 0; k < inStrips.size(); ++k) put (inSec, (int) k, inStrips[k].get());
+    else
+        for (size_t k = 0; k < busStrips.size(); ++k)
+            put ((int) k < numHw ? hwSec : virtSec, (int) k < numHw ? (int) k : (int) k - numHw, busStrips[k].get());
+
+    if (auto* layer = outputs ? outLayer.get() : inLayer.get())
+    {
+        auto& content = (outputs ? outPane : inPane).getContent();
+        layer->setBounds (content.getLocalBounds());
+        layer->toFront (false);
+        layer->repaint();
+    }
+}
+
 StripArea::StripArea (UiContext& c) : ctx (c)
 {
     inSec   = { "Inputs", theme::accentIn };
@@ -724,6 +957,11 @@ StripArea::StripArea (UiContext& c) : ctx (c)
 
 void StripArea::rebuild()
 {
+    // Leaves Change Order mode: the layers point at the strips that are recreated here.
+    reordering = false;
+    inLayer.reset();
+    outLayer.reset();
+    reorderBar.reset();
     inStrips.clear();
     busStrips.clear();
     numHw = numVirt = 0;
@@ -810,22 +1048,19 @@ void StripArea::layoutPane (StripPane& pane, bool outputs, int paneWidth, int pa
     const int h = juce::roundToInt ((float) stripsHeight / s);
     pane.setContentSize (juce::jmax (contentWidth (w), juce::roundToInt ((float) paneWidth / s)), h, s);
 
-    auto place = [&] (Section& sec, int x, int count, int firstStrip, bool bus)
+    auto place = [&] (Section& sec, int x, int count)
     {
         sec.x = x;
         sec.width = groupWidth (sec, count, w);
-        for (int k = 0; k < count; ++k)
-        {
-            juce::Component* c = bus ? (juce::Component*) busStrips[(size_t) (firstStrip + k)].get()
-                                     : (juce::Component*) inStrips[(size_t) (firstStrip + k)].get();
-            c->setBounds (x + k * w, 0, w, h);
-        }
         return x + sec.width;
     };
     if (! outputs)
-        place (inSec, kPad, (int) inStrips.size(), 0, false);
+        place (inSec, kPad, (int) inStrips.size());
     else
-        place (virtSec, place (hwSec, kPad, numHw, 0, true) + kBusGroupGap, numVirt, numHw, true);
+        place (virtSec, place (hwSec, kPad, numHw) + kBusGroupGap, numVirt);
+    stripWidth[outputs ? 1 : 0] = w;
+    stripHeight[outputs ? 1 : 0] = h;
+    placeStrips (outputs);
 }
 
 void StripArea::resized()
@@ -835,10 +1070,13 @@ void StripArea::resized()
     int split = stored >= 0.0f ? juce::roundToInt (stored * (float) width) : defaultSplit();
     split = juce::jlimit (kMinPaneWidth + kDividerWidth / 2, juce::jmax (kMinPaneWidth + kDividerWidth / 2, width - kMinPaneWidth - kDividerWidth / 2), split);
 
-    divider.setBounds (split - kDividerWidth / 2, 0, kDividerWidth, height);
-    const int paneH = height - kCaptionHeight;
-    inPane.setBounds (0, kCaptionHeight, divider.getX(), paneH);
-    outPane.setBounds (divider.getRight(), kCaptionHeight, width - divider.getRight(), paneH);
+    const int top = captionTop();
+    if (reorderBar != nullptr)
+        reorderBar->setBounds (kPad, 4, width - 2 * kPad, kBannerHeight - 6);
+    divider.setBounds (split - kDividerWidth / 2, top, kDividerWidth, height - top);
+    const int paneH = height - top - kCaptionHeight;
+    inPane.setBounds (0, top + kCaptionHeight, divider.getX(), paneH);
+    outPane.setBounds (divider.getRight(), top + kCaptionHeight, width - divider.getRight(), paneH);
     layoutPane (inPane, false, inPane.getWidth(), paneH);
     layoutPane (outPane, true, outPane.getWidth(), paneH);
     layoutCaptions();
@@ -854,17 +1092,17 @@ void StripArea::layoutCaptions()
         const int groupX = pane.getX() + juce::roundToInt (((float) sec.x - pane.getScrollX()) * s);
         const int groupR = groupX + juce::roundToInt ((float) sec.width * s);
         const int x = juce::jmin (juce::jmax (groupX, pane.getX() + kPad), groupR - full) + 6;
-        sec.caption = { x, 0, full, kCaptionHeight };
-        plus.setBounds (x + sec.captionWidth + 10, (kCaptionHeight - kPlusSize) / 2 + 1, kPlusSize, kPlusSize - 2);
+        sec.caption = { x, captionTop(), full, kCaptionHeight };
+        plus.setBounds (x + sec.captionWidth + 10, captionTop() + (kCaptionHeight - kPlusSize) / 2 + 1, kPlusSize, kPlusSize - 2);
     };
     place (inSec, inPane, addIn);
     place (hwSec, outPane, addHw);
     place (virtSec, outPane, addVirt);
-    // Hidden while pushed out of the pane by scrolling (or by the other caption).
-    addIn.setVisible (addIn.getRight() <= inPane.getRight() && ctx.engine.numActiveInputs() < kMaxInputs);
-    addHw.setVisible (addHw.getX() >= outPane.getX() && addHw.getRight() <= virtSec.caption.getX() - 4 && numHw < kMaxHwBuses);
-    addVirt.setVisible (addVirt.getRight() <= getWidth() && addVirt.getX() >= outPane.getX() && numVirt < kMaxVirtBuses);
-    repaint (getLocalBounds().withHeight (kCaptionHeight));
+    // Hidden while pushed out of the pane by scrolling (or by the other caption), and while reordering.
+    addIn.setVisible (! reordering && addIn.getRight() <= inPane.getRight() && ctx.engine.numActiveInputs() < kMaxInputs);
+    addHw.setVisible (! reordering && addHw.getX() >= outPane.getX() && addHw.getRight() <= virtSec.caption.getX() - 4 && numHw < kMaxHwBuses);
+    addVirt.setVisible (! reordering && addVirt.getRight() <= getWidth() && addVirt.getX() >= outPane.getX() && numVirt < kMaxVirtBuses);
+    repaint (getLocalBounds().withHeight (captionTop() + kCaptionHeight));
 }
 
 void StripArea::scrollToChannel (int sel)
@@ -884,9 +1122,10 @@ void StripArea::paint (juce::Graphics& g)
         g.setColour (sec.colour);
         g.drawText (sec.title, sec.caption.withWidth (sec.captionWidth + 4), juce::Justification::centredLeft, false);
     };
-    caption (inSec, { 0, 0, inPane.getRight(), kCaptionHeight });
-    caption (hwSec, { outPane.getX(), 0, juce::jmax (0, virtSec.caption.getX() - outPane.getX() - 4), kCaptionHeight });
-    caption (virtSec, { outPane.getX(), 0, outPane.getWidth(), kCaptionHeight });
+    const int top = captionTop();
+    caption (inSec, { 0, top, inPane.getRight(), kCaptionHeight });
+    caption (hwSec, { outPane.getX(), top, juce::jmax (0, virtSec.caption.getX() - outPane.getX() - 4), kCaptionHeight });
+    caption (virtSec, { outPane.getX(), top, outPane.getWidth(), kCaptionHeight });
 
     // SEL: the input faders set the level on the selected bus.
     if (selBus >= 0)
@@ -896,7 +1135,7 @@ void StripArea::paint (juce::Graphics& g)
         g.setFont (theme::font (11.5f, true));
         g.drawFittedText ("FADERS = LEVEL ON " + busCode (selBus)
                               + (monBus >= 0 ? "   (monitoring on " + busCode (monBus) + ")" : juce::String()),
-                          juce::Rectangle<int> (x, 0, juce::jmax (0, inPane.getRight() - x - 4), kCaptionHeight),
+                          juce::Rectangle<int> (x, top, juce::jmax (0, inPane.getRight() - x - 4), kCaptionHeight),
                           juce::Justification::centredLeft, 1, 0.8f);
     }
 }
@@ -906,7 +1145,7 @@ void StripArea::setSelInfo (int sb, int mb)
     if (sb == selBus && mb == monBus) return;
     selBus = sb;
     monBus = mb;
-    repaint (0, 0, inPane.getRight(), kCaptionHeight);
+    repaint (0, captionTop(), inPane.getRight(), kCaptionHeight);
 }
 
 void StripArea::updateMeters (float dt)

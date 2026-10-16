@@ -47,6 +47,7 @@ public:
     std::atomic<int> latencyFrames { 0 }; // current buffered latency in device frames
     std::atomic<bool> failed { false };
     std::atomic<bool> idle { false };      // e.g. captured app is not running
+    std::atomic<uint64_t> dspTicks { 0 };  // engine-thread time (resampling, drift control) while profiling
     juce::String error;
 
     /** Device channels this stream carries, ascending (secondary ASIO drivers carry only the

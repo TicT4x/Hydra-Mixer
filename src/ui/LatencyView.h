@@ -1,5 +1,5 @@
 #pragma once
-#include "Widgets.h"
+#include "BarList.h"   // drawBarLegend
 
 namespace hydra
 {

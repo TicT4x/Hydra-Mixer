@@ -34,8 +34,9 @@ private:
     Playback: the background thread decodes (and resamples) a file into a second ring; the audio
     thread pulls it and the engine mixes it into the chosen buses (A or B).
 
-    Transport is driven by parameters (rec.record / rec.play), so it is MIDI-learnable and can have
-    keyboard shortcuts. The audio thread never locks or allocates here. */
+    Transport is driven by parameters (rec.record / rec.play / rec.stop), so it is MIDI-learnable and can
+    have keyboard shortcuts. Switching play off pauses (the next play continues there); rec.stop ends
+    recording and playback and returns to the start. The audio thread never locks or allocates here. */
 class Recorder : private juce::Thread, private juce::Timer
 {
 public:
@@ -43,7 +44,7 @@ public:
     ~Recorder() override;
 
     void createParams (ParamRegistry&);
-    Param *record {}, *play {}, *loop {}, *source {}, *level {};
+    Param *record {}, *play {}, *stop {}, *loop {}, *source {}, *level {};
     std::array<Param*, kMaxBuses> out {};
 
     // Settings (message thread, stored with the session)
@@ -53,6 +54,8 @@ public:
 
     // Message thread
     bool loadFile (const juce::File& f, juce::String& error);
+    /** Deletes the loaded file (moved to the recycle bin if possible) and unloads it. Not while recording. */
+    bool deleteLoadedFile (juce::String& error);
     juce::File getLoadedFile() const     { return playFile; }
     juce::File getRecordingFile() const  { return recFile; }
     juce::File getLastRecording() const  { return lastRecording; }
@@ -88,6 +91,7 @@ private:
     void stopRecording();
     bool startPlayback();
     void stopPlayback();
+    void unloadFile();
     void ensureThread();
     void drainRecording();      // writerLock held
     void fillPlayback();        // writerLock held

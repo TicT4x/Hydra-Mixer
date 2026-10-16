@@ -789,14 +789,16 @@ public:
     explicit RecorderDetail (UiContext& c)
         : ctx (c), rec (c.engine.recorder),
           sourceSec ("Record Source", theme::accentVirt), takeSec ("Recording", theme::mute), outSec ("Play To", theme::accentHw),
-          recBtn (c, *rec.record, "REC", theme::mute), playBtn (c, *rec.play, "PLAY", theme::good),
-          loopBtn (c, *rec.loop, "LOOP", theme::good),
+          recBtn (c, *rec.record, "REC", theme::mute, Toggle::Icon::record),
+          playBtn (c, *rec.play, "PLAY", theme::good, Toggle::Icon::playPause),
+          stopBtn (c, *rec.stop, "STOP", theme::text, Toggle::Icon::stop),
+          loopBtn (c, *rec.loop, "LOOP", theme::good, Toggle::Icon::loop),
           level (c, *rec.level, "LEVEL", theme::good),
           wave (rec)
     {
         for (juce::Component* s : std::initializer_list<juce::Component*> { &sourceSec, &takeSec, &outSec }) addAndMakeVisible (s);
         for (juce::Component* k : std::initializer_list<juce::Component*> { &folderChip, &formatChip }) sourceSec.addAndMakeVisible (k);
-        for (juce::Component* k : std::initializer_list<juce::Component*> { &recBtn, &playBtn, &loopBtn, &wave, &openChip, &lastChip, &showChip })
+        for (juce::Component* k : std::initializer_list<juce::Component*> { &recBtn, &playBtn, &stopBtn, &loopBtn, &deleteBtn, &wave, &openChip, &lastChip, &showChip })
             takeSec.addAndMakeVisible (k);
         outSec.addAndMakeVisible (level);
         for (int b = 0; b < kMaxBuses; ++b)
@@ -823,8 +825,11 @@ public:
         formatChip.showArrow = true;
 
         recBtn.setTooltip ("Record the selected B bus to a WAV file (stop with a second click)");
-        playBtn.setTooltip ("Play the loaded file to the buses selected under Play To (starts at the marker in the waveform)");
+        playBtn.setTooltip ("Play / pause the loaded file on the buses selected under Play To (starts at the marker in the waveform)");
+        stopBtn.setTooltip ("Stop recording / playback and go back to the start");
         loopBtn.setTooltip ("Repeat the file");
+        deleteBtn.setTooltip ("Delete this recording: unloads it and moves the file to the Recycle Bin");
+        deleteBtn.onClick = [this] { confirmDelete(); };
         folderChip.setTooltip ("Folder for new recordings");
         openChip.setTooltip ("Load an audio file for playback (WAV, AIFF, FLAC, Ogg, MP3)");
         lastChip.setTooltip ("Load the most recent recording");
@@ -894,11 +899,15 @@ public:
         // Recording: transport + time, waveform, file
         auto t = takeSec.content();
         auto transport = t.removeFromTop (28);
-        recBtn.setBounds (transport.removeFromLeft (58));
-        transport.removeFromLeft (5);
-        playBtn.setBounds (transport.removeFromLeft (62));
-        transport.removeFromLeft (5);
-        loopBtn.setBounds (transport.removeFromLeft (58));
+        for (juce::Component* b : std::initializer_list<juce::Component*> { &recBtn, &playBtn, &stopBtn })
+        {
+            b->setBounds (transport.removeFromLeft (38));
+            transport.removeFromLeft (4);
+        }
+        transport.removeFromLeft (6);
+        loopBtn.setBounds (transport.removeFromLeft (38));
+        transport.removeFromLeft (10);
+        deleteBtn.setBounds (transport.removeFromLeft (34));
         transport.removeFromLeft (14);
         timeArea = transport.translated (takeSec.getX(), takeSec.getY());
         t.removeFromTop (6);
@@ -983,10 +992,33 @@ private:
         formatChip.text = rec.bitDepth >= 32 ? "WAV 32f" : "WAV " + juce::String (rec.bitDepth);
 
         const auto file = rec.getLoadedFile();
+        deleteBtn.setEnabled (file != juce::File() && ! recording);
         fileTitle = file != juce::File() ? file.getFileName() : juce::String ("No file loaded");
         fileInfo = file != juce::File() ? file.getParentDirectory().getFullPathName() : juce::String();
         for (auto* chip : { &folderChip, &formatChip }) chip->repaint();
         repaint();
+    }
+
+    void confirmDelete()
+    {
+        const auto file = rec.getLoadedFile();
+        if (file == juce::File() || rec.isRecording()) return;
+        juce::Component::SafePointer<RecorderDetail> safe (this);
+        juce::AlertWindow::showAsync (juce::MessageBoxOptions()
+                                          .withIconType (juce::MessageBoxIconType::WarningIcon)
+                                          .withTitle ("Delete this recording?")
+                                          .withMessage (file.getFileName() + "\n\nThe track is removed from the recorder and the file is moved to the Recycle Bin.")
+                                          .withButton ("Delete")
+                                          .withButton ("Cancel")
+                                          .withAssociatedComponent (this),
+                                      [safe, file] (int result)
+                                      {
+                                          if (result != 1 || safe == nullptr || safe->rec.getLoadedFile() != file) return;
+                                          juce::String err;
+                                          if (! safe->rec.deleteLoadedFile (err))
+                                              juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Recorder", err);
+                                          safe->refreshTexts();
+                                      });
     }
 
     void chooseFolder()
@@ -1029,7 +1061,8 @@ private:
     UiContext& ctx;
     Recorder& rec;
     Section sourceSec, takeSec, outSec;
-    Toggle recBtn, playBtn, loopBtn;
+    Toggle recBtn, playBtn, stopBtn, loopBtn;
+    TrashButton deleteBtn;
     Knob level;
     WaveformView wave;
     Chip folderChip { "Folder...", theme::text }, formatChip { "WAV 24", theme::text };
