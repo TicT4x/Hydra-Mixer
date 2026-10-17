@@ -73,6 +73,17 @@ public:
     /** Where PLAY starts (set by seek, 0 for a new file). */
     double getStartSeconds() const noexcept { return startSeconds.load(); }
 
+    /** Trim of the loaded file, like the in / out points of a clip in a video editor: playback (and loop)
+        only runs between in and out. Nothing is written until applyTrim(). Reset when another file is loaded. */
+    void setTrim (double inSeconds, double outSeconds);
+    void resetTrim() { setTrim (0.0, getPlayLengthSeconds()); }
+    double getTrimIn() const noexcept { return trimIn.load(); }
+    double getTrimOut() const;
+    bool isTrimmed() const;
+    /** Cuts the loaded file to the trim range. A WAV file is rewritten (the original goes to the Recycle
+        Bin), other formats are saved as "<name>_trimmed.wav". The result is loaded. Not while recording. */
+    bool applyTrim (juce::String& error);
+
     /** Overview of the take being recorded / of the loaded file (also while it is still being scanned). */
     const Waveform& getRecordWaveform() const noexcept { return recWave; }
     const Waveform& getPlayWaveform() const noexcept   { return playWave; }
@@ -130,6 +141,9 @@ private:
     Waveform playWave;
     class Scanner;
     std::unique_ptr<Scanner> scanner;
+    class RangeSource;   // plays only the trimmed part of the file (recorder thread)
+    std::unique_ptr<RangeSource> range;
+    std::atomic<double> trimIn { 0.0 }, trimOut { -1.0 };   // seconds; out < 0 = end of file
 
     std::atomic<double> sampleRate { 0.0 };
     juce::String lastError;

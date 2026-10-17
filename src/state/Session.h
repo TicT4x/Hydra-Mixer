@@ -2,6 +2,7 @@
 #include "engine/Engine.h"
 #include "midi/MidiMapper.h"
 #include "midi/Hotkeys.h"
+#include "Scenes.h"
 
 namespace hydra
 {
@@ -16,7 +17,10 @@ class Session
 {
 public:
     Session (Engine& e, MidiMapper& m, juce::File directory = appDataDir())
-        : engine (e), midi (m), dir (std::move (directory)) {}
+        : scenes (e), engine (e), midi (m), dir (std::move (directory)) {}
+
+    /** Scenes (snapshots of all parameters), stored with the session. */
+    SceneBank scenes;
 
     juce::File defaultFile() const { return dir.getChildFile ("session.xml"); }
     juce::File backupDir() const   { return dir.getChildFile ("backups"); }

@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "state/Session.h"
 
 namespace hydra
 {
@@ -110,13 +111,47 @@ void IconButton::paint (juce::Graphics& g)
 
     // Round-cornered chip like the other top bar buttons
     auto chip = r.reduced (0.5f);
-    g.setColour (down ? theme::raised.brighter (0.15f) : hover ? theme::raised.brighter (0.07f) : theme::raised);
+    const auto chipColour = down ? theme::raised.brighter (0.15f) : hover ? theme::raised.brighter (0.07f) : theme::raised;
+    const bool isLit = ! lit.isTransparent();
+    g.setColour (isLit ? chipColour.interpolatedWith (lit, 0.18f) : chipColour);
     g.fillRoundedRectangle (chip, 7.0f);
-    g.setColour (theme::outline);
-    g.drawRoundedRectangle (chip, 7.0f, 1.0f);
+    g.setColour (isLit ? lit.withAlpha (0.8f) : theme::outline);
+    g.drawRoundedRectangle (chip, 7.0f, isLit ? 1.3f : 1.0f);
 
     const float rad = juce::jmin (r.getWidth(), r.getHeight()) * 0.27f;
-    if (kind == Kind::gear)
+    const auto glyph = isLit ? lit : hover ? theme::text : theme::textDim;
+    if (kind == Kind::wrench)
+    {
+        // Open-end wrench, diagonal: round head top right with a notch, handle to the bottom left.
+        g.setColour (glyph);
+        const float s = rad * 1.25f;
+        juce::Path handle;
+        handle.addRoundedRectangle (-s * 0.17f, -s * 0.2f, s * 0.34f, s * 1.25f, s * 0.17f);
+        g.fillPath (handle, juce::AffineTransform::rotation (juce::MathConstants<float>::pi * 0.25f).translated (c.x, c.y));
+        const auto head = c.translated (s * 0.42f, -s * 0.42f);
+        g.fillEllipse (head.x - s * 0.42f, head.y - s * 0.42f, s * 0.84f, s * 0.84f);
+        juce::Path notch;   // jaw opening, cut out with the chip colour
+        notch.addRectangle (-s * 0.14f, -s * 0.5f, s * 0.28f, s * 0.5f);
+        g.setColour (isLit ? chipColour.interpolatedWith (lit, 0.18f) : chipColour);
+        g.fillPath (notch, juce::AffineTransform::rotation (juce::MathConstants<float>::pi * 0.25f).translated (head.x, head.y));
+    }
+    else if (kind == Kind::cassette)
+    {
+        g.setColour (glyph);
+        auto body = juce::Rectangle<float> (rad * 3.0f, rad * 2.0f).withCentre (c);
+        g.drawRoundedRectangle (body, rad * 0.3f, 1.4f);
+        const float rr = rad * 0.33f;
+        for (float dx : { -rad * 0.62f, rad * 0.62f })
+            g.drawEllipse (c.x + dx - rr, c.y - rad * 0.28f - rr, rr * 2.0f, rr * 2.0f, 1.3f);
+        g.drawLine (c.x - rad * 0.62f, c.y - rad * 0.28f - rr, c.x + rad * 0.62f, c.y - rad * 0.28f - rr, 1.1f);
+        juce::Path base;
+        base.startNewSubPath (body.getX() + rad * 0.55f, body.getBottom());
+        base.lineTo (body.getX() + rad * 0.8f, body.getBottom() - rad * 0.55f);
+        base.lineTo (body.getRight() - rad * 0.8f, body.getBottom() - rad * 0.55f);
+        base.lineTo (body.getRight() - rad * 0.55f, body.getBottom());
+        g.strokePath (base, juce::PathStrokeType (1.2f));
+    }
+    else if (kind == Kind::gear)
     {
         g.setColour (hover ? theme::text : theme::textDim);
         juce::Path p;
@@ -136,7 +171,7 @@ void IconButton::paint (juce::Graphics& g)
     }
     else // power
     {
-        g.setColour (hover ? theme::mute : theme::textDim);
+        g.setColour (hover || isLit ? theme::mute : theme::textDim);
         juce::Path p;
         p.addCentredArc (c.x, c.y + rad * 0.08f, rad * 0.95f, rad * 0.95f, 0.0f, 0.75f, juce::MathConstants<float>::twoPi - 0.75f, true);
         p.startNewSubPath (c.x, c.y - rad * 1.15f);
@@ -181,17 +216,45 @@ void DspMeter::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+StatusLink::StatusLink()
+{
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    setTooltip ("Audio engine: click to open its settings (driver, device, sample rate, buffer)");
+}
+
+void StatusLink::setStatus (const juce::String& t, bool isRunning, bool learnMode)
+{
+    if (t == text && isRunning == running && learnMode == learn) return;
+    text = t;
+    running = isRunning;
+    learn = learnMode;
+    repaint();
+}
+
+void StatusLink::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds();
+    if (hover && ! learn)
+    {
+        g.setColour (theme::raised.brighter (0.07f));
+        g.fillRoundedRectangle (r.toFloat().reduced (0.0f, 6.0f), 6.0f);
+    }
+    r.removeFromLeft (6);
+    g.setColour (running ? theme::good : theme::mute);
+    g.fillEllipse ((float) r.getX(), (float) r.getCentreY() - 4.0f, 8.0f, 8.0f);
+    g.setColour (learn ? theme::learn : hover ? juce::Colours::white : theme::text);
+    g.setFont (theme::font (13.0f, learn));
+    g.drawFittedText (text, r.withTrimmedLeft (16).withTrimmedRight (6), juce::Justification::centredLeft, 1, 0.9f);
+}
+
+//==============================================================================
 TopBar::TopBar (UiContext& c) : ctx (c), recorder (c)
 {
     addAndMakeVisible (recorder);
+    addChildComponent (cassette);
     addAndMakeVisible (dsp);
-    for (auto* chip : { &midiMap, &learn, &latency })
-    {
-        addAndMakeVisible (chip);
-        chip->showArrow = false;
-        chip->centred = true;
-    }
-    for (auto* b : { &settings, &power, &minimiseBtn, &maximiseBtn, &closeBtn })
+    addAndMakeVisible (statusLink);
+    for (auto* b : { &tools, &settings, &power, &minimiseBtn, &maximiseBtn, &closeBtn })
         addAndMakeVisible (b);
     // Normally Windows handles these clicks (native caption buttons); this covers the few pixels
     // at the window edge that are reported as client area for resizing.
@@ -199,10 +262,9 @@ TopBar::TopBar (UiContext& c) : ctx (c), recorder (c)
     minimiseBtn.onClick = [window] { if (auto* w = window()) w->minimiseButtonPressed(); };
     maximiseBtn.onClick = [window] { if (auto* w = window()) w->maximiseButtonPressed(); };
     closeBtn.onClick    = [window] { if (auto* w = window()) w->closeButtonPressed(); };
-    learn.colour = theme::learn;
-    learn.setTooltip ("Learn mode: click a control, then move a MIDI control to assign it. Esc to leave.");
-    midiMap.setTooltip ("Show and edit all MIDI assignments");
-    latency.setTooltip ("Latency Finder: how much latency each device, denoiser and plugin adds to every signal path");
+    cassette.onClick = [this] { ctx.select (kRecorderSelect); };
+    tools.setTooltip ("Tools: Scene Editor, MIDI Learn, MIDI Map, Latency Finder, DSP Load, Recorder");
+    cassette.setTooltip ("Recorder - click to show it below");
     settings.setTooltip ("Settings: audio engine, MIDI, plugins, monitoring, tray");
     power.setTooltip ("Shut down Hydra Mixer");
 }
@@ -224,7 +286,7 @@ auto TopBar::windowControlAt (juce::Point<float> p) const -> WindowControlKind
         if (c->isVisible() && c->getBounds().toFloat().contains (p))
             return WindowControlKind::client;
 
-    return WindowControlKind::caption; // logo, status and empty space drag the window
+    return WindowControlKind::caption; // logo, status background and empty space drag the window
 }
 
 void TopBar::update()
@@ -235,30 +297,26 @@ void TopBar::update()
         s << d->getTypeName() << "  ·  " << d->getName() << "  ·  " << (int) e.getSampleRate() << " Hz  ·  "
           << d->getCurrentBufferSizeSamples() << " smp  ·  " << juce::String (e.getMasterLatencyMs(), 1) << " ms I/O";
     else
-        s << "Audio engine stopped - open Settings";
+        s << "Audio engine stopped - click to open the settings";
     if (ctx.learnMode)
         s = "MIDI LEARN MODE - click a control, then move / press a MIDI control.   Esc = exit";
+    statusLink.setStatus (s, e.getMasterDevice() != nullptr, ctx.learnMode);
 
     // DSP load: the engine value reacts instantly to peaks, which makes the display jitter.
     // Smooth it here (~0.5 s time constant at 30 Hz) and refresh the number only 4x per second.
     cpuSmooth += 0.07f * (e.getCpuLoad() - cpuSmooth);
-    float newCpu = cpu;
-    if (++cpuTick >= 8) { cpuTick = 0; newCpu = cpuSmooth; }
-    const auto act = ctx.midi.activity.load();
-    bool dirty = s != status;
-    if (act != lastActivity) { lastActivity = act; midiGlow = 1.0f; dirty = true; }
-    else if (midiGlow > 0.0f) { midiGlow = juce::jmax (0.0f, midiGlow - 0.12f); dirty = true; }
-    status = s;
-    cpu = newCpu;
+    if (++cpuTick >= 8) { cpuTick = 0; cpu = cpuSmooth; }
     dsp.setLoad (cpu);
 
-    if (learn.active != ctx.learnMode)
-    {
-        learn.active = ctx.learnMode;
-        learn.text = ctx.learnMode ? "Learning..." : "MIDI Learn";
-        learn.repaint();
-    }
-    if (dirty) repaint (statusArea);
+    const auto act = ctx.midi.activity.load();
+    bool dirty = false;
+    if (act != lastActivity) { lastActivity = act; midiGlow = 1.0f; dirty = true; }
+    else if (midiGlow > 0.0f) { midiGlow = juce::jmax (0.0f, midiGlow - 0.12f); dirty = true; }
+    if (dirty && ! midiArea.isEmpty()) repaint (midiArea);
+
+    tools.setLit (ctx.learnMode ? theme::learn : juce::Colours::transparentBlack);
+    const auto& rc = e.recorder;
+    cassette.setLit (rc.isRecording() ? theme::mute : rc.isPlaying() ? theme::good : juce::Colours::transparentBlack);
     recorder.update();
 }
 
@@ -270,39 +328,35 @@ void TopBar::paint (juce::Graphics& g)
     g.setColour (theme::outline.withAlpha (0.6f));
     g.fillRect (r.removeFromBottom (1));
 
-    // Logo
-    auto logo = r.removeFromLeft (200).reduced (16, 0);
-    // Same logo as the tray icon and the exe icon (resources/icon.png).
+    // Logo: same as the tray icon and the exe icon (resources/icon.png); only the icon when space is short.
+    const auto logo = logoArea;
     theme::drawLogo (g, { (float) logo.getX(), (float) logo.getCentreY() - 11.0f, 23.0f, 22.0f });
-    g.setColour (theme::text);
-    const auto bold = theme::font (17.0f, true);
-    g.setFont (bold);
-    g.drawText ("HYDRA", logo.withTrimmedLeft (34), juce::Justification::centredLeft);
-    g.setColour (theme::textDim);
-    g.setFont (theme::font (17.0f));
-    g.drawText ("MIXER", logo.withTrimmedLeft (34 + juce::GlyphArrangement::getStringWidthInt (bold, "HYDRA") + 8),
-                juce::Justification::centredLeft);
+    if (! compactLogo)
+    {
+        g.setColour (theme::text);
+        const auto bold = theme::font (17.0f, true);
+        g.setFont (bold);
+        g.drawText ("HYDRA", logo.withTrimmedLeft (34), juce::Justification::centredLeft);
+        g.setColour (theme::textDim);
+        g.setFont (theme::font (17.0f));
+        g.drawText ("MIXER", logo.withTrimmedLeft (34 + juce::GlyphArrangement::getStringWidthInt (bold, "HYDRA") + 8),
+                    juce::Justification::centredLeft);
+    }
 
-    // Status
-    auto st = statusArea;
-    g.setColour (theme::panel2);
-    g.fillRoundedRectangle (st.toFloat(), 8.0f);
-    auto inner = st.reduced (12, 0);
-
-    inner.removeFromRight (150);   // DSP meter (own component, see resized)
-    g.setFont (theme::font (12.0f));
-
-    auto midiArea = inner.removeFromRight (64);
-    g.setColour (theme::learn.withAlpha (0.15f + 0.85f * midiGlow));
-    g.fillEllipse (midiArea.getX() + 6.0f, (float) midiArea.getCentreY() - 4.0f, 8.0f, 8.0f);
-    g.setColour (theme::textDim);
-    g.drawText ("MIDI", midiArea.withTrimmedLeft (20), juce::Justification::centredLeft);
-
-    g.setColour (ctx.engine.getMasterDevice() != nullptr ? theme::good : theme::mute);
-    g.fillEllipse ((float) inner.getX(), (float) inner.getCentreY() - 4.0f, 8.0f, 8.0f);
-    g.setColour (ctx.learnMode ? theme::learn : theme::text);
-    g.setFont (theme::font (13.0f, ctx.learnMode));
-    g.drawText (status, inner.withTrimmedLeft (16), juce::Justification::centredLeft);
+    // Status background; the text and the DSP meter are child components, the MIDI dot is drawn here.
+    if (statusArea.getWidth() > 0)
+    {
+        g.setColour (theme::panel2);
+        g.fillRoundedRectangle (statusArea.toFloat(), 8.0f);
+    }
+    if (! midiArea.isEmpty())
+    {
+        g.setFont (theme::font (12.0f));
+        g.setColour (theme::learn.withAlpha (0.15f + 0.85f * midiGlow));
+        g.fillEllipse (midiArea.getX() + 6.0f, (float) midiArea.getCentreY() - 4.0f, 8.0f, 8.0f);
+        g.setColour (theme::textDim);
+        g.drawText ("MIDI", midiArea.withTrimmedLeft (20), juce::Justification::centredLeft);
+    }
 }
 
 void TopBar::resized()
@@ -318,18 +372,38 @@ void TopBar::resized()
     power.setBounds (r.removeFromRight (36));
     r.removeFromRight (6);
     settings.setBounds (r.removeFromRight (36));
-    r.removeFromRight (10);
-    midiMap.setBounds (r.removeFromRight (96));
-    r.removeFromRight (8);
-    learn.setBounds (r.removeFromRight (110));
-    r.removeFromRight (8);
-    latency.setBounds (r.removeFromRight (84));
+    r.removeFromRight (6);
+    tools.setBounds (r.removeFromRight (36));
     r.removeFromRight (12);
-    recorder.setBounds (r.removeFromRight (220));
-    r.removeFromRight (12);
-    statusArea = r.withLeft (204);
-    // DSP meter at the right end of the status area (clickable, so not part of the caption).
-    dsp.setBounds (statusArea.getRight() - 12 - 150 - 6, statusArea.getY(), 150 + 12, statusArea.getHeight());
+
+    // What is left is shared by the logo, the recorder and the status. Narrow windows give up the
+    // full recorder first (cassette button instead), then the logo text, then the status text.
+    constexpr int kLogoFull = 190, kLogoIcon = 34, kRecFull = 220, kRecIcon = 36, kDspW = 162, kMidiW = 64, kTextMin = 150;
+    const int avail = juce::jmax (0, r.getWidth());
+    const int statusWanted = kDspW + kMidiW + kTextMin;
+    const bool fullRecorder = avail >= kLogoFull + 12 + kRecFull + 12 + statusWanted;
+    const int recW = fullRecorder ? kRecFull : kRecIcon;
+    compactLogo = avail < kLogoFull + 12 + recW + 12 + statusWanted;
+
+    logoArea = r.removeFromLeft (juce::jmin (r.getWidth(), compactLogo ? kLogoIcon : kLogoFull)).withTrimmedLeft (4);
+    r.removeFromLeft (juce::jmin (r.getWidth(), 8));
+    recorder.setVisible (fullRecorder);
+    cassette.setVisible (! fullRecorder);
+    const auto recArea = r.removeFromRight (juce::jmin (r.getWidth(), recW));
+    if (fullRecorder) recorder.setBounds (recArea);
+    else              cassette.setBounds (recArea);
+    r.removeFromRight (juce::jmin (r.getWidth(), 12));
+
+    // Status: DSP meter at the right end (visible as long as there is room for it), MIDI activity
+    // next to it, the engine status (click = audio settings) gets the rest.
+    statusArea = r;
+    auto inner = statusArea.reduced (6, 0);
+    const bool showDsp = inner.getWidth() >= kDspW;
+    dsp.setVisible (showDsp);
+    if (showDsp) dsp.setBounds (inner.removeFromRight (kDspW));
+    midiArea = inner.getWidth() >= kMidiW + 40 ? inner.removeFromRight (kMidiW) : juce::Rectangle<int>();
+    statusLink.setVisible (inner.getWidth() >= 40);
+    statusLink.setBounds (inner);
 }
 
 //==============================================================================
@@ -460,21 +534,22 @@ MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys
                                           if (result == 1 && safe != nullptr && safe->ctx.shutdown) safe->ctx.shutdown();
                                       });
     };
-    top.midiMap.onClick = [this] { openMidiMap(); };
-    top.latency.onClick = [this] { openLatencyFinder(); };
+    top.tools.onClick = [this] { showToolsMenu(); };
     top.dsp.onClick = [this] { openDspView(); };
-    top.learn.onClick = [this]
-    {
-        ctx.learnMode = ! ctx.learnMode;
-        if (! ctx.learnMode) ctx.midi.cancelLearn();
-        ctx.learnModeChanged();
-    };
+    top.statusLink.onClick = [this] { openSettings (1); };   // Audio Engine tab
 
     midi.onLearned = [this] (Param* p)
     {
         if (p == nullptr) return;
         const auto maps = ctx.midi.getMappingsFor (p);
         showToast ("MIDI mapped:  " + p->name + "  <-  " + (maps.empty() ? juce::String() : maps.back().describe()), 2.5);
+    };
+
+    // Scenes recalled by MIDI / shortcut (or in the editor): short confirmation.
+    session.scenes.onRecalled = [this] (int i)
+    {
+        auto& bank = ctx.session->scenes;
+        showToast ("Scene " + juce::String (i + 1) + ":  " + bank.get (i).name, 1.5);
     };
 
     engine.addChangeListener (this);
@@ -505,6 +580,8 @@ MainComponent::~MainComponent()
     if (hotkeyTarget != nullptr) { ctx.hotkeys.setMouseCapture (nullptr); ctx.hotkeys.setSuspended (false); }
     ctx.engine.removeChangeListener (this);
     ctx.midi.onLearned = nullptr;
+    if (ctx.session != nullptr) ctx.session->scenes.onRecalled = nullptr;
+    sceneBar.reset();
     settingsWindow.reset();
     midiWindow.reset();
     eqWindow.reset();
@@ -820,6 +897,50 @@ void MainComponent::changeListenerCallback (juce::ChangeBroadcaster*)
     top.update();
 }
 
+void MainComponent::toggleLearnMode()
+{
+    ctx.learnMode = ! ctx.learnMode;
+    if (! ctx.learnMode) ctx.midi.cancelLearn();
+    ctx.learnModeChanged();
+}
+
+void MainComponent::toggleSceneEditor()
+{
+    if (sceneBar != nullptr)
+    {
+        sceneBar.reset();
+    }
+    else if (ctx.session != nullptr)
+    {
+        sceneBar = std::make_unique<SceneSidebar> (ctx, ctx.session->scenes);
+        juce::Component::SafePointer<MainComponent> safe (this);
+        // Async: the close button belongs to the sidebar that is destroyed.
+        sceneBar->onClose = [safe] { juce::MessageManager::callAsync ([safe] { if (safe != nullptr && safe->sceneBar != nullptr) safe->toggleSceneEditor(); }); };
+        sceneBar->onMessage = [this] (const juce::String& text) { showToast (text, 2.5); };
+        addAndMakeVisible (*sceneBar);
+    }
+    resized();
+    repaint();
+}
+
+void MainComponent::showToolsMenu()
+{
+    // All tools in one place (the top bar only has room for the wrench).
+    juce::Component::SafePointer<MainComponent> safe (this);
+    auto run = [safe] (void (MainComponent::*fn)()) { return [safe, fn] { if (safe != nullptr) (safe.getComponent()->*fn)(); }; };
+    juce::PopupMenu m;
+    m.addSectionHeader ("Tools");
+    m.addItem ("Scene Editor", true, sceneBar != nullptr, run (&MainComponent::toggleSceneEditor));
+    m.addSeparator();
+    m.addItem ("MIDI Learn Mode", true, ctx.learnMode, run (&MainComponent::toggleLearnMode));
+    m.addItem ("MIDI Map...", run (&MainComponent::openMidiMap));
+    m.addSeparator();
+    m.addItem ("Latency Finder...", run (&MainComponent::openLatencyFinder));
+    m.addItem ("DSP Load...", run (&MainComponent::openDspView));
+    m.addItem ("Recorder", [safe] { if (safe != nullptr) safe->select (kRecorderSelect); });
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&top.tools).withMinimumWidth (200));
+}
+
 void MainComponent::openSettings (int tab)
 {
     if (settingsWindow == nullptr)
@@ -1003,6 +1124,11 @@ void MainComponent::resized()
     auto r = juce::Rectangle<int> (0, 0, logicalWidth(), logicalHeight());
     top.setBounds (r.removeFromTop (54));
     r.removeFromTop (4);
+    if (sceneBar != nullptr)
+    {
+        sceneBar->setTransform (scale);
+        sceneBar->setBounds (r.removeFromLeft (juce::jmin (SceneSidebar::kWidth, r.getWidth() / 2)).withTrimmedBottom (4));
+    }
     inspector.setBounds (r.removeFromBottom (236).reduced (8, 4));
     strips.setBounds (r);
     if (panelHost.isOpen())

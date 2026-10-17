@@ -170,7 +170,7 @@ public:
         addAndMakeVisible (help); styleLabel (help);
         help.setJustificationType (juce::Justification::topLeft);
         help.setText ("MIDI learn: right-click ANY control in the mixer and choose \"MIDI Learn\", "
-                      "or enable Learn Mode in the top bar and click controls one after another, moving a "
+                      "or enable MIDI Learn Mode in the Tools menu (wrench) and click controls one after another, moving a "
                       "hardware knob/fader/button after each click. Buttons toggle, faders/knobs track absolute "
                       "values (Pitch-Bend faders supported). The feedback output sends values back to "
                       "LEDs / motor faders.", juce::dontSendNotification);
@@ -180,6 +180,12 @@ public:
             ctx.midi.setFeedbackOutput (outBox.getSelectedId() <= 1 ? juce::String() : outBox.getText());
             loadLed(); // an APC mini selects its LED profile automatically
         };
+
+        addAndMakeVisible (faderTop);
+        faderTop.setToggleState (ctx.midi.getFaderTopAt0dB(), juce::dontSendNotification);
+        faderTop.onClick = [this] { ctx.midi.setFaderTopAt0dB (faderTop.getToggleState()); };
+        faderTop.setTooltip ("Applies to all channel, bus and send faders mapped to MIDI (now and when learned later). "
+                             "Single faders can still be calibrated with right-click > MIDI Range.");
 
         addAndMakeVisible (ledL); styleLabel (ledL);
         addAndMakeVisible (ledBox);
@@ -286,7 +292,9 @@ public:
         auto o = r.removeFromTop (30);
         outL.setBounds (o.removeFromLeft (200));
         outBox.setBounds (o.withWidth (juce::jmin (380, o.getWidth())));
-        r.removeFromTop (16);
+        r.removeFromTop (12);
+        faderTop.setBounds (r.removeFromTop (28).withTrimmedLeft (200).withWidth (juce::jmin (520, r.getWidth() - 200)));
+        r.removeFromTop (12);
         auto l = r.removeFromTop (30);
         ledL.setBounds (l.removeFromLeft (200));
         ledBox.setBounds (l.withWidth (juce::jmin (380, l.getWidth())));
@@ -320,6 +328,7 @@ private:
     juce::Label inL { {}, "MIDI inputs (controllers)" }, outL { {}, "Feedback output (LEDs, motor faders)" };
     juce::ComboBox outBox;
     juce::TextButton refresh { "Refresh" };
+    juce::ToggleButton faderTop { "MIDI faders stop at 0 dB (instead of +12 dB)" };
     juce::Label help;
     std::vector<std::unique_ptr<juce::ToggleButton>> toggles;
     juce::Label ledL { {}, "LED feedback profile" }, ledHelp;

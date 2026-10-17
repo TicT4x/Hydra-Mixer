@@ -6,237 +6,188 @@ namespace
 {
 /** Below this a switched-off stage counts as measuring noise (added to the rest instead of shown). */
 constexpr double kNoise = 0.02;
+/** Glide of the shown values towards the measured ones per tick (10 Hz): ~0.3 s to settle. */
+constexpr double kGlide = 0.35;
 
-const juce::Colour kDenoiser { theme::good };
-const juce::Colour kEq       { theme::accentIn };
-const juce::Colour kGate     { theme::solo };
-const juce::Colour kComp     { theme::accentHw };
-const juce::Colour kPlugin   { theme::warn };
-const juce::Colour kLimiter  { theme::accentVirt };
-const juce::Colour kStream   { 0xff5b7cff };
-const juce::Colour kRecorder { theme::mute };
-const juce::Colour kOther    { theme::textFaint };
-
-/** Kinds of components for the "By component" chart (plugins are summed up). */
-const std::vector<std::pair<juce::String, juce::Colour>>& kinds()
-{
-    static const std::vector<std::pair<juce::String, juce::Colour>> k {
-        { "Denoiser", kDenoiser }, { "EQ", kEq }, { "Gate", kGate }, { "Compressor", kComp }, { "Plugins", kPlugin },
-        { "Limiter", kLimiter }, { "Resampling", kStream }, { "Recorder", kRecorder }, { "Mixing + rest", kOther } };
-    return k;
-}
-
-juce::String kindOf (const juce::Colour& c)
-{
-    for (auto& [name, colour] : kinds()) if (colour == c) return name;
-    return "Mixing + rest";
-}
+const std::array<juce::String, DspView::numColumns> kColumnNames { "Denoiser", "EQ", "Gate", "Comp", "Plugins", "Limiter", "Rest" };
+const std::array<juce::Colour, DspView::numColumns> kColumnColours { theme::good, theme::accentIn, theme::solo, theme::accentHw,
+                                                                     theme::warn, theme::accentVirt, theme::textDim };
 
 juce::String percent (double v) { return juce::String (v, v < 10.0 ? 2 : 1) + " %"; }
 juce::String titled (const juce::String& code, const juce::String& name) { return name.isEmpty() || name == code ? code : code + "  " + name; }
 
 std::string key (const char* group, int index, int stage) { return std::string (group) + std::to_string (index) + "." + std::to_string (stage); }
 std::string pluginKey (const PluginSlot* s) { return "plug." + std::to_string ((uintptr_t) s); }
-
-/** Steady colour per channel for the "By channel" donut. */
-juce::Colour channelColour (int selectIndex)
-{
-    return selectIndex < 0 ? theme::textDim : theme::bandColour ((selectIndex * 5 + selectIndex / kMaxInputs) % 8);
-}
 } // namespace
 
 //==============================================================================
-/** One lane per channel: caption with the channel's load, then its stages in processing order. */
-class DspView::Chains final : public juce::Component, public juce::SettableTooltipClient
+/** The table: one row per channel in mixer order plus the engine row. */
+class DspView::Table final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
-    explicit Chains (UiContext& c) : ctx (c) {}
-    std::vector<Lane> lanes;
-    double maxStage = 0.0, maxLane = 0.0;
+    explicit Table (UiContext& c) : ctx (c) {}
+    std::vector<Row> rows;
+    double maxCell = 0.0, maxTotal = 0.0;
+    bool writeNumbers = true;   // numbers are rewritten ~3x per second, bars every tick
 
-    static constexpr int kPad = 14, kCaptionW = 176, kLaneH = 60, kBoxH = 48, kGap = 22;
+    static constexpr int kPad = 6, kNameW = 210, kTotalW = 180, kHeadH = 26, kRowH = 34, kMinColW = 74;
 
-    juce::Point<int> layout (int availableWidth)
-    {
-        size_t most = 1;
-        for (auto& l : lanes) most = juce::jmax (most, l.stages.size());
-        boxW = juce::jlimit (104, 150, (availableWidth - 2 * kPad - kCaptionW) / (int) most - kGap);
-        const int width = 2 * kPad + kCaptionW + (int) most * (boxW + kGap);
-        return { juce::jmax (availableWidth, width), 2 * kPad + juce::jmax (1, (int) lanes.size()) * kLaneH };
-    }
+    int neededWidth() const { return 2 * kPad + kNameW + kTotalW + numColumns * kMinColW; }
+    int neededHeight() const { return 2 * kPad + kHeadH + (int) rows.size() * kRowH; }
 
     void paint (juce::Graphics& g) override
     {
-        for (size_t i = 0; i < lanes.size(); ++i)
+        const int colW = columnWidth();
+        // Header
+        g.setFont (theme::font (11.0f, true));
+        g.setColour (theme::textDim);
+        g.drawText ("CHANNEL", juce::Rectangle<int> (kPad + 10, kPad, kNameW, kHeadH), juce::Justification::centredLeft);
+        g.drawText ("TOTAL", juce::Rectangle<int> (kPad + kNameW, kPad, kTotalW, kHeadH), juce::Justification::centredLeft);
+        for (int c = 0; c < numColumns; ++c)
         {
-            const auto& lane = lanes[i];
-            const auto row = laneRow ((int) i);
-            if (i % 2 == 0)
+            auto r = juce::Rectangle<int> (kPad + kNameW + kTotalW + c * colW, kPad, colW, kHeadH);
+            g.setColour (kColumnColours[(size_t) c]);
+            g.fillRoundedRectangle (r.removeFromLeft (3).reduced (0, 7).toFloat(), 1.5f);
+            g.setColour (theme::textDim);
+            g.drawText (kColumnNames[(size_t) c].toUpperCase(), r.withTrimmedLeft (6), juce::Justification::centredLeft);
+        }
+
+        for (size_t i = 0; i < rows.size(); ++i)
+        {
+            const auto& row = rows[i];
+            auto r = rowRect ((int) i);
+            if (i % 2 == 0 || row.engine)
             {
-                g.setColour (theme::panel.withAlpha (0.6f));
-                g.fillRoundedRectangle (row.toFloat(), 8.0f);
+                g.setColour (row.engine ? theme::panel2 : theme::panel.withAlpha (0.7f));
+                g.fillRoundedRectangle (r.toFloat(), 6.0f);
             }
-            // Caption: channel, its load and a bar relative to the heaviest channel
-            auto cap = row.withWidth (kCaptionW - 12).reduced (10, 8);
-            g.setColour (lane.colour);
-            g.setFont (theme::font (13.0f, true));
-            g.drawFittedText (lane.title, cap.removeFromTop (17), juce::Justification::centredLeft, 1, 0.75f);
-            auto line = cap.removeFromTop (18);
-            g.setColour (lane.total >= 25.0 ? theme::warn : theme::text);
-            g.setFont (theme::mono (13.0f));
-            g.drawText (lane.note.isNotEmpty() && lane.total <= 0.0 ? lane.note : percent (lane.total), line.removeFromLeft (72),
-                        juce::Justification::centredLeft);
-            auto bar = line.reduced (0, 5).toFloat();
-            g.setColour (theme::panel2);
-            g.fillRoundedRectangle (bar, 3.0f);
-            if (maxLane > 0.0 && lane.total > 0.0)
+            if ((int) i == hoverRow && row.selectIndex >= 0)
             {
-                g.setColour (lane.colour.withAlpha (0.8f));
-                g.fillRoundedRectangle (bar.withWidth (juce::jmax (3.0f, bar.getWidth() * (float) (lane.total / maxLane))), 3.0f);
+                g.setColour (theme::raised.withAlpha (0.5f));
+                g.fillRoundedRectangle (r.toFloat(), 6.0f);
             }
 
-            for (size_t k = 0; k < lane.stages.size(); ++k)
+            // Name
+            auto name = r.removeFromLeft (kNameW).reduced (10, 0);
+            g.setColour (row.colour);
+            g.setFont (theme::font (12.5f, true));
+            g.drawFittedText (row.title, name.removeFromTop (row.note.isEmpty() ? name.getHeight() : 20),
+                              row.note.isEmpty() ? juce::Justification::centredLeft : juce::Justification::bottomLeft, 1, 0.75f);
+            if (row.note.isNotEmpty())
             {
-                const auto box = stageBox ((int) i, (int) k);
-                if (k > 0) arrow (g, stageBox ((int) i, (int) k - 1).getRight(), box.getX(), box.getCentreY());
-                drawStage (g, lane.stages[k], box, lane.total);
+                g.setColour (theme::textFaint);
+                g.setFont (theme::font (10.5f));
+                g.drawText (row.note, name, juce::Justification::topLeft);
             }
+
+            // Total: number + bar relative to the heaviest row
+            auto total = r.removeFromLeft (kTotalW).reduced (4, 0);
+            g.setFont (theme::mono (12.5f));
+            g.setColour (row.totalShown >= 25.0 ? theme::warn : theme::text);
+            g.drawText (percent (row.totalLabel), total.removeFromLeft (68), juce::Justification::centredLeft);
+            auto bar = total.withSizeKeepingCentre (total.getWidth() - 8, 6).toFloat();
+            g.setColour (theme::bg);
+            g.fillRoundedRectangle (bar, 3.0f);
+            if (maxTotal > 0.0 && row.totalShown > 0.0)
+            {
+                g.setColour (row.colour.withAlpha (0.85f));
+                g.fillRoundedRectangle (bar.withWidth (juce::jmax (2.0f, bar.getWidth() * (float) juce::jmin (1.0, row.totalShown / maxTotal))), 3.0f);
+            }
+
+            if (row.engine)
+            {
+                g.setColour (theme::textDim);
+                g.setFont (theme::font (11.5f));
+                g.drawFittedText (row.engineText, r.reduced (8, 0), juce::Justification::centredLeft, 1, 0.8f);
+                continue;
+            }
+            for (int c = 0; c < numColumns; ++c)
+                drawCell (g, row, c, r.removeFromLeft (colW));
         }
     }
 
     void mouseMove (const juce::MouseEvent& e) override
     {
+        const int row = rowAt (e.getPosition());
+        if (row != hoverRow) { hoverRow = row; repaint(); }
         juce::String tip;
-        int lane = -1, stage = -1;
-        hit (e.getPosition(), lane, stage);
-        if (stage >= 0)
+        if (row >= 0)
         {
-            const auto& l = lanes[(size_t) lane];
-            const auto& s = l.stages[(size_t) stage];
-            tip << l.title << "  ·  " << s.label;
-            if (s.detail.isNotEmpty()) tip << "\n" << s.detail;
-            tip << "\n" << percent (s.load) << " of the audio period";
-            if (l.total > 0.0) tip << ",  " << juce::roundToInt (100.0 * s.load / l.total) << " % of this channel";
+            const auto& r = rows[(size_t) row];
+            const int col = columnAt (e.x);
+            if (r.engine) tip = r.engineText;
+            else if (col == plugins && r.pluginInfo.isNotEmpty()) tip = r.pluginInfo;
+            else if (col >= 0) tip = r.title + "  ·  " + kColumnNames[(size_t) col] + ":  " + (r.present[(size_t) col] ? percent (r.shown[(size_t) col]) : juce::String ("off"));
+            else tip = r.title + ":  " + percent (r.totalShown) + " of the audio period";
+            if (r.selectIndex >= 0) tip << "\nclick: show it in the mixer";
         }
-        else if (lane >= 0)
-            tip << lanes[(size_t) lane].title << ": " << percent (lanes[(size_t) lane].total) << " of the audio period";
-        if (tip.isNotEmpty() && selectFor (lane, stage) >= 0) tip << "\nclick: show it in the mixer";
         setTooltip (tip);
-        setMouseCursor (selectFor (lane, stage) >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+        setMouseCursor (row >= 0 && rows[(size_t) row].selectIndex >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
     }
+
+    void mouseExit (const juce::MouseEvent&) override { hoverRow = -1; repaint(); }
 
     void mouseUp (const juce::MouseEvent& e) override
     {
-        int lane = -1, stage = -1;
-        hit (e.getPosition(), lane, stage);
-        if (const int sel = selectFor (lane, stage); sel >= 0 && e.mouseWasClicked() && ctx.select) ctx.select (sel);
+        const int row = rowAt (e.getPosition());
+        if (row >= 0 && e.mouseWasClicked() && rows[(size_t) row].selectIndex >= 0 && ctx.select)
+            ctx.select (rows[(size_t) row].selectIndex);
     }
 
 private:
-    juce::Rectangle<int> laneRow (int i) const { return { kPad, kPad + i * kLaneH, getWidth() - 2 * kPad, kLaneH - 4 }; }
-    juce::Rectangle<int> stageBox (int i, int k) const
+    int columnWidth() const { return juce::jmax (kMinColW, (getWidth() - 2 * kPad - kNameW - kTotalW) / numColumns); }
+    juce::Rectangle<int> rowRect (int i) const { return { kPad, kPad + kHeadH + i * kRowH, getWidth() - 2 * kPad, kRowH - 3 }; }
+    int rowAt (juce::Point<int> p) const
     {
-        return { kPad + kCaptionW + k * (boxW + kGap), kPad + i * kLaneH + (kLaneH - 4 - kBoxH) / 2, boxW, kBoxH };
+        for (size_t i = 0; i < rows.size(); ++i) if (rowRect ((int) i).contains (p)) return (int) i;
+        return -1;
+    }
+    int columnAt (int x) const
+    {
+        const int x0 = kPad + kNameW + kTotalW;
+        return x < x0 ? -1 : juce::jmin ((int) numColumns - 1, (x - x0) / columnWidth());
     }
 
-    void hit (juce::Point<int> p, int& lane, int& stage) const
+    void drawCell (juce::Graphics& g, const Row& row, int c, juce::Rectangle<int> r) const
     {
-        for (size_t i = 0; i < lanes.size(); ++i)
-            if (laneRow ((int) i).contains (p))
-            {
-                lane = (int) i;
-                for (size_t k = 0; k < lanes[i].stages.size(); ++k)
-                    if (stageBox ((int) i, (int) k).contains (p)) stage = (int) k;
-            }
-    }
-
-    int selectFor (int lane, int stage) const
-    {
-        if (lane < 0) return -1;
-        const auto& l = lanes[(size_t) lane];
-        if (stage >= 0 && l.stages[(size_t) stage].selectIndex >= 0) return l.stages[(size_t) stage].selectIndex;
-        return l.selectIndex;
-    }
-
-    static void arrow (juce::Graphics& g, int x0, int x1, int y)
-    {
-        g.setColour (theme::textFaint.withAlpha (0.7f));
-        g.drawLine ((float) x0 + 2.0f, (float) y, (float) x1 - 3.0f, (float) y, 1.2f);
-        juce::Path p;
-        p.addTriangle ((float) x1 - 7.0f, (float) y - 4.0f, (float) x1 - 7.0f, (float) y + 4.0f, (float) x1 - 2.0f, (float) y);
-        g.fillPath (p);
-    }
-
-    /** Box of one stage, tinted by how expensive it is compared to the most expensive stage. */
-    void drawStage (juce::Graphics& g, const Stage& s, juce::Rectangle<int> r, double laneTotal) const
-    {
-        const float heat = maxStage > 0.0 ? (float) juce::jlimit (0.0, 1.0, s.load / maxStage) : 0.0f;
-        const bool idle = s.load < 0.005;
-        auto f = r.toFloat();
-        g.setColour (theme::panel2.interpolatedWith (s.colour, 0.32f * heat));
-        g.fillRoundedRectangle (f, 7.0f);
-        g.setColour (s.rank > 0 ? theme::warn : idle ? theme::outline : s.colour.withAlpha (0.25f + 0.55f * heat));
-        g.drawRoundedRectangle (f.reduced (0.5f), 7.0f, s.rank > 0 ? 1.6f : 1.0f);
-        g.setColour (idle ? s.colour.withAlpha (0.35f) : s.colour);
-        g.fillRoundedRectangle (f.removeFromLeft (4.0f).reduced (0.0f, 8.0f), 2.0f);
-
-        auto a = r.reduced (11, 4);
-        if (s.rank > 0)   // #1..#3 of all stages
+        auto f = r.toFloat().reduced (3.0f, 4.0f);
+        if (! row.present[(size_t) c])
         {
-            auto tag = a.removeFromRight (24).removeFromTop (16).toFloat();
-            g.setColour (theme::warn);
-            g.fillRoundedRectangle (tag, 4.0f);
-            g.setColour (theme::bg);
-            g.setFont (theme::font (10.5f, true));
-            g.drawText ("#" + juce::String (s.rank), tag, juce::Justification::centred);
-            a.removeFromRight (2);
+            g.setColour (theme::textFaint.withAlpha (0.6f));
+            g.setFont (theme::font (11.5f));
+            g.drawText ("-", f, juce::Justification::centred);
+            return;
         }
-        g.setColour (idle ? theme::textDim : theme::text);
-        g.setFont (theme::font (11.5f, true));
-        g.drawFittedText (s.label, a.removeFromTop (16), juce::Justification::centredLeft, 1, 0.75f);
-        a = r.reduced (11, 4).withTrimmedTop (16);
-        g.setColour (idle ? theme::textFaint : s.load >= 10.0 ? theme::warn : theme::text);
-        g.setFont (theme::mono (13.0f));
-        g.drawText (percent (s.load), a.removeFromTop (16), juce::Justification::centredLeft);
-        g.setColour (theme::textFaint);
-        g.setFont (theme::font (10.5f));
-        g.drawFittedText (laneTotal > 0.0 ? juce::String (juce::roundToInt (100.0 * s.load / laneTotal)) + " % of channel" : juce::String(),
-                          a, juce::Justification::centredLeft, 1, 0.8f);
+        const double v = row.shown[(size_t) c];
+        const float heat = maxCell > 0.0 ? (float) juce::jlimit (0.0, 1.0, v / maxCell) : 0.0f;
+        const auto colour = kColumnColours[(size_t) c];
+        g.setColour (theme::panel2.interpolatedWith (colour, 0.08f + 0.40f * heat));
+        g.fillRoundedRectangle (f, 5.0f);
+        g.setColour (colour.withAlpha (0.2f + 0.6f * heat));
+        g.drawRoundedRectangle (f, 5.0f, 1.0f);
+        const double shownValue = row.label[(size_t) c];
+        g.setColour (shownValue >= 10.0 ? theme::warn : shownValue < 0.005 ? theme::textFaint : theme::text);
+        g.setFont (theme::mono (12.0f));
+        g.drawText (percent (shownValue), f, juce::Justification::centred);
     }
 
     UiContext& ctx;
-    int boxW = 130;
+    int hoverRow = -1;
 };
 
 //==============================================================================
-DspView::DspView (UiContext& c) : ctx (c), top (c), byChannel (c), byKind (c)
+DspView::DspView (UiContext& c) : ctx (c)
 {
     ctx.engine.profile.users.fetch_add (1);   // the audio thread measures from now on
-    chains = std::make_unique<Chains> (c);
-
-    for (auto* chart : { &top, &byChannel, &byKind })
-    {
-        chart->format = [] (double v) { return percent (v); };
-        chart->showShare = false;
-        chart->steady = true;
-        chart->centreCaption = "of period";
-        chart->emptyText = "Measuring...";
-        addAndMakeVisible (chart);
-    }
-    top.caption = "Top consumers";
-    top.subtitle = "component in channel";
-    top.donut = false;
-    byChannel.caption = "By channel";
-    byKind.caption = "By component";
-
-    viewport.setViewedComponent (chains.get(), false);
+    table = std::make_unique<Table> (c);
+    viewport.setViewedComponent (table.get(), false);
     viewport.setScrollBarsShown (false, false, true, true);
     viewport.setScrollBarThickness (10);
     addAndMakeVisible (viewport);
     history.push_back (read());
-    refresh();
-    startTimerHz (4);
-    setSize (1100, 700);
+    measure();
+    startTimerHz (10);
+    setSize (1100, 640);
 }
 
 DspView::~DspView()
@@ -245,7 +196,7 @@ DspView::~DspView()
     ctx.engine.profile.users.fetch_sub (1);
 }
 
-void DspView::timerCallback() { refresh(); }
+void DspView::timerCallback() { measure(); }
 
 DspView::Reading DspView::read() const
 {
@@ -262,12 +213,14 @@ DspView::Reading DspView::read() const
     };
     for (int i = 0; i < kMaxInputs; ++i)
     {
+        if (! e.isInputActive (i)) continue;
         const auto& s = e.inputs[(size_t) i];
         for (int st = 0; st < DspTimes::numStages; ++st) r.ticks[key ("in", i, st)] = s.dspTimes.get ((DspTimes::Stage) st);
         chain (s.plugins);
     }
     for (int b = 0; b < kMaxBuses; ++b)
     {
+        if (! e.isBusActive (b)) continue;
         const auto& bus = e.buses[(size_t) b];
         for (int st = 0; st < DspTimes::numStages; ++st) r.ticks[key ("bus", b, st)] = bus.dspTimes.get ((DspTimes::Stage) st);
         chain (bus.plugins);
@@ -277,7 +230,7 @@ DspView::Reading DspView::read() const
     return r;
 }
 
-void DspView::refresh()
+void DspView::measure()
 {
     auto& e = ctx.engine;
     history.push_back (read());
@@ -286,8 +239,7 @@ void DspView::refresh()
         history.pop_front();
     const auto& now = history.back();
     const auto& base = history.front();
-    peakLoad = 0.5 * peakLoad;
-    peakLoad = juce::jmax (peakLoad, (double) e.profile.peak.exchange (0.0f) * 100.0);
+    peakLoad = juce::jmax (peakLoad * 0.93, (double) e.profile.peak.exchange (0.0f) * 100.0);
 
     const double frames = (double) (now.frames - base.frames);
     const double budget = frames / juce::jmax (1.0, e.getSampleRate()) * e.getTicksPerSecond();   // ticks available
@@ -300,191 +252,213 @@ void DspView::refresh()
         return pct (it->second, old != base.ticks.end() ? old->second : 0);
     };
 
-    // Plugins of a chain; returns the chain's time outside the plugins (buffer copies around them).
-    auto addPlugins = [&] (std::vector<Stage>& stages, const PluginChain& chain, double stageTotal, const Param& bypassAll)
+    // Previous shown values by key: the new rows glide from there.
+    std::map<juce::String, const Row*> previous;
+    for (auto& r : table->rows) previous[r.key] = &r;
+
+    std::vector<Row> rows;
+    double accounted = 0.0;
+    auto finish = [&] (Row& r)
+    {
+        for (int c = 0; c < numColumns; ++c) r.totalTarget += r.target[(size_t) c];
+        accounted += r.totalTarget;
+    };
+    auto pluginsOf = [&] (Row& r, const PluginChain& chain, double stageTotal, const Param& bypassAll)
     {
         double inPlugins = 0.0;
+        juce::StringArray lines;
         for (int k = 0; k < chain.size(); ++k)
             if (auto* s = chain.getSlot (k))
             {
                 const double v = delta (pluginKey (s));
                 inPlugins += v;
-                if (v > kNoise || (! s->bypassed && ! bypassAll.isOn()))
-                    stages.push_back ({ s->instance->getName(), "VST3 plugin", v, kPlugin });
+                lines.add (s->instance->getName() + ":  " + percent (v) + (s->bypassed || bypassAll.isOn() ? "  (bypassed)" : ""));
             }
-        return juce::jmax (0.0, stageTotal - inPlugins);
+        r.present[plugins] = chain.size() > 0;
+        r.target[plugins] = inPlugins;
+        r.pluginInfo = lines.isEmpty() ? juce::String() : r.title + "  ·  plugins\n" + lines.joinIntoString ("\n");
+        return juce::jmax (0.0, stageTotal - inPlugins);   // copies around the plugins
+    };
+    // A stage that is off still shows its time if it is above measuring noise.
+    auto stage = [] (Row& r, Column c, bool on, double v, double& other)
+    {
+        if (on || v > kNoise) { r.present[(size_t) c] = true; r.target[(size_t) c] = v; }
+        else other += v;
     };
 
-    std::vector<Lane> lanes;
-    double accounted = 0.0;
     for (int i = 0; i < kMaxInputs; ++i)
     {
         if (! e.isInputActive (i)) continue;
         const auto& s = e.inputs[(size_t) i];
-        auto st = [&] (DspTimes::Stage stage) { return delta (key ("in", i, stage)); };
-        Lane l;
-        l.key = "in" + juce::String (i);
-        l.title = titled ("IN " + juce::String (i + 1), s.name);
-        l.colour = theme::accentIn;
-        l.selectIndex = i;
+        auto st = [&] (DspTimes::Stage x) { return delta (key ("in", i, x)); };
+        Row r;
+        r.key = "in" + juce::String (i);
+        r.title = titled ("IN " + juce::String (i + 1), s.name);
+        r.colour = theme::accentIn;
+        r.selectIndex = i;
         double other = st (DspTimes::other);
-        if (s.dnOn->isOn() || st (DspTimes::denoiser) > kNoise)
-            l.stages.push_back ({ "Denoiser", "RNNoise, " + s.dnMode->choices[juce::roundToInt (s.dnMode->get())] + " mode",
-                                  st (DspTimes::denoiser), kDenoiser });
-        else other += st (DspTimes::denoiser);
-        if (s.eq.on->isOn() || st (DspTimes::eq) > kNoise) l.stages.push_back ({ "EQ", "8-band EQ", st (DspTimes::eq), kEq });
-        else other += st (DspTimes::eq);
-        if (s.gateOn->isOn()) l.stages.push_back ({ "Gate", {}, st (DspTimes::gate), kGate });
-        else other += st (DspTimes::gate);
-        if (s.compOn->isOn()) l.stages.push_back ({ "Compressor", {}, st (DspTimes::comp), kComp });
-        else other += st (DspTimes::comp);
-        other += addPlugins (l.stages, s.plugins, st (DspTimes::plugins), *s.fxBypass);
-        l.stages.push_back ({ "Gain, pan, routing", "trim, phase, mono, fader, pan, sends, meters", other, kOther });
-        if (s.source.kind == IoTarget::Kind::None) l.note = "no source";
-        lanes.push_back (std::move (l));
+        stage (r, denoiser, s.dnOn->isOn(), st (DspTimes::denoiser), other);
+        stage (r, eq, s.eq.on->isOn(), st (DspTimes::eq), other);
+        stage (r, gate, s.gateOn->isOn(), st (DspTimes::gate), other);
+        stage (r, comp, s.compOn->isOn(), st (DspTimes::comp), other);
+        other += pluginsOf (r, s.plugins, st (DspTimes::plugins), *s.fxBypass);
+        r.present[rest] = true;
+        r.target[rest] = other;
+        if (s.source.kind == IoTarget::Kind::None) r.note = "no source";
+        finish (r);
+        rows.push_back (std::move (r));
     }
     for (int b = 0; b < kMaxBuses; ++b)
     {
         if (! e.isBusActive (b)) continue;
         const auto& bus = e.buses[(size_t) b];
-        auto st = [&] (DspTimes::Stage stage) { return delta (key ("bus", b, stage)); };
-        Lane l;
-        l.key = "bus" + juce::String (b);
-        l.title = titled (busCode (b), bus.name);
-        l.colour = theme::busColour (b);
-        l.selectIndex = busSelectIndex (b);
+        auto st = [&] (DspTimes::Stage x) { return delta (key ("bus", b, x)); };
+        Row r;
+        r.key = "bus" + juce::String (b);
+        r.title = titled (busCode (b), bus.name);
+        r.colour = theme::busColour (b);
+        r.selectIndex = busSelectIndex (b);
         double other = st (DspTimes::other);
-        if (bus.eq.on->isOn() || st (DspTimes::eq) > kNoise) l.stages.push_back ({ "EQ", "8-band EQ", st (DspTimes::eq), kEq });
-        else other += st (DspTimes::eq);
-        other += addPlugins (l.stages, bus.plugins, st (DspTimes::plugins), *bus.fxBypass);
-        if (bus.limOn->isOn() || st (DspTimes::limiter) > kNoise) l.stages.push_back ({ "Limiter", {}, st (DspTimes::limiter), kLimiter });
-        else other += st (DspTimes::limiter);
-        l.stages.push_back ({ "Fader, mono, meters", {}, other, kOther });
-        if (bus.output.kind == IoTarget::Kind::None) l.note = "no output";
-        lanes.push_back (std::move (l));
+        stage (r, eq, bus.eq.on->isOn(), st (DspTimes::eq), other);
+        other += pluginsOf (r, bus.plugins, st (DspTimes::plugins), *bus.fxBypass);
+        stage (r, limiter, bus.limOn->isOn(), st (DspTimes::limiter), other);
+        r.present[rest] = true;
+        r.target[rest] = other;
+        if (bus.output.kind == IoTarget::Kind::None) r.note = "no output";
+        finish (r);
+        rows.push_back (std::move (r));
     }
-    for (auto& l : lanes)
-        for (auto& s : l.stages) { l.total += s.load; accounted += s.load; }
 
     // The engine's own work: resampling of other devices, recorder, mixing (= total minus the channels)
-    totalLoad = pct (now.total, base.total);
+    totalTarget = pct (now.total, base.total);
     {
-        Lane l;
-        l.key = "engine";
-        l.title = "Engine";
-        l.colour = theme::textDim;
-        std::vector<Stage> streams;
+        Row r;
+        r.key = "engine";
+        r.title = "Engine";
+        r.note = "resampling, recorder, mixing";
+        r.colour = theme::textDim;
+        r.engine = true;
+        double resampling = 0.0;
+        juce::StringArray parts;
         for (auto& [k, ticks] : now.ticks)
             if (k.rfind ("stream.", 0) == 0)
-                streams.push_back ({ "Resampling", juce::String (k.substr (7)) + " (resampling + drift control)", delta (k), kStream });
-        std::sort (streams.begin(), streams.end(), [] (const Stage& a, const Stage& b) { return a.detail < b.detail; });
-        for (auto& s : streams) { s.label = s.detail.upToFirstOccurrenceOf (" (", false, false); l.stages.push_back (s); }
+            {
+                const double v = delta (k);
+                resampling += v;
+                parts.add (juce::String (k.substr (7)) + " " + percent (v));
+            }
         const double recorder = pct (now.recorder, base.recorder);
-        if (recorder > kNoise || e.recorder.isRecording() || e.recorder.isPlaying())
-            l.stages.push_back ({ "Recorder", "recording / playback", recorder, kRecorder, kRecorderSelect });
-        double engineOwn = 0.0;
-        for (auto& s : l.stages) engineOwn += s.load;
-        l.stages.push_back ({ "Mixing, bus sums", "summing the buses, writing the outputs",
-                              juce::jmax (0.0, totalLoad - accounted - engineOwn), kOther });
-        for (auto& s : l.stages) l.total += s.load;
-        lanes.push_back (std::move (l));
+        const double mixing = juce::jmax (0.0, totalTarget - accounted - resampling - recorder);
+        r.totalTarget = resampling + recorder + mixing;
+        r.engineText = "Resampling " + percent (resampling) + (parts.isEmpty() ? juce::String() : "  (" + parts.joinIntoString (",  ") + ")")
+                     + "     Recorder " + percent (recorder) + "     Mixing, bus sums " + percent (mixing);
+        rows.push_back (std::move (r));
     }
-    const double shownTotal = juce::jmax (totalLoad, accounted);
 
-    // Heaviest channel first (steady order), the three biggest stages of all tagged
-    rankSteady (lanes, laneOrder, [] (const Lane& l) { return l.key; }, [] (const Lane& l) { return l.total; }, shownTotal * 0.002);
-    std::vector<Stage*> all;
-    for (auto& l : lanes) for (auto& s : l.stages) all.push_back (&s);
-    std::stable_sort (all.begin(), all.end(), [] (const Stage* a, const Stage* b) { return a->load > b->load; });
-    for (size_t k = 0; k < juce::jmin ((size_t) 3, all.size()); ++k)
-        if (all[k]->load >= 0.01) all[k]->rank = (int) k + 1;
-
-    // Overview charts
-    std::vector<ShareChart::Part> topParts, channelParts, kindParts;
-    std::map<juce::String, double> perKind;
-    for (auto& l : lanes)
+    // Glide the shown values towards the measurement (no jumps); the order is the mixer's and never changes.
+    // Numbers are rewritten only every third tick, so they stay readable; bars and tints move every tick.
+    const bool writeText = (tick++ % 3) == 0;
+    double maxCell = 0.0, maxTotal = 0.0;
+    for (auto& r : rows)
     {
-        for (size_t k = 0; k < l.stages.size(); ++k)
+        const auto it = previous.find (r.key);
+        const Row* old = it != previous.end() ? it->second : nullptr;
+        auto glide = [] (double from, double to) { return from + kGlide * (to - from); };
+        r.totalShown = old != nullptr ? glide (old->totalShown, r.totalTarget) : r.totalTarget;
+        for (int c = 0; c < numColumns; ++c)
         {
-            const auto& s = l.stages[k];
-            const int sel = s.selectIndex >= 0 ? s.selectIndex : l.selectIndex;
-            topParts.push_back ({ l.key + "/" + juce::String ((int) k) + s.label, l.title + "  ·  " + s.label, s.detail, s.load, s.colour, sel });
-            perKind[kindOf (s.colour)] += s.load;
+            r.shown[(size_t) c] = old != nullptr ? glide (old->shown[(size_t) c], r.target[(size_t) c]) : r.target[(size_t) c];
+            if (r.present[(size_t) c] && ! r.engine) maxCell = juce::jmax (maxCell, r.shown[(size_t) c]);
         }
-        channelParts.push_back ({ l.key, l.title, l.note, l.total, channelColour (l.selectIndex), l.selectIndex });
+        const bool write = writeText || old == nullptr;
+        r.label = write ? r.shown : old->label;
+        r.totalLabel = write ? r.totalShown : old->totalLabel;
+        if (! write) { r.engineText = old->engineText; r.pluginInfo = old->pluginInfo; }
+        maxTotal = juce::jmax (maxTotal, r.totalShown);
     }
-    for (auto& [name, colour] : kinds())
-        kindParts.push_back ({ name, name, {}, perKind[name], colour });
+    totalShown += kGlide * (totalTarget - totalShown);
+    if (writeText) totalLabel = totalShown;
 
-    juce::String text;
-    if (auto* d = e.getMasterDevice(); d != nullptr && frames > 0.0)
+    if (writeText)
     {
-        const double blockMs = 1000.0 * d->getCurrentBufferSizeSamples() / juce::jmax (1.0, e.getSampleRate());
-        text << "Total " << percent (totalLoad) << " of the audio period (average over 1 s)  ·  peak " << percent (peakLoad)
-             << "  ·  " << d->getCurrentBufferSizeSamples() << " samples at " << (int) e.getSampleRate() << " Hz = "
-             << juce::String (blockMs, 2) << " ms per block";
-    }
-    else
-        text = e.getMasterDevice() == nullptr ? "Audio engine stopped - open Settings > Audio Engine." : "Measuring...";
+        std::vector<std::tuple<double, juce::String>> cells;
+        for (auto& r : rows)
+            if (! r.engine)
+                for (int c = 0; c < numColumns; ++c)
+                    if (r.present[(size_t) c] && c != rest)
+                        cells.emplace_back (r.shown[(size_t) c], r.title + "  ·  " + kColumnNames[(size_t) c]);
+        std::sort (cells.begin(), cells.end(), [] (auto& x, auto& y) { return std::get<0> (x) > std::get<0> (y); });
+        juce::StringArray top;
+        for (size_t k = 0; k < juce::jmin ((size_t) 3, cells.size()); ++k)
+            if (std::get<0> (cells[k]) >= 0.01)
+                top.add ("#" + juce::String ((int) k + 1) + "  " + std::get<1> (cells[k]) + "  " + percent (std::get<0> (cells[k])));
+        hotspots = top.isEmpty() ? juce::String ("Nothing measurable yet.") : top.joinIntoString ("        ");
 
-    // Repaint only when something visible changed (values rounded as shown).
-    juce::String sig = text;
-    for (auto& l : lanes)
-    {
-        sig << l.key << l.title << l.note << ':';
-        for (auto& s : l.stages) sig << s.label << '=' << juce::String (s.load, 2) << '#' << s.rank << ';';
+        if (auto* d = e.getMasterDevice(); d != nullptr && frames > 0.0)
+        {
+            const double blockMs = 1000.0 * d->getCurrentBufferSizeSamples() / juce::jmax (1.0, e.getSampleRate());
+            summary = "Share of each audio block's time, averaged over 1 s  ·  " + juce::String (d->getCurrentBufferSizeSamples())
+                    + " samples at " + juce::String ((int) e.getSampleRate()) + " Hz = " + juce::String (blockMs, 2) + " ms per block";
+        }
+        else
+            summary = e.getMasterDevice() == nullptr ? "Audio engine stopped - open Settings > Audio Engine." : "Measuring...";
     }
-    if (sig == shownSignature) return;
-    shownSignature = sig;
-    summary = text;
-
-    top.setParts (std::move (topParts), shownTotal);
-    byChannel.setParts (std::move (channelParts), shownTotal);
-    byKind.setParts (std::move (kindParts), shownTotal);
-    chains->maxStage = all.empty() ? 0.0 : all.front()->load;
-    chains->maxLane = 0.0;
-    for (auto& l : lanes) chains->maxLane = juce::jmax (chains->maxLane, l.total);
-    chains->lanes = std::move (lanes);
-    resized();
-    chains->repaint();
-    repaint (getLocalBounds().withHeight (68));
+    table->rows = std::move (rows);
+    table->maxCell = maxCell;
+    table->maxTotal = maxTotal;
+    if ((int) table->rows.size() * Table::kRowH + 2 * Table::kPad + Table::kHeadH != table->getHeight()) resized();
+    table->repaint();
+    repaint (getLocalBounds().withHeight (Table::kPad + 140));
 }
 
 void DspView::paint (juce::Graphics& g)
 {
     g.fillAll (theme::bg);
-    auto head = getLocalBounds().reduced (18, 0).removeFromTop (64);
+    auto head = getLocalBounds().reduced (18, 0);
     g.setColour (theme::text);
     g.setFont (theme::font (15.0f, true));
     g.drawText ("DSP Load", head.removeFromTop (36).withTrimmedTop (8), juce::Justification::centredLeft);
-    g.setColour (totalLoad >= 70.0 ? theme::warn : theme::textDim);
+    g.setColour (theme::textDim);
     g.setFont (theme::font (12.0f));
     g.drawFittedText (summary, head.removeFromTop (20), juce::Justification::centredLeft, 1, 0.8f);
+    head.removeFromTop (10);
 
-    drawLegend (g, getLocalBounds().reduced (18, 0).removeFromTop (36).withTrimmedTop (8),
-                { { "Denoiser", kDenoiser }, { "EQ", kEq }, { "Gate", kGate }, { "Comp", kComp }, { "Plugin", kPlugin },
-                  { "Limiter", kLimiter }, { "Resampling", kStream }, { "Recorder", kRecorder }, { "Other", kOther } });
+    // Total: big number + bar with the recent peak
+    auto total = head.removeFromTop (34);
+    g.setFont (theme::mono (22.0f));
+    g.setColour (totalShown >= 70.0 ? theme::mute : totalShown >= 40.0 ? theme::warn : theme::text);
+    g.drawText (percent (totalLabel), total.removeFromLeft (130), juce::Justification::centredLeft);
+    auto bar = total.removeFromLeft (juce::jmin (520, total.getWidth() - 140)).withSizeKeepingCentre (juce::jmin (520, total.getWidth() - 140), 10).toFloat();
+    g.setColour (theme::panel2);
+    g.fillRoundedRectangle (bar, 5.0f);
+    const auto load = (float) juce::jlimit (0.0, 1.0, totalShown / 100.0);
+    g.setColour (load < 0.4f ? theme::good : load < 0.7f ? theme::solo : theme::mute);
+    g.fillRoundedRectangle (bar.withWidth (juce::jmax (3.0f, bar.getWidth() * load)), 5.0f);
+    const float px = bar.getX() + bar.getWidth() * (float) juce::jlimit (0.0, 1.0, peakLoad / 100.0);
+    g.setColour (theme::text);
+    g.fillRect (px - 1.0f, bar.getY() - 4.0f, 2.0f, bar.getHeight() + 8.0f);
+    g.setColour (theme::textDim);
+    g.setFont (theme::font (12.0f));
+    g.drawText ("peak " + percent (peakLoad), total.withTrimmedLeft (14), juce::Justification::centredLeft);
+    head.removeFromTop (8);
 
-    // Separator between the overview and the channel lanes
+    g.setColour (theme::textDim);
+    g.setFont (theme::font (11.0f, true));
+    g.drawText ("BIGGEST CONSUMERS", head.removeFromTop (16), juce::Justification::centredLeft);
+    g.setColour (theme::text);
+    g.setFont (theme::font (12.5f));
+    g.drawFittedText (hotspots, head.removeFromTop (22), juce::Justification::centredLeft, 1, 0.8f);
+
     g.setColour (theme::outline.withAlpha (0.7f));
     g.fillRect (18, viewport.getY() - 7, getWidth() - 36, 1);
 }
 
 void DspView::resized()
 {
-    auto r = getLocalBounds().withTrimmedTop (70);
-    auto overview = r.removeFromTop (juce::jlimit (150, 210, getHeight() * 30 / 100)).reduced (18, 0);
-    const int w = overview.getWidth();
-    top.setBounds (overview.removeFromLeft (w * 40 / 100));
-    overview.removeFromLeft (24);
-    byChannel.setBounds (overview.removeFromLeft ((overview.getWidth() - 24) / 2));
-    overview.removeFromLeft (24);
-    byKind.setBounds (overview);
-    r.removeFromTop (14);
-
+    auto r = getLocalBounds().withTrimmedTop (36 + 20 + 10 + 34 + 8 + 16 + 22 + 16).reduced (12, 0).withTrimmedBottom (8);
     viewport.setBounds (r);
-    const auto size = chains->layout (r.getWidth());
-    const auto fitted = chains->layout (r.getWidth() - (size.y > r.getHeight() ? viewport.getScrollBarThickness() : 0));
-    chains->setSize (fitted.x, fitted.y);
+    const bool scrollsDown = table->neededHeight() > r.getHeight();
+    table->setSize (juce::jmax (table->neededWidth(), r.getWidth() - (scrollsDown ? viewport.getScrollBarThickness() : 0)),
+                    table->neededHeight());
 }
 } // namespace hydra

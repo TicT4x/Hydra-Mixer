@@ -56,95 +56,130 @@ juce::String LatencyView::Flow::signature() const
 }
 
 //==============================================================================
-/** Row of buttons, one per output in use; the picked one is filled. */
-class LatencyView::OutputPicker final : public juce::Component
+/** Input x output matrix: the total latency of every routed path; click a cell to show that path. */
+class LatencyView::Matrix final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
-    explicit OutputPicker (UiContext& c) : ctx (c) {}
-    std::function<void (int)> onPick;
-    int current = -1;
+    explicit Matrix (UiContext& c) : ctx (c) {}
+    std::function<void (int input, int bus)> onPick;
 
-    void update (int picked)
-    {
-        std::vector<Item> next;
-        for (int b = 0; b < kMaxBuses; ++b)
-            if (ctx.engine.isBusActive (b))
-                next.push_back ({ b, busTitle (ctx.engine, b), ctx.engine.buses[(size_t) b].output.kind != IoTarget::Kind::None, {} });
-        if (picked == current && next.size() == items.size()
-            && std::equal (next.begin(), next.end(), items.begin(), [] (const Item& a, const Item& b)
-                           { return a.bus == b.bus && a.text == b.text && a.hasOutput == b.hasOutput; }))
-            return;
-        items = std::move (next);
-        current = picked;
-        resized();
-        repaint();
-    }
+    std::vector<int> inputs, buses;
+    std::vector<juce::String> inTitles;
+    std::vector<std::vector<Cell>> cells;   // [row][column]
+    double longest = 0.0;
+    int selIn = -1, selBus = -1;
 
-    void resized() override
+    static constexpr int kHeadW = 190, kColW = 96, kRowH = 30, kHeadH = 30, kPad = 4;
+
+    juce::Point<int> needed() const
     {
-        // Buttons as wide as their text (up to 180 px); squeezed evenly when they do not fit.
-        auto r = getLocalBounds();
-        r.removeFromLeft (labelW);
-        const auto f = theme::font (12.5f, true);
-        int wanted = 0;
-        for (auto& it : items) wanted += juce::jlimit (64, 180, juce::GlyphArrangement::getStringWidthInt (f, it.text) + 24) + 6;
-        const float squeeze = wanted > r.getWidth() ? (float) r.getWidth() / (float) wanted : 1.0f;
-        float x = (float) r.getX();
-        for (auto& it : items)
-        {
-            const float w = (float) (juce::jlimit (64, 180, juce::GlyphArrangement::getStringWidthInt (f, it.text) + 24) + 6) * squeeze;
-            it.area = juce::Rectangle<float> (x, (float) r.getY(), w - 6.0f, (float) r.getHeight()).toNearestInt();
-            x += w;
-        }
+        return { 2 * kPad + kHeadW + (int) buses.size() * kColW, 2 * kPad + kHeadH + juce::jmax (1, (int) inputs.size()) * kRowH };
     }
 
     void paint (juce::Graphics& g) override
     {
-        g.setColour (theme::textDim);
-        g.setFont (theme::font (12.5f));
-        g.drawText ("Output", getLocalBounds().withWidth (labelW - 8), juce::Justification::centredLeft);
-        for (auto& it : items)
+        // Column heads: the outputs
+        for (size_t c = 0; c < buses.size(); ++c)
         {
-            const bool on = it.bus == current, over = it.bus == hover;
-            const auto colour = theme::busColour (it.bus);
-            auto r = it.area.toFloat().reduced (0.5f);
-            g.setColour (on ? colour : over ? theme::raised.brighter (0.08f) : theme::panel2);
-            g.fillRoundedRectangle (r, 6.0f);
-            if (! on)
-            {
-                g.setColour (theme::outline);
-                g.drawRoundedRectangle (r, 6.0f, 1.0f);
-            }
-            g.setColour (on ? theme::bg : it.hasOutput ? theme::text : theme::textFaint);
+            const auto r = cellRect (-1, (int) c);
+            const bool sel = buses[c] == selBus;
+            g.setColour (theme::busColour (buses[c]).withAlpha (sel ? 1.0f : 0.75f));
             g.setFont (theme::font (12.5f, true));
-            g.drawFittedText (it.text, it.area.reduced (8, 0), juce::Justification::centred, 1, 0.75f);
+            g.drawFittedText (titled (busCode (buses[c]), ctx.engine.buses[(size_t) buses[c]].name), r.reduced (4, 0),
+                              juce::Justification::centred, 1, 0.7f);
+        }
+        if (inputs.empty())
+        {
+            g.setColour (theme::textDim);
+            g.setFont (theme::font (12.5f));
+            g.drawText ("No input in use.", cellRect (0, -1).withWidth (300), juce::Justification::centredLeft);
+        }
+        for (size_t row = 0; row < inputs.size(); ++row)
+        {
+            const auto head = cellRect ((int) row, -1);
+            if (row % 2 == 0)
+            {
+                g.setColour (theme::panel.withAlpha (0.7f));
+                g.fillRoundedRectangle (head.withRight (cellRect ((int) row, (int) buses.size() - 1).getRight()).toFloat(), 6.0f);
+            }
+            g.setColour (inputs[row] == selIn ? theme::accentIn : theme::text);
+            g.setFont (theme::font (12.5f, true));
+            g.drawFittedText (inTitles[row], head.reduced (10, 0), juce::Justification::centredLeft, 1, 0.75f);
+
+            for (size_t c = 0; c < buses.size(); ++c)
+                drawCell (g, cells[row][c], cellRect ((int) row, (int) c), inputs[row] == selIn && buses[c] == selBus);
         }
     }
 
     void mouseMove (const juce::MouseEvent& e) override
     {
-        const int b = busAt (e.getPosition());
-        if (b != hover) { hover = b; repaint(); }
-        setMouseCursor (b >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+        int row = -1, col = -1;
+        hit (e.getPosition(), row, col);
+        juce::String tip;
+        if (row >= 0 && col >= 0)
+        {
+            const auto& cell = cells[(size_t) row][(size_t) col];
+            const auto bus = busCode (buses[(size_t) col]);
+            if (! cell.routed) tip = inTitles[(size_t) row] + " is not routed to " + bus;
+            else tip = inTitles[(size_t) row] + "  ->  " + bus + ":  " + label (cell.ms) + "\nclick: show this path below";
+        }
+        setTooltip (tip);
+        setMouseCursor (row >= 0 && col >= 0 && cells[(size_t) row][(size_t) col].routed ? juce::MouseCursor::PointingHandCursor
+                                                                                         : juce::MouseCursor::NormalCursor);
     }
-    void mouseExit (const juce::MouseEvent&) override { hover = -1; repaint(); }
+
     void mouseUp (const juce::MouseEvent& e) override
     {
-        if (const int b = busAt (e.getPosition()); b >= 0 && e.mouseWasClicked() && onPick) onPick (b);
+        int row = -1, col = -1;
+        hit (e.getPosition(), row, col);
+        if (e.mouseWasClicked() && row >= 0 && col >= 0 && cells[(size_t) row][(size_t) col].routed && onPick)
+            onPick (inputs[(size_t) row], buses[(size_t) col]);
     }
 
 private:
-    struct Item { int bus; juce::String text; bool hasOutput; juce::Rectangle<int> area; };
-    int busAt (juce::Point<int> p) const
+    static juce::String label (double v)
     {
-        for (auto& it : items) if (it.area.contains (p)) return it.bus;
-        return -1;
+        if (v <= -2.0) return "no output";
+        if (v < 0.0)   return "offline";
+        return ms (v);
     }
 
-    static constexpr int labelW = 64;
+    juce::Rectangle<int> cellRect (int row, int col) const
+    {
+        const int x = col < 0 ? kPad : kPad + kHeadW + col * kColW;
+        const int y = row < 0 ? kPad : kPad + kHeadH + row * kRowH;
+        return { x, y, col < 0 ? kHeadW : kColW, row < 0 ? kHeadH : kRowH };
+    }
+
+    void hit (juce::Point<int> p, int& row, int& col) const
+    {
+        for (size_t r = 0; r < inputs.size(); ++r)
+            for (size_t c = 0; c < buses.size(); ++c)
+                if (cellRect ((int) r, (int) c).contains (p)) { row = (int) r; col = (int) c; }
+    }
+
+    void drawCell (juce::Graphics& g, const Cell& cell, juce::Rectangle<int> r, bool selected) const
+    {
+        auto f = r.toFloat().reduced (3.0f, 3.0f);
+        if (! cell.routed)
+        {
+            g.setColour (theme::textFaint.withAlpha (0.5f));
+            g.fillEllipse (f.getCentreX() - 1.5f, f.getCentreY() - 1.5f, 3.0f, 3.0f);
+            return;
+        }
+        const bool ok = cell.ms >= 0.0;
+        const float heat = ok && longest > 0.0 ? (float) juce::jlimit (0.0, 1.0, cell.ms / longest) : 0.0f;
+        const auto tone = ! ok ? theme::mute : cell.ms >= 20.0 ? theme::warn : theme::good.interpolatedWith (theme::warn, heat * 0.6f);
+        g.setColour (theme::panel2.interpolatedWith (tone, 0.10f + 0.25f * heat));
+        g.fillRoundedRectangle (f, 5.0f);
+        g.setColour (selected ? theme::accentIn : tone.withAlpha (0.35f));
+        g.drawRoundedRectangle (f, 5.0f, selected ? 1.8f : 1.0f);
+        g.setColour (ok ? theme::text : theme::mute);
+        g.setFont (ok ? theme::mono (12.5f) : theme::font (11.5f, true));
+        g.drawText (label (cell.ms), f, juce::Justification::centred);
+    }
+
     UiContext& ctx;
-    std::vector<Item> items;
-    int hover = -1;
 };
 
 //==============================================================================
@@ -414,59 +449,117 @@ private:
 //==============================================================================
 LatencyView::LatencyView (UiContext& c) : ctx (c)
 {
-    picker = std::make_unique<OutputPicker> (c);
+    matrix = std::make_unique<Matrix> (c);
     flowView = std::make_unique<FlowView> (c);
     breakdown = std::make_unique<ShareChart> (c);
     breakdown->caption = "Latency share";
     breakdown->emptyText = "No latency on this path.";
     breakdown->format = [] (double v) { return ms (v); };
-    picker->onPick = [this] (int b) { bus = b; focusInput = -1; refresh(); };
-    flowView->onFocus = [this] (int lane)
+    matrix->onPick = [this] (int input, int b)
     {
-        if (juce::isPositiveAndBelow (lane, (int) flowView->flow.lanes.size()))
-            focusInput = flowView->flow.lanes[(size_t) lane].input;
+        bus = b;
+        focusInput = input;
+        userPicked = true;
+        if (ctx.select) ctx.select (input);
         refresh();
     };
+    flowView->onFocus = [] (int) {};
+    matrixView.setViewedComponent (matrix.get(), false);
+    matrixView.setScrollBarsShown (false, false, true, true);
+    matrixView.setScrollBarThickness (10);
     viewport.setViewedComponent (flowView.get(), false);
     viewport.setScrollBarsShown (false, false, true, true);
     viewport.setScrollBarThickness (10);
-    addAndMakeVisible (picker.get());
+    addAndMakeVisible (matrixView);
     addAndMakeVisible (viewport);
     addAndMakeVisible (breakdown.get());
     refresh();
     startTimerHz (4);
-    setSize (1000, 640);
+    setSize (1000, 680);
 }
 
 LatencyView::~LatencyView() { stopTimer(); }
 
 void LatencyView::timerCallback() { refresh(); }
 
+void LatencyView::measureDevices()
+{
+    // The device latency includes the drift buffer's fill level, which moves a little all the time.
+    // Exponential smoothing (~1 s at 4 Hz) keeps the numbers calm; a big jump (other device) is taken at once.
+    auto& e = ctx.engine;
+    auto smooth = [] (std::map<int, double>& store, int key, double v)
+    {
+        auto it = store.find (key);
+        if (v < 0.0 || it == store.end() || it->second < 0.0 || std::abs (v - it->second) > 5.0) store[key] = v;
+        else it->second += 0.3 * (v - it->second);
+    };
+    for (int i = 0; i < kMaxInputs; ++i)
+    {
+        const auto& s = e.inputs[(size_t) i];
+        if (! e.isInputActive (i) || s.source.kind == IoTarget::Kind::None) { inDevMs.erase (i); continue; }
+        smooth (inDevMs, i, e.getIoLatencyMs (s.source, true));
+    }
+    for (int b = 0; b < kMaxBuses; ++b)
+    {
+        const auto& bus = e.buses[(size_t) b];
+        if (! e.isBusActive (b) || bus.output.kind == IoTarget::Kind::None) { outDevMs.erase (b); continue; }
+        smooth (outDevMs, b, e.getIoLatencyMs (bus.output, false));
+    }
+}
+
+double LatencyView::inputSideMs (int i) const
+{
+    const auto it = inDevMs.find (i);
+    if (it == inDevMs.end() || it->second < 0.0) return -1.0;
+    const auto& e = ctx.engine;
+    const auto& s = e.inputs[(size_t) i];
+    std::vector<Node> nodes;
+    addPlugins (e, nodes, s.plugins, *s.fxBypass, i);
+    return it->second + (s.dnOn->isOn() ? samplesToMs (e, s.dspLatency.load()) : 0.0) + sum (nodes);
+}
+
+double LatencyView::busSideMs (int b) const
+{
+    const auto it = outDevMs.find (b);
+    if (it == outDevMs.end()) return -2.0;   // no output device
+    if (it->second < 0.0) return -1.0;
+    const auto& e = ctx.engine;
+    const auto& bus = e.buses[(size_t) b];
+    std::vector<Node> nodes;
+    addPlugins (e, nodes, bus.plugins, *bus.fxBypass, busSelectIndex (b));
+    return it->second + sum (nodes);
+}
+
 LatencyView::Flow LatencyView::build (int b) const
 {
     auto& e = ctx.engine;
     Flow f;
     f.bus = b;
-    if (b < 0) { f.problem = "No output in use."; return f; }
+    if (b < 0) { f.problem = "No path: route an input to an output with a device."; return f; }
     const auto& bus = e.buses[(size_t) b];
     f.busTitle = busTitle (e, b);
 
     addPlugins (e, f.busNodes, bus.plugins, *bus.fxBypass, busSelectIndex (b));
     f.hasOutput = bus.output.kind != IoTarget::Kind::None;
     if (f.hasOutput)
-        f.busNodes.push_back ({ "Output device", bus.output.describe(), e.getIoLatencyMs (bus.output, false),
+    {
+        const auto it = outDevMs.find (b);
+        f.busNodes.push_back ({ "Output device", bus.output.describe(), it != outDevMs.end() ? it->second : -1.0,
                                 theme::busColour (b), busSelectIndex (b) });
+    }
     f.busMs = sum (f.busNodes);
 
+    // Only the picked input: the matrix above shows all of them.
     for (int i = 0; i < kMaxInputs; ++i)
     {
-        if (! e.isInputActive (i)) continue;
+        if (i != focusInput || ! e.isInputActive (i)) continue;
         const auto& s = e.inputs[(size_t) i];
         if (s.source.kind == IoTarget::Kind::None || ! s.route[(size_t) b]->isOn()) continue;
         Lane lane;
         lane.input = i;
         lane.title = inputTitle (e, i);
-        lane.nodes.push_back ({ "Input device", s.source.describe(), e.getIoLatencyMs (s.source, true), kDeviceIn, i });
+        const auto it = inDevMs.find (i);
+        lane.nodes.push_back ({ "Input device", s.source.describe(), it != inDevMs.end() ? it->second : -1.0, kDeviceIn, i });
         if (s.dnOn->isOn())
         {
             const int mode = juce::roundToInt (s.dnMode->get());
@@ -477,36 +570,59 @@ LatencyView::Flow LatencyView::build (int b) const
         lane.ms = sum (lane.nodes);
         f.lanes.push_back (std::move (lane));
     }
-    std::stable_sort (f.lanes.begin(), f.lanes.end(), [] (const Lane& x, const Lane& y) { return x.ms > y.ms; });
 
     if (! f.hasOutput)          f.problem = busCode (b) + " has no output device - choose one in the mixer.";
     else if (f.lanes.empty())   f.problem = "No input is routed to " + busCode (b) + ".";
-    for (size_t k = 0; k < f.lanes.size(); ++k)
-        if (f.lanes[k].input == focusInput) f.focus = (int) k;   // else the longest path (first)
     return f;
-}
-
-int LatencyView::defaultBus() const
-{
-    // The output with the longest path; without routed inputs the first output in use.
-    int best = -1, first = -1;
-    double longest = -1.0;
-    for (int b = 0; b < kMaxBuses; ++b)
-    {
-        if (! ctx.engine.isBusActive (b)) continue;
-        if (first < 0) first = b;
-        const auto f = build (b);
-        if (f.lanes.empty() || ! f.hasOutput) continue;
-        if (const double t = f.lanes.front().ms + f.busMs; t > longest) { longest = t; best = b; }
-    }
-    return best >= 0 ? best : first;
 }
 
 void LatencyView::refresh()
 {
     auto& e = ctx.engine;
-    if (bus < 0 || ! e.isBusActive (bus)) { bus = defaultBus(); focusInput = -1; }
-    picker->update (bus);
+    measureDevices();
+
+    // Matrix: every input in use x every output in use
+    matrix->inputs.clear();
+    matrix->buses.clear();
+    matrix->inTitles.clear();
+    matrix->cells.clear();
+    for (int b = 0; b < kMaxBuses; ++b)
+        if (e.isBusActive (b)) matrix->buses.push_back (b);
+    double longest = -1.0;
+    int longestIn = -1, longestBus = -1;
+    bool pickedValid = false;
+    for (int i = 0; i < kMaxInputs; ++i)
+    {
+        if (! e.isInputActive (i)) continue;
+        const auto& s = e.inputs[(size_t) i];
+        matrix->inputs.push_back (i);
+        matrix->inTitles.push_back (inputTitle (e, i));
+        const double in = inputSideMs (i);
+        std::vector<Cell> row;
+        for (int b : matrix->buses)
+        {
+            Cell cell;
+            cell.routed = s.source.kind != IoTarget::Kind::None && s.route[(size_t) b]->isOn();
+            if (cell.routed)
+            {
+                const double out = busSideMs (b);
+                cell.ms = out <= -2.0 ? -2.0 : (in < 0.0 || out < 0.0) ? -1.0 : in + out;
+                if (cell.ms > longest) { longest = cell.ms; longestIn = i; longestBus = b; }
+                pickedValid |= i == focusInput && b == bus;
+            }
+            row.push_back (cell);
+        }
+        matrix->cells.push_back (std::move (row));
+    }
+    if (! userPicked || ! pickedValid)
+    {
+        userPicked = userPicked && pickedValid;
+        focusInput = longestIn;
+        bus = longestBus;
+    }
+    matrix->longest = juce::jmax (0.0, longest);
+    matrix->selIn = focusInput;
+    matrix->selBus = bus;
 
     auto flow = build (bus);
     juce::String text;
@@ -516,21 +632,28 @@ void LatencyView::refresh()
     else
         text = "Audio engine stopped - open Settings > Audio Engine.";
 
-    const auto sig = flow.signature() + text;
+    // Repaint only when something visible changed (values as shown).
+    juce::String sig = flow.signature() + text;
+    for (size_t r = 0; r < matrix->cells.size(); ++r)
+    {
+        sig << '|' << matrix->inTitles[r];
+        for (auto& c : matrix->cells[r]) sig << (c.routed ? ms (c.ms) : juce::String ("-")) << ',';
+    }
+    for (int b : matrix->buses) sig << busTitle (e, b);
     if (sig == shownSignature) return;
     shownSignature = sig;
     summary = text;
 
-    // Chart: the focused path (input side + output side)
+    // Chart: the shown path (input side + output side)
     std::vector<Node> path;
     if (! flow.lanes.empty())
     {
-        const auto& lane = flow.lanes[(size_t) flow.focus];
+        const auto& lane = flow.lanes.front();
         path = lane.nodes;
         breakdown->subtitle = lane.title + "   ->   " + flow.busTitle;
     }
     else
-        breakdown->subtitle = flow.busTitle + "  (output side only)";
+        breakdown->subtitle = flow.bus >= 0 ? flow.busTitle + "  (output side only)" : juce::String();
     for (auto& n : flow.busNodes) path.push_back (n);
     std::vector<ShareChart::Part> parts;
     for (size_t k = 0; k < path.size(); ++k)
@@ -539,6 +662,7 @@ void LatencyView::refresh()
 
     flowView->flow = std::move (flow);
     resized();
+    matrix->repaint();
     flowView->repaint();
     breakdown->repaint();
     repaint();
@@ -555,7 +679,12 @@ void LatencyView::paint (juce::Graphics& g)
     g.setFont (theme::font (12.0f));
     g.drawFittedText (summary, head.removeFromTop (20), juce::Justification::centredLeft, 1, 0.8f);
 
-    // Separator above the chart
+    // Captions above the matrix and the path, separator above the chart
+    g.setColour (theme::textDim);
+    g.setFont (theme::font (11.5f, true));
+    g.drawText ("TOTAL LATENCY PER INPUT AND OUTPUT  (click a cell)", matrixView.getBounds().translated (0, -20).withHeight (18),
+                juce::Justification::centredLeft);
+    g.drawText ("PATH", viewport.getBounds().translated (0, -20).withHeight (18), juce::Justification::centredLeft);
     g.setColour (theme::outline.withAlpha (0.7f));
     g.fillRect (breakdown->getBounds().getX(), breakdown->getY() - 8, breakdown->getWidth(), 1);
 
@@ -566,15 +695,21 @@ void LatencyView::paint (juce::Graphics& g)
 
 void LatencyView::resized()
 {
-    auto r = getLocalBounds().withTrimmedTop (68);
-    picker->setBounds (r.removeFromTop (30).reduced (18, 0));
-    r.removeFromTop (8);
-    breakdown->setBounds (r.removeFromBottom (juce::jlimit (120, 220, getHeight() * 33 / 100)).reduced (18, 0).withTrimmedBottom (12));
+    auto r = getLocalBounds().withTrimmedTop (68).reduced (18, 0);
+    breakdown->setBounds (r.removeFromBottom (juce::jlimit (120, 200, getHeight() * 28 / 100)).withTrimmedBottom (12));
     r.removeFromBottom (16);
+
+    // Path: one lane
+    const auto flowSize = flowView->layout (r.getWidth());
+    r.removeFromTop (22);
+    const auto need = matrix->needed();
+    const int matrixH = juce::jmin (need.y + (need.x > r.getWidth() ? matrixView.getScrollBarThickness() : 0),
+                                    juce::jmax (80, r.getHeight() - flowSize.y - 34));
+    matrixView.setBounds (r.removeFromTop (matrixH));
+    matrix->setSize (juce::jmax (need.x, r.getWidth() - (need.y > matrixH ? matrixView.getScrollBarThickness() : 0)), need.y);
+    r.removeFromTop (30);
     viewport.setBounds (r);
-    const auto size = flowView->layout (r.getWidth());
-    const bool scrollsDown = size.y > r.getHeight();
-    const auto fitted = flowView->layout (r.getWidth() - (scrollsDown ? viewport.getScrollBarThickness() : 0));
+    const auto fitted = flowView->layout (r.getWidth() - (flowSize.y > r.getHeight() ? viewport.getScrollBarThickness() : 0));
     flowView->setSize (fitted.x, fitted.y);
 }
 } // namespace hydra
