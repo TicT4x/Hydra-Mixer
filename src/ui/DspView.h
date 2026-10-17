@@ -4,19 +4,17 @@
 
 namespace hydra
 {
-/** DSP load analyser (own window, opened by clicking the DSP meter in the top bar), built like the
-    Latency Finder so the biggest consumer is visible at once:
+/** DSP load analyser (own window, opened by clicking the DSP meter in the top bar or Tools > DSP Load).
 
-    - top: "Top consumers" ranks every stage of every channel ("IN 1 Mic · Denoiser"), next to it the
-      load per channel and per kind of component (donuts),
-    - below: one lane per channel (heaviest first) with its stages in processing order (denoiser, EQ,
-      gate, compressor, each plugin, limiter, the rest); expensive stages are tinted, the three biggest
-      of all are tagged #1..#3. The engine's own work (resampling of other devices, recorder, mixing)
-      is a lane of its own.
+    One calm table instead of moving charts:
+    - top: total load of the audio engine as a bar (with the recent peak) and the three biggest consumers,
+    - below: one row per channel in mixer order (inputs, then outputs) and a row for the engine's own work.
+      Columns are the processing stages (Denoiser, EQ, Gate, Comp, Plugins, Limiter, Rest); every cell shows
+      its share of the audio period and is tinted by how expensive it is. Stages that are switched off show "-".
 
-    Values are the average share of the time available per audio block over the last second
-    (100 % = the engine would no longer keep up). The engine measures only while this window exists.
-    Clicking a lane, stage or list entry selects that channel in the main window. Refreshed 4x per second. */
+    The order never changes, values are averaged over one second and glide to their new value (no jumps);
+    the numbers are rewritten about 3x per second, the bars move smoothly. 100 % = the engine would no longer
+    keep up. The engine measures only while this window exists. Clicking a row selects that channel. */
 class DspView final : public juce::Component, private juce::Timer
 {
 public:
@@ -25,26 +23,21 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    /** One processing stage of a channel (or a part of the engine's own work). */
-    struct Stage
+    enum Column { denoiser, eq, gate, comp, plugins, limiter, rest, numColumns };
+
+    struct Row
     {
-        juce::String label, detail;
-        double load = 0.0;            // % of the audio period
-        juce::Colour colour;
-        int selectIndex = -1;         // -1: the lane's channel
-        int rank = 0;                 // 1..3: among the three biggest stages overall
-    };
-    struct Lane
-    {
-        juce::String key, title, note;   // note: e.g. "no source"
+        juce::String key, title, note, pluginInfo, engineText;
         juce::Colour colour;
         int selectIndex = -1;
-        std::vector<Stage> stages;       // processing order
-        double total = 0.0;
+        bool engine = false;
+        std::array<double, numColumns> target {}, shown {}, label {};   // label: value as written (~3x per second)
+        std::array<bool, numColumns> present {};
+        double totalTarget = 0.0, totalShown = 0.0, totalLabel = 0.0;
     };
 
 private:
-    class Chains;
+    class Table;
     /** One reading of all counters (ticks), keyed by what they measure. */
     struct Reading
     {
@@ -54,16 +47,15 @@ private:
     };
 
     void timerCallback() override;
-    void refresh();
+    void measure();
     Reading read() const;
 
     UiContext& ctx;
-    ShareChart top, byChannel, byKind;
     juce::Viewport viewport;
-    std::unique_ptr<Chains> chains;
+    std::unique_ptr<Table> table;
     std::deque<Reading> history;   // last ~1.5 s of readings
-    std::vector<juce::String> laneOrder;
-    juce::String summary, shownSignature;
-    double totalLoad = 0, peakLoad = 0;
+    juce::String summary, hotspots;
+    double totalTarget = 0, totalShown = 0, totalLabel = 0, peakLoad = 0;
+    int tick = 0;
 };
 } // namespace hydra

@@ -108,6 +108,14 @@ public:
     /** Changes the range of every mapping of a parameter. Pass a negative value to keep that end. */
     void setRangeForParam (const Param* p, float minN, float maxN);
     void clearAll();
+
+    /** Hardware faders on the channel / send faders reach at most 0 dB instead of +12 dB. Switching it on
+        sets the top of every fader mapping that still reaches above 0 dB to 0 dB (switching it off returns
+        those to +12 dB); faders learned while it is on get it too. Stored with the MIDI settings. */
+    void setFaderTopAt0dB (bool on);
+    bool getFaderTopAt0dB() const noexcept { return faderTop0dB; }
+    /** Channel / bus fader or a send level (the parameters the option above applies to). */
+    static bool isFaderParam (const Param& p);
     /** Channels were reordered: every mapping of a parameter in moves (first) now drives the parameter
         that holds its value (second), so the controller keeps controlling the same channel. */
     void remapParams (const std::vector<std::pair<Param*, Param*>>& moves);
@@ -147,5 +155,6 @@ private:
     std::unordered_map<Param*, uint32_t> lastVersions;
     LedProfile led;
     std::array<int, 128> ledSent {};
+    bool faderTop0dB = false;
 };
 } // namespace hydra

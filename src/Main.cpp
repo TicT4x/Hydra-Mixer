@@ -246,7 +246,8 @@ private:
         for (auto& s : engine->inputs) k << '|' << s.name << ':' << s.plugins.size();
         for (auto& b : engine->buses)  k << '|' << b.name << ':' << b.plugins.size();
         k << '|' << (int) midi->mapVersion.load() << '|' << (int) hotkeys->version.load()
-          << '|' << (int) session->prefsVersion.load() << '|' << (int) engine->recorder.stateVersion.load();
+          << '|' << (int) session->prefsVersion.load() << '|' << (int) engine->recorder.stateVersion.load()
+          << '|' << (int) session->scenes.version.load();
         return k;
     }
 

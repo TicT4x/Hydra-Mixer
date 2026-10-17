@@ -199,7 +199,8 @@ public:
     std::array<std::vector<int>, 3> getShownOrder() const;
     std::function<void()> onReorderDone, onReorderDiscard;
 
-    static constexpr int kMinStripWidth = 92, kMaxStripWidth = 140, kCaptionHeight = 34, kDividerWidth = 16, kBannerHeight = 46;
+    /** Strips always have this width (never stretched or squeezed); panes scroll when they do not fit. */
+    static constexpr int kStripWidth = 120, kCaptionHeight = 34, kDividerWidth = 16, kBannerHeight = 46;
 
     std::vector<std::unique_ptr<InputStripView>> inStrips;
     std::vector<std::unique_ptr<BusStripView>> busStrips;   // A buses first, then B buses

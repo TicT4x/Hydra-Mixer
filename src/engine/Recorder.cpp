@@ -99,6 +99,52 @@ private:
     Waveform& wave;
 };
 
+/** Plays only [trim in, trim out) of the file and loops inside it. Recorder thread only. */
+class Recorder::RangeSource final : public juce::PositionableAudioSource
+{
+public:
+    RangeSource (juce::AudioFormatReaderSource& s, const Recorder& r) : src (s), rec (r) {}
+
+    bool looping = false;
+    bool ended = false;   // reached the out point without looping
+
+    void prepareToPlay (int block, double sr) override { src.prepareToPlay (block, sr); }
+    void releaseResources() override                   { src.releaseResources(); }
+
+    void getNextAudioBlock (const juce::AudioSourceChannelInfo& info) override
+    {
+        const auto start = (juce::int64) (rec.getTrimIn() * rec.fileRate);
+        const auto end = juce::jmax (start, (juce::int64) (rec.getTrimOut() * rec.fileRate));
+        int done = 0;
+        while (done < info.numSamples)
+        {
+            auto pos = src.getNextReadPosition();
+            if (pos < start) { src.setNextReadPosition (start); pos = start; }
+            if (pos >= end)
+            {
+                if (looping && end > start) { src.setNextReadPosition (start); continue; }
+                info.buffer->clear (info.startSample + done, info.numSamples - done);
+                ended = true;
+                return;
+            }
+            const int n = (int) juce::jmin ((juce::int64) (info.numSamples - done), end - pos);
+            juce::AudioSourceChannelInfo part (info.buffer, info.startSample + done, n);
+            src.getNextAudioBlock (part);
+            done += n;
+        }
+    }
+
+    void setNextReadPosition (juce::int64 p) override { src.setNextReadPosition (p); ended = false; }
+    juce::int64 getNextReadPosition() const override  { return src.getNextReadPosition(); }
+    juce::int64 getTotalLength() const override       { return src.getTotalLength(); }
+    bool isLooping() const override                   { return looping; }
+    void setLooping (bool l) override                 { looping = l; }
+
+private:
+    juce::AudioFormatReaderSource& src;
+    const Recorder& rec;
+};
+
 Recorder::Recorder() : juce::Thread ("Hydra Recorder")
 {
     formats.registerBasicFormats();
@@ -154,8 +200,33 @@ double Recorder::getPlayLengthSeconds() const { return (double) fileLength / juc
 double Recorder::getPlaySeconds() const
 {
     const double t = playBase.load() + (double) playFrames.load() / juce::jmax (1.0, playRate);
+    const double in = getTrimIn(), out = getTrimOut();
+    return t >= out && out > in ? in + std::fmod (t - in, out - in) : t;   // looping inside the trim range
+}
+
+double Recorder::getTrimOut() const
+{
+    const double len = getPlayLengthSeconds(), out = trimOut.load();
+    return out < 0.0 ? len : juce::jmin (out, len);
+}
+
+bool Recorder::isTrimmed() const
+{
+    return playFile != juce::File() && (getTrimIn() > 0.001 || getTrimOut() < getPlayLengthSeconds() - 0.001);
+}
+
+void Recorder::setTrim (double in, double out)
+{
     const double len = getPlayLengthSeconds();
-    return len > 0.0 ? std::fmod (t, len) : t;
+    constexpr double minLength = 0.05;
+    in = juce::jlimit (0.0, juce::jmax (0.0, len - minLength), in);
+    out = juce::jlimit (juce::jmin (len, in + minLength), len, out);
+    trimIn.store (in);
+    trimOut.store (out >= len - 1.0e-6 ? -1.0 : out);
+    // Keep the start marker / play head inside the range.
+    const double pos = playing.load() ? getPlaySeconds() : startSeconds.load();
+    if (pos < in || pos > out) seek (in);
+    changed();
 }
 
 //==============================================================================
@@ -187,7 +258,7 @@ void Recorder::timerCallback()
         record->set (0.0f);
         play->set (0.0f);
         if (playing.load()) stopPlayback();
-        startSeconds.store (0.0);
+        startSeconds.store (getTrimIn());
         changed();
     }
 
@@ -203,7 +274,7 @@ void Recorder::timerCallback()
     {
         playing.store (false);
         play->set (0.0f);
-        startSeconds.store (0.0); // played to the end: the next play starts from the beginning
+        startSeconds.store (getTrimIn()); // played to the end: the next play starts from the beginning (of the trim)
         changed();
     }
 
@@ -357,7 +428,11 @@ bool Recorder::loadFile (const juce::File& f, juce::String& error)
         resampler.reset();
         fileRate = reader->sampleRate;
         fileLength = reader->lengthInSamples;
+        range.reset();
         readerSource = std::make_unique<juce::AudioFormatReaderSource> (reader.release(), true);
+        range = std::make_unique<RangeSource> (*readerSource, *this);
+        trimIn.store (0.0);
+        trimOut.store (-1.0);
         playFile = f;
         playFrames.store (0);
         playBase.store (0.0);
@@ -376,8 +451,11 @@ void Recorder::unloadFile()
     {
         const juce::ScopedLock sl (writerLock);
         resampler.reset();
+        range.reset();
         readerSource.reset();
         playFile = juce::File();
+        trimIn.store (0.0);
+        trimOut.store (-1.0);
         fileLength = 0;
         playFrames.store (0);
         playBase.store (0.0);
@@ -422,14 +500,14 @@ void Recorder::scanFile (const juce::File& f)
 
 void Recorder::seek (double seconds)
 {
-    seconds = juce::jlimit (0.0, juce::jmax (0.0, getPlayLengthSeconds()), seconds);
+    seconds = juce::jlimit (getTrimIn(), juce::jmax (getTrimIn(), getTrimOut()), seconds);
     startSeconds.store (seconds);
     if (playing.load())
     {
         const juce::ScopedLock sl (writerLock);
         if (readerSource != nullptr && resampler != nullptr)
         {
-            readerSource->setNextReadPosition ((juce::int64) (seconds * fileRate));
+            range->setNextReadPosition ((juce::int64) (seconds * fileRate));
             resampler->flushBuffers();
             producerDone = false;
             eof.store (false);
@@ -463,10 +541,11 @@ bool Recorder::startPlayback()
         const juce::ScopedLock sl (writerLock);
         // Start at the position set by clicking into the waveform (from the beginning if that is the end).
         double start = startSeconds.load();
-        if (start >= getPlayLengthSeconds() - 0.05) start = 0.0;
-        readerSource->setNextReadPosition ((juce::int64) (start * fileRate));
-        readerSource->setLooping (loop->isOn());
-        resampler = std::make_unique<juce::ResamplingAudioSource> (readerSource.get(), false, 2);
+        if (start < getTrimIn() || start >= getTrimOut() - 0.05) start = getTrimIn();
+        readerSource->setLooping (false);   // the range source loops inside the trim
+        range->setNextReadPosition ((juce::int64) (start * fileRate));
+        range->setLooping (loop->isOn());
+        resampler = std::make_unique<juce::ResamplingAudioSource> (range.get(), false, 2);
         resampler->setResamplingRatio (fileRate / sr);
         resampler->prepareToPlay (kChunk, sr);
         playRate = sr;
@@ -487,7 +566,7 @@ bool Recorder::startPlayback()
 void Recorder::stopPlayback()
 {
     // Pause: the next play continues where it stopped.
-    if (! finished.load()) startSeconds.store (juce::jlimit (0.0, juce::jmax (0.0, getPlayLengthSeconds()), getPlaySeconds()));
+    if (! finished.load()) startSeconds.store (juce::jlimit (getTrimIn(), juce::jmax (getTrimIn(), getTrimOut()), getPlaySeconds()));
     playing.store (false, std::memory_order_release);
     flushPending.store (true, std::memory_order_release);
     changed();
@@ -498,8 +577,7 @@ void Recorder::fillPlayback()
     if (! playing.load() || flushPending.load (std::memory_order_acquire) || producerDone || resampler == nullptr)
         return;
 
-    const bool looping = loop->isOn();
-    readerSource->setLooping (looping);
+    range->setLooping (loop->isOn());
 
     while (playRing.freeSpace() >= kChunk)
     {
@@ -507,13 +585,88 @@ void Recorder::fillPlayback()
         resampler->getNextAudioBlock (info);
         playRing.write (playScratch.getArrayOfReadPointers(), 2, kChunk);
 
-        if (! looping && readerSource->getNextReadPosition() >= fileLength)
+        if (range->ended)
         {
             producerDone = true;
             eof.store (true, std::memory_order_release);
             break;
         }
     }
+}
+
+bool Recorder::applyTrim (juce::String& error)
+{
+    const auto src = playFile;
+    if (recording.load())    { error = "Stop the recording first."; return false; }
+    if (src == juce::File()) { error = "No file loaded."; return false; }
+    if (! isTrimmed())       { error = "Drag the markers at the start / end of the waveform first."; return false; }
+
+    std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (src));
+    if (reader == nullptr) { error = "Cannot read " + src.getFileName(); return false; }
+    const auto from = (juce::int64) (getTrimIn() * reader->sampleRate);
+    const auto to = juce::jmin (reader->lengthInSamples, (juce::int64) (getTrimOut() * reader->sampleRate));
+    const int channels = (int) juce::jmax (1u, reader->numChannels);
+
+    // Write the kept part to a new file next to the original.
+    const auto tmp = src.getParentDirectory().getNonexistentChildFile (src.getFileNameWithoutExtension() + "_trim", ".tmp", false);
+    {
+        std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (tmp);
+        if (static_cast<juce::FileOutputStream*> (stream.get())->failedToOpen()) { error = "Cannot write " + tmp.getFullPathName(); return false; }
+        const bool isFloat = reader->usesFloatingPointData;
+        auto options = juce::AudioFormatWriterOptions {}
+                           .withSampleRate (reader->sampleRate)
+                           .withNumChannels (channels)
+                           .withBitsPerSample (isFloat ? 32 : juce::jlimit (16, 24, (int) reader->bitsPerSample))
+                           .withSampleFormat (isFloat ? juce::AudioFormatWriterOptions::SampleFormat::floatingPoint
+                                                      : juce::AudioFormatWriterOptions::SampleFormat::integral);
+        juce::WavAudioFormat wav;
+        auto writer = wav.createWriterFor (stream, options);
+        if (writer == nullptr) { tmp.deleteFile(); error = "Cannot create a WAV writer."; return false; }
+        juce::AudioBuffer<float> buf (channels, 65536);
+        for (auto pos = from; pos < to;)
+        {
+            const int n = (int) juce::jmin ((juce::int64) buf.getNumSamples(), to - pos);
+            reader->read (&buf, 0, n, pos, true, channels > 1);
+            if (! writer->writeFromAudioSampleBuffer (buf, 0, n))
+            {
+                writer.reset();
+                tmp.deleteFile();
+                error = "Writing failed (disk full?).";
+                return false;
+            }
+            pos += n;
+        }
+    }
+    reader.reset();
+
+    // The file must not be open while it is replaced.
+    unloadFile();
+    juce::File result;
+    if (src.hasFileExtension ("wav"))
+    {
+        if (! src.moveToTrash() && ! src.deleteFile())
+        {
+            error = "Cannot replace " + src.getFullPathName() + " - the trimmed version is " + tmp.getFileName();
+            juce::String ignored;
+            loadFile (src, ignored);
+            return false;
+        }
+        result = src;
+    }
+    else
+        result = src.getParentDirectory().getNonexistentChildFile (src.getFileNameWithoutExtension() + "_trimmed", ".wav", false);
+    if (! tmp.moveFileTo (result)) { error = "Cannot rename " + tmp.getFullPathName(); return false; }
+
+    if (src == lastRecording)
+    {
+        lastRecording = result;
+        recWave.clear();   // the overview is read from the new file
+    }
+    logLine ("recording trimmed: " + result.getFullPathName());
+    juce::String err;
+    loadFile (result, err);
+    changed();
+    return true;
 }
 
 bool Recorder::pullPlayback (float* l, float* r, int n) noexcept

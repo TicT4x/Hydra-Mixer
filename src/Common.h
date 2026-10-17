@@ -25,6 +25,7 @@ constexpr int kDefaultInputs = 8, kDefaultHwBuses = 5, kDefaultVirtBuses = 3;
 constexpr int kMaxBlock     = 4096; // engine processes in chunks of at most this size
 constexpr int kMaxDeviceChannels = 32;
 constexpr int kMaxStreamChannels = 32; // channels carried by one asynchronous stream (16 stereo strips / buses)
+constexpr int kMaxScenes = 64;          // scene slots (each has a recall parameter for MIDI / shortcuts)
 
 constexpr bool isHwBus (int b) noexcept      { return b < kMaxHwBuses; }
 constexpr int hwBusIndex (int a) noexcept    { return a; }                 // A(a+1)

@@ -14,6 +14,8 @@ public:
     void refresh();
     void paint (juce::Graphics&) override;
     void resized() override;
+    /** Width that shows every card at full size plus the "+" (the effect rack scrolls instead). */
+    int getIdealWidth() const;
 
     std::function<void()> onScanRequested;
     std::function<void()> onChainChanged;

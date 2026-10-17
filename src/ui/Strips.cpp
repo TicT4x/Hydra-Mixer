@@ -1008,20 +1008,15 @@ float StripArea::scaleFor (int paneHeight) const
 
 int StripArea::defaultSplit() const
 {
-    // Both panes get the same (widest possible) strip width. If even the narrowest strips do not
-    // fit, each pane gets a share proportional to what it needs, so both scroll alike.
+    // The inputs get exactly the room their strips need, the outputs the rest (right-aligned there).
+    // If not everything fits, each pane gets a share proportional to what it needs, so both scroll alike.
     const int avail = getWidth() - kDividerWidth;
     const float s = scaleFor (getHeight() - kCaptionHeight - StripPane::kScrollBar);
-    auto fits = [&] (int w) { return (float) (inputsWidth (w) + outputsWidth (w)) * s <= (float) avail; };
-    int w = kMaxStripWidth;
-    while (w > kMinStripWidth && ! fits (w)) --w;
-    int inW;
-    if (fits (w))
-        inW = juce::roundToInt ((float) inputsWidth (w) * s);
-    else
-        inW = juce::roundToInt ((float) avail * (float) inputsWidth (kMinStripWidth)
-                                / (float) (inputsWidth (kMinStripWidth) + outputsWidth (kMinStripWidth)));
-    return inW + kDividerWidth / 2;
+    const int inW = inputsWidth (kStripWidth), outW = outputsWidth (kStripWidth);
+    const int split = (float) (inW + outW) * s <= (float) avail
+                          ? juce::roundToInt ((float) inW * s)
+                          : juce::roundToInt ((float) avail * (float) inW / (float) (inW + outW));
+    return split + kDividerWidth / 2;
 }
 
 void StripArea::setSplit (int x)
@@ -1038,15 +1033,16 @@ void StripArea::setSplit (int x)
 
 void StripArea::layoutPane (StripPane& pane, bool outputs, int paneWidth, int paneHeight)
 {
-    // Strips stretch to fill the pane (up to kMaxStripWidth); below kMinStripWidth the pane scrolls.
-    // The scroll bar's height is always kept free, so the strips do not change size when it appears.
+    // Strips keep their width; a pane that is too narrow scrolls. With room to spare, the inputs stay
+    // left-aligned and the outputs right-aligned. The scroll bar's height is always kept free, so the
+    // strips do not change size when it appears.
     const int stripsHeight = paneHeight - StripPane::kScrollBar;
     const float s = scaleFor (stripsHeight);
-    auto contentWidth = [&] (int w) { return outputs ? outputsWidth (w) : inputsWidth (w); };
-    int w = kMaxStripWidth;
-    while (w > kMinStripWidth && (float) contentWidth (w) * s > (float) paneWidth) --w;
+    const int w = kStripWidth;
+    const int needed = outputs ? outputsWidth (w) : inputsWidth (w);
     const int h = juce::roundToInt ((float) stripsHeight / s);
-    pane.setContentSize (juce::jmax (contentWidth (w), juce::roundToInt ((float) paneWidth / s)), h, s);
+    const int total = juce::jmax (needed, (int) std::floor ((float) paneWidth / s));
+    pane.setContentSize (total, h, s);
 
     auto place = [&] (Section& sec, int x, int count)
     {
@@ -1057,7 +1053,7 @@ void StripArea::layoutPane (StripPane& pane, bool outputs, int paneWidth, int pa
     if (! outputs)
         place (inSec, kPad, (int) inStrips.size());
     else
-        place (virtSec, place (hwSec, kPad, numHw) + kBusGroupGap, numVirt);
+        place (virtSec, place (hwSec, kPad + (total - needed), numHw) + kBusGroupGap, numVirt);
     stripWidth[outputs ? 1 : 0] = w;
     stripHeight[outputs ? 1 : 0] = h;
     placeStrips (outputs);

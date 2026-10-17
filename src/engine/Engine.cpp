@@ -182,6 +182,16 @@ void Engine::createParams()
     for (int a = 0; a < kMaxHwBuses; ++a) hwCodes.add (busCode (hwBusIndex (a)));
     monBus = &params.addChoice ("mon.bus", "Monitor Output", hwCodes, 0);
     recorder.createParams (params);
+
+    for (int k = 0; k < kMaxScenes; ++k)
+    {
+        sceneRecall[(size_t) k] = &params.addToggle ("scene." + juce::String (k + 1), "Recall Scene " + juce::String (k + 1));
+        sceneRecall[(size_t) k]->persistent = false;
+    }
+    sceneNext = &params.addToggle ("scene.next", "Next Scene");
+    scenePrev = &params.addToggle ("scene.prev", "Previous Scene");
+    sceneNext->persistent = false;
+    scenePrev->persistent = false;
 }
 
 //==============================================================================

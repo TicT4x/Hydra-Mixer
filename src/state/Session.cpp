@@ -56,6 +56,7 @@ bool Session::save (const juce::File& f) const
     root.addChildElement (midi.toXml().release());
     if (hotkeys != nullptr)
         root.addChildElement (hotkeys->toXml().release());
+    root.addChildElement (scenes.toXml().release());
 
     // Write atomically so a crash mid-save never destroys the session.
     auto tmp = f.getSiblingFile (f.getFileName() + ".tmp");
@@ -175,6 +176,8 @@ bool Session::load (const juce::File& f)
         if (auto* hk = root->getChildByName ("HOTKEYS")) hotkeys->fromXml (*hk);
         else                                             hotkeys->clearAll();
     }
+    if (auto* sc = root->getChildByName ("SCENES")) scenes.fromXml (*sc, false);
+    else                                            scenes.clear();
 
     return true;
 }

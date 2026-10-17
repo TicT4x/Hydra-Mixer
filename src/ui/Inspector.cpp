@@ -151,6 +151,54 @@ private:
 };
 
 //==============================================================================
+/** Horizontal device rack (like Ableton's device view): all sections of a channel side by side at their
+    own width in one row that scrolls sideways as a whole when it does not fit. The last section takes
+    any room that is left. */
+class EffectRack final : public juce::Component
+{
+public:
+    struct Row final : juce::Component
+    {
+        std::function<void (juce::Graphics&)> over;   // drawn above the sections (row coordinates)
+        void paintOverChildren (juce::Graphics& g) override { if (over) over (g); }
+    };
+
+    EffectRack()
+    {
+        view.setViewedComponent (&row, false);
+        view.setScrollBarsShown (false, true);
+        view.setScrollBarThickness (8);
+        view.setSingleStepSizes (40, 40);
+        addAndMakeVisible (view);
+    }
+
+    Row& content() noexcept { return row; }
+
+    /** Lays the sections out left to right; widths[i] is the width of sections[i], the last one gets at
+        least lastMin and otherwise everything that is left. */
+    void layout (const std::vector<juce::Component*>& sections, std::vector<int> widths, int lastMin)
+    {
+        view.setBounds (getLocalBounds());
+        int fixed = 0;
+        for (size_t i = 0; i + 1 < widths.size(); ++i) fixed += widths[i];
+        const bool scrolls = fixed + lastMin > getWidth();
+        widths.back() = juce::jmax (lastMin, getWidth() - fixed);
+        const int h = getHeight() - (scrolls ? view.getScrollBarThickness() + 2 : 0);
+        row.setSize (fixed + widths.back(), juce::jmax (40, h));
+        int x = 0;
+        for (size_t i = 0; i < sections.size(); ++i)
+        {
+            sections[i]->setBounds (x, 0, widths[i], row.getHeight());
+            x += widths[i];
+        }
+    }
+
+private:
+    juce::Viewport view;
+    Row row;
+};
+
+//==============================================================================
 /** Small icon button: two diagonal arrows ("open larger"). */
 class ExpandButton final : public juce::Component, public juce::SettableTooltipClient
 {
@@ -524,7 +572,10 @@ public:
           chain (c, strip.plugins, theme::accentIn)
     {
         chain.onScanRequested = std::move (scan);
-        for (juce::Component* s : std::initializer_list<juce::Component*> { &eqSec, &gateSec, &dnSec, &compSec, &fxSec }) addAndMakeVisible (s);
+        chain.onChainChanged = [this] { resized(); };
+        addAndMakeVisible (rack);
+        for (juce::Component* s : std::initializer_list<juce::Component*> { &eqSec, &gateSec, &dnSec, &compSec, &fxSec }) rack.content().addAndMakeVisible (s);
+        rack.content().over = [this] (juce::Graphics& g) { paintMode (g); };
         for (juce::Component* k : std::initializer_list<juce::Component*> { &gateOn, &gateThr, &gateState }) gateSec.addAndMakeVisible (k);
         for (juce::Component* k : std::initializer_list<juce::Component*> { &dnOn, &dnAmount }) dnSec.addAndMakeVisible (k);
         for (juce::Component* k : std::initializer_list<juce::Component*> { &compOn, &compThr, &compRatio, &compGr }) compSec.addAndMakeVisible (k);
@@ -542,12 +593,8 @@ public:
 
     void resized() override
     {
-        auto r = getLocalBounds();
-        eqSec.setBounds (r.removeFromLeft (juce::jlimit (440, 600, r.getWidth() / 3)));
-        gateSec.setBounds (r.removeFromLeft (150));
-        dnSec.setBounds (r.removeFromLeft (140));
-        compSec.setBounds (r.removeFromLeft (200));
-        fxSec.setBounds (r);
+        rack.setBounds (getLocalBounds());
+        rack.layout ({ &eqSec, &gateSec, &dnSec, &compSec, &fxSec }, { 520, 150, 140, 200, 0 }, chain.getIdealWidth() + 24);
 
         gateOn.setBounds (gateSec.headerSlot());
         auto gc = gateSec.content();
@@ -571,7 +618,7 @@ public:
         chain.setBounds (fxSec.content());
     }
 
-    void paintOverChildren (juce::Graphics& g) override
+    void paintMode (juce::Graphics& g)
     {
         g.setColour (strip.denoiser->isSupported() ? theme::textFaint : theme::warn);
         g.setFont (theme::font (10.0f));
@@ -582,12 +629,13 @@ public:
     {
         gateState.update();
         compGr.update();
-        if (const auto v = strip.dnMode->getVersion(); v != modeVersion) { modeVersion = v; repaint (modeArea); }
+        if (const auto v = strip.dnMode->getVersion(); v != modeVersion) { modeVersion = v; rack.content().repaint (modeArea); }
     }
 
 private:
     UiContext& ctx;
     InputStrip& strip;
+    EffectRack rack;
     EqSection eqSec;
     Section gateSec, dnSec, compSec, fxSec;
     Toggle gateOn;
@@ -617,7 +665,9 @@ public:
           chain (c, bus.plugins, colour)
     {
         chain.onScanRequested = std::move (scan);
-        for (juce::Component* s : std::initializer_list<juce::Component*> { &eqSec, &limSec, &fxSec }) addAndMakeVisible (s);
+        chain.onChainChanged = [this] { resized(); };
+        addAndMakeVisible (rack);
+        for (juce::Component* s : std::initializer_list<juce::Component*> { &eqSec, &limSec, &fxSec }) rack.content().addAndMakeVisible (s);
         limSec.addAndMakeVisible (limOn);
         limSec.addAndMakeVisible (ceiling);
         fxSec.addAndMakeVisible (bypass);
@@ -627,10 +677,8 @@ public:
 
     void resized() override
     {
-        auto r = getLocalBounds();
-        eqSec.setBounds (r.removeFromLeft (juce::jlimit (480, 720, r.getWidth() * 2 / 5)));
-        limSec.setBounds (r.removeFromLeft (120));
-        fxSec.setBounds (r);
+        rack.setBounds (getLocalBounds());
+        rack.layout ({ &eqSec, &limSec, &fxSec }, { 560, 120, 0 }, chain.getIdealWidth() + 24);
 
         limOn.setBounds (limSec.headerSlot());
         ceiling.setBounds (limSec.content().withSizeKeepingCentre (76, 70));
@@ -641,6 +689,7 @@ public:
 private:
     Bus& bus;
     juce::Colour colour;
+    EffectRack rack;
     EqSection eqSec;
     Section limSec, fxSec;
     Toggle limOn;
@@ -659,13 +708,15 @@ juce::String formatTime (double seconds)
 }
 
 /** Waveform of the take being recorded, or of the loaded file with the play position. Click or drag
-    to move the play position (like a DAW timeline); while stopped it sets where PLAY starts. */
+    to move the play position (like a DAW timeline); while stopped it sets where PLAY starts.
+    Trim like a clip in a video editor: drag the handle at the left / right edge inwards; the parts outside
+    are greyed out and not played (Recorder::setTrim). "Cut" in the recorder writes the trimmed file. */
 class WaveformView final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     explicit WaveformView (Recorder& r) : rec (r)
     {
-        setTooltip ("Click / drag: jump to that position");
+        setTooltip ("Click / drag: jump to that position.  Drag the handles at the edges to trim the start / end.");
         setMouseCursor (juce::MouseCursor::IBeamCursor);
     }
 
@@ -677,8 +728,10 @@ public:
         const double pos = recording ? rec.getRecordSeconds() : rec.isPlaying() ? rec.getPlaySeconds() : rec.getStartSeconds();
         const auto v = wave.getVersion();
         const int px = juce::roundToInt (pos / juce::jmax (0.001, length()) * getWidth());
-        if (v != shownVersion || recording != shownRecording || px != shownPx || rec.getLoadedFile() != shownFile)
+        const auto trim = std::make_pair (rec.getTrimIn(), rec.getTrimOut());
+        if (v != shownVersion || recording != shownRecording || px != shownPx || rec.getLoadedFile() != shownFile || trim != shownTrim)
         {
+            shownTrim = trim;
             shownVersion = v;
             shownRecording = recording;
             shownPx = px;
@@ -740,6 +793,26 @@ public:
         g.fillRect (plot.getX(), mid - 0.5f, plot.getWidth(), 1.0f);
 
         if (recording) return;
+
+        // Trim: greyed out outside [in, out], a handle at each end
+        const float inX = xOf (rec.getTrimIn()), outX = xOf (rec.getTrimOut());
+        g.setColour (theme::bg.withAlpha (0.72f));
+        g.fillRect (juce::Rectangle<float> (plot.getX(), plot.getY(), inX - plot.getX(), plot.getHeight()));
+        g.fillRect (juce::Rectangle<float> (outX, plot.getY(), plot.getRight() - outX, plot.getHeight()));
+        for (int k = 0; k < 2; ++k)
+        {
+            const float x = k == 0 ? inX : outX;
+            const bool active = dragHandle == k || hoverHandle == k;
+            g.setColour (active ? theme::solo : theme::solo.withAlpha (0.75f));
+            g.fillRect (x - 1.0f, plot.getY(), 2.0f, plot.getHeight());
+            // Grip tab pointing into the kept part
+            auto tab = juce::Rectangle<float> (k == 0 ? x : x - 9.0f, plot.getCentreY() - 14.0f, 9.0f, 28.0f);
+            g.fillRoundedRectangle (tab, 3.0f);
+            g.setColour (theme::bg.withAlpha (0.8f));
+            for (int j = -1; j <= 1; ++j)
+                g.fillRect (tab.getCentreX() - 2.0f, tab.getCentreY() + (float) j * 5.0f - 0.5f, 4.0f, 1.0f);
+        }
+
         // Start cursor (where PLAY begins) and play head
         const float startX = plot.getX() + (float) (rec.getStartSeconds() / len) * plot.getWidth();
         g.setColour (theme::text.withAlpha (0.5f));
@@ -755,10 +828,55 @@ public:
         }
     }
 
-    void mouseDown (const juce::MouseEvent& e) override { seekTo (e.x); }
-    void mouseDrag (const juce::MouseEvent& e) override { seekTo (e.x); }
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        dragHandle = handleAt (e.x);
+        if (dragHandle < 0) seekTo (e.x);
+    }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (dragHandle < 0) { seekTo (e.x); return; }
+        const double t = secondsAt (e.x);
+        if (dragHandle == 0) rec.setTrim (t, rec.getTrimOut());
+        else                 rec.setTrim (rec.getTrimIn(), t);
+        update();
+    }
+
+    void mouseUp (const juce::MouseEvent&) override { dragHandle = -1; repaint(); }
+
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        const int h = handleAt (e.x);
+        if (h != hoverHandle) { hoverHandle = h; repaint(); }
+        setMouseCursor (h >= 0 ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::IBeamCursor);
+    }
+
+    void mouseExit (const juce::MouseEvent&) override { if (hoverHandle >= 0) { hoverHandle = -1; repaint(); } }
 
 private:
+    static constexpr float kLeft = 6.0f;
+    float plotWidth() const { return (float) getWidth() - 2.0f * kLeft; }
+    float xOf (double seconds) const
+    {
+        const double len = rec.getPlayLengthSeconds();
+        return kLeft + (len > 0.0 ? (float) (seconds / len) : 0.0f) * plotWidth();
+    }
+    double secondsAt (int x) const
+    {
+        return juce::jlimit (0.0, 1.0, (double) ((float) x - kLeft) / plotWidth()) * rec.getPlayLengthSeconds();
+    }
+    /** 0 = in handle, 1 = out handle, -1 = none (grab zone of 8 px; the handles also catch the outer padding). */
+    int handleAt (int x) const
+    {
+        if (rec.isRecording() || rec.getLoadedFile() == juce::File() || rec.getPlayLengthSeconds() <= 0.0) return -1;
+        const float fx = (float) x, inX = xOf (rec.getTrimIn()), outX = xOf (rec.getTrimOut());
+        const float dIn = std::abs (fx - inX) - (fx < inX ? 6.0f : 0.0f), dOut = std::abs (fx - outX) - (fx > outX ? 6.0f : 0.0f);
+        if (dIn <= 8.0f && dIn <= dOut) return 0;
+        if (dOut <= 8.0f) return 1;
+        return -1;
+    }
+
     double length() const
     {
         if (rec.isRecording()) return juce::jmax (1.0, rec.getRecordSeconds());
@@ -768,8 +886,7 @@ private:
     void seekTo (int x)
     {
         if (rec.isRecording() || rec.getLoadedFile() == juce::File()) return;
-        const float left = 6.0f, width = (float) getWidth() - 12.0f;
-        rec.seek (juce::jlimit (0.0, 1.0, (double) ((float) x - left) / width) * rec.getPlayLengthSeconds());
+        rec.seek (secondsAt (x));
         update();
     }
 
@@ -779,6 +896,8 @@ private:
     bool shownRecording = false;
     int shownPx = -1;
     juce::File shownFile;
+    std::pair<double, double> shownTrim;
+    int dragHandle = -1, hoverHandle = -1;
 };
 
 /** Recorder: left what is recorded (a B bus), in the middle the recording itself (transport, waveform,
@@ -798,7 +917,8 @@ public:
     {
         for (juce::Component* s : std::initializer_list<juce::Component*> { &sourceSec, &takeSec, &outSec }) addAndMakeVisible (s);
         for (juce::Component* k : std::initializer_list<juce::Component*> { &folderChip, &formatChip }) sourceSec.addAndMakeVisible (k);
-        for (juce::Component* k : std::initializer_list<juce::Component*> { &recBtn, &playBtn, &stopBtn, &loopBtn, &deleteBtn, &wave, &openChip, &lastChip, &showChip })
+        for (juce::Component* k : std::initializer_list<juce::Component*> { &recBtn, &playBtn, &stopBtn, &loopBtn, &deleteBtn, &wave, &openChip, &lastChip, &showChip,
+                                                                           &cutChip, &resetTrimChip })
             takeSec.addAndMakeVisible (k);
         outSec.addAndMakeVisible (level);
         for (int b = 0; b < kMaxBuses; ++b)
@@ -817,7 +937,7 @@ public:
             sources.back()->setTooltip ("Record " + busCode (b) + " (" + c.engine.buses[(size_t) b].name + ")");
             sourceSec.addAndMakeVisible (*sources.back());
         }
-        for (auto* chip : { &folderChip, &formatChip, &openChip, &lastChip, &showChip })
+        for (auto* chip : { &folderChip, &formatChip, &openChip, &lastChip, &showChip, &cutChip, &resetTrimChip })
         {
             chip->showArrow = false;
             chip->centred = true;
@@ -830,6 +950,10 @@ public:
         loopBtn.setTooltip ("Repeat the file");
         deleteBtn.setTooltip ("Delete this recording: unloads it and moves the file to the Recycle Bin");
         deleteBtn.onClick = [this] { confirmDelete(); };
+        cutChip.setTooltip ("Cut the file to the part between the trim handles (the original goes to the Recycle Bin)");
+        resetTrimChip.setTooltip ("Move the trim handles back to the start and end");
+        cutChip.onClick = [this] { confirmCut(); };
+        resetTrimChip.onClick = [this] { rec.resetTrim(); };
         folderChip.setTooltip ("Folder for new recordings");
         openChip.setTooltip ("Load an audio file for playback (WAV, AIFF, FLAC, Ogg, MP3)");
         lastChip.setTooltip ("Load the most recent recording");
@@ -908,6 +1032,10 @@ public:
         loopBtn.setBounds (transport.removeFromLeft (38));
         transport.removeFromLeft (10);
         deleteBtn.setBounds (transport.removeFromLeft (34));
+        transport.removeFromLeft (10);
+        cutChip.setBounds (transport.removeFromLeft (64));
+        transport.removeFromLeft (4);
+        resetTrimChip.setBounds (transport.removeFromLeft (58));
         transport.removeFromLeft (14);
         timeArea = transport.translated (takeSec.getX(), takeSec.getY());
         t.removeFromTop (6);
@@ -993,8 +1121,18 @@ private:
 
         const auto file = rec.getLoadedFile();
         deleteBtn.setEnabled (file != juce::File() && ! recording);
+        const bool trimmed = rec.isTrimmed() && ! recording;
+        for (auto* chip : { &cutChip, &resetTrimChip })
+        {
+            chip->setEnabled (trimmed);
+            chip->setAlpha (trimmed ? 1.0f : 0.4f);
+        }
+        cutChip.active = trimmed;
         fileTitle = file != juce::File() ? file.getFileName() : juce::String ("No file loaded");
         fileInfo = file != juce::File() ? file.getParentDirectory().getFullPathName() : juce::String();
+        if (rec.isTrimmed())
+            fileInfo = "keeps " + formatTime (rec.getTrimIn()) + " - " + formatTime (rec.getTrimOut()) + "  ("
+                     + formatTime (rec.getTrimOut() - rec.getTrimIn()) + ")  -  Cut writes it";
         for (auto* chip : { &folderChip, &formatChip }) chip->repaint();
         repaint();
     }
@@ -1016,6 +1154,32 @@ private:
                                           if (result != 1 || safe == nullptr || safe->rec.getLoadedFile() != file) return;
                                           juce::String err;
                                           if (! safe->rec.deleteLoadedFile (err))
+                                              juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Recorder", err);
+                                          safe->refreshTexts();
+                                      });
+    }
+
+    void confirmCut()
+    {
+        const auto file = rec.getLoadedFile();
+        if (file == juce::File() || ! rec.isTrimmed()) return;
+        const bool wav = file.hasFileExtension ("wav");
+        juce::Component::SafePointer<RecorderDetail> safe (this);
+        juce::AlertWindow::showAsync (juce::MessageBoxOptions()
+                                          .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                                          .withTitle ("Cut the recording?")
+                                          .withMessage (file.getFileName() + "\n\nKeeps " + formatTime (rec.getTrimIn()) + " - "
+                                                        + formatTime (rec.getTrimOut()) + ". "
+                                                        + (wav ? "The original file goes to the Recycle Bin."
+                                                               : "The result is saved as a new WAV file next to it."))
+                                          .withButton ("Cut")
+                                          .withButton ("Cancel")
+                                          .withAssociatedComponent (this),
+                                      [safe, file] (int result)
+                                      {
+                                          if (result != 1 || safe == nullptr || safe->rec.getLoadedFile() != file) return;
+                                          juce::String err;
+                                          if (! safe->rec.applyTrim (err))
                                               juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Recorder", err);
                                           safe->refreshTexts();
                                       });
@@ -1067,6 +1231,7 @@ private:
     WaveformView wave;
     Chip folderChip { "Folder...", theme::text }, formatChip { "WAV 24", theme::text };
     Chip openChip { "Open File...", theme::text }, lastChip { "Last Take", theme::text }, showChip { "Show", theme::text };
+    Chip cutChip { "Cut", theme::solo }, resetTrimChip { "Reset", theme::text };
     std::vector<std::unique_ptr<Toggle>> sources, hwOuts, virtOuts;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::Rectangle<int> timeArea, sourceInfo, fileArea, hwLabel, virtLabel, sourceLabel;
@@ -1248,6 +1413,12 @@ void PluginChainView::resized()
     const int h = needed > getWidth() ? getHeight() - viewport.getScrollBarThickness() : getHeight();
     row.setSize (juce::jmax (needed, getWidth()), juce::jmax (40, h));
     layoutCards();
+}
+
+int PluginChainView::getIdealWidth() const
+{
+    if (cards.empty()) return 420;   // add button + hint
+    return (int) cards.size() * (kMaxCardWidth + kCardGap) + kPlusWidth;
 }
 
 void PluginChainView::layoutCards()

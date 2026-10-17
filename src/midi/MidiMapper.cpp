@@ -318,6 +318,26 @@ void MidiMapper::setMappingInvert (int index, bool inv)
         mappings[(size_t) index].invert = inv;
 }
 
+bool MidiMapper::isFaderParam (const Param& p)
+{
+    return (p.id.endsWith (".gain") && (p.id.startsWith ("in") || p.id.startsWith ("bus."))) || p.id.contains (".send.");
+}
+
+void MidiMapper::setFaderTopAt0dB (bool on)
+{
+    const juce::ScopedLock sl (lock);
+    faderTop0dB = on;
+    for (auto& m : mappings)
+    {
+        if (m.param == nullptr || m.isSwitch() || ! isFaderParam (*m.param)) continue;
+        const float zero = m.param->range.convertTo0to1 (0.0f);
+        if (on && m.maxN > zero + 1.0e-4f)                   m.maxN = zero;
+        else if (! on && std::abs (m.maxN - zero) < 1.0e-4f) m.maxN = 1.0f;
+        m.lastSent = -1;   // move motor faders to the new scale
+    }
+    ++mapVersion;
+}
+
 void MidiMapper::clearAll()
 {
     const juce::ScopedLock sl (lock);
@@ -364,6 +384,8 @@ void MidiMapper::handleIncomingMidiMessage (juce::MidiInput* sourceDev, const ju
 
         {
             const juce::ScopedLock sl (lock);
+            if (faderTop0dB && ! m.isSwitch() && isFaderParam (*p))
+                m.maxN = p->range.convertTo0to1 (0.0f);
             for (auto& o : mappings) // re-learning keeps a calibrated range
                 if (o.param == p && ! m.isSwitch()) { m.minN = o.minN; m.maxN = o.maxN; }
             mappings.erase (std::remove_if (mappings.begin(), mappings.end(), [&] (const MidiMapping& o)
@@ -498,6 +520,7 @@ std::unique_ptr<juce::XmlElement> MidiMapper::toXml() const
     for (auto& n : enabledInputs)
         xml->createNewChildElement ("INPUT")->setAttribute ("name", n);
     xml->setAttribute ("feedback", feedbackId);
+    xml->setAttribute ("faderTop0dB", faderTop0dB);
     {
         auto* l = xml->createNewChildElement ("LED");
         l->setAttribute ("name", led.name);
@@ -537,6 +560,7 @@ void MidiMapper::fromXml (const juce::XmlElement& xml)
     {
         const juce::ScopedLock sl (lock);
         mappings.clear();
+        faderTop0dB = xml.getBoolAttribute ("faderTop0dB", false);
         for (auto* e : xml.getChildWithTagNameIterator ("MAP"))
         {
             MidiMapping m;

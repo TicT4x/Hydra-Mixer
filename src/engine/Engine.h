@@ -136,6 +136,10 @@ public:
 
     /** Monitoring: while a bus is selected (SEL), its signal replaces the normal mix of the monitor bus. */
     Param *monOn {}, *monBus {};
+    /** Scene triggers (not stored): switching one on recalls that scene (SceneBank), so scenes can be
+        called by MIDI and keyboard shortcuts like any button. Next / previous step through the list. */
+    std::array<Param*, kMaxScenes> sceneRecall {};
+    Param *sceneNext {}, *scenePrev {};
     /** Bus selected with SEL, or -1. */
     int getSelectedBus() const noexcept;
     /** Bus that currently plays the monitored signal, or -1. */

@@ -4,6 +4,7 @@
 #include "Settings.h"
 #include "LatencyView.h"
 #include "DspView.h"
+#include "SceneEditor.h"
 #include "state/UndoHistory.h"
 
 namespace hydra
@@ -25,17 +26,20 @@ private:
     bool shownActive = false;
 };
 
-/** Flat icon button for the top bar: settings gear, power (shutdown) and the window controls.
-    The window controls do not act on clicks themselves: Windows reports them as native caption
-    buttons (see TopBar::windowControlAt), and the window receives minimise / maximise / close. */
+/** Flat icon button for the top bar: tools (wrench), recorder (cassette), settings gear, power (shutdown)
+    and the window controls. The window controls do not act on clicks themselves: Windows reports them
+    as native caption buttons (see TopBar::windowControlAt), and the window receives minimise / maximise / close. */
 class IconButton final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
-    enum class Kind { gear, power, minimise, maximise, close };
+    enum class Kind { gear, power, wrench, cassette, minimise, maximise, close };
     explicit IconButton (Kind k) : kind (k) {}
 
     std::function<void()> onClick;
     const Kind kind;
+    /** Highlight (learn mode for the tools, recording / playing for the cassette); transparent = none. */
+    juce::Colour lit { juce::Colours::transparentBlack };
+    void setLit (juce::Colour c) { if (c != lit) { lit = c; repaint(); } }
 
     void paint (juce::Graphics&) override;
     void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
@@ -70,8 +74,26 @@ private:
     bool hover = false;
 };
 
-/** Top bar (also the window's title bar): logo, engine status, CPU, MIDI activity, recorder,
-    learn mode, MIDI map, settings, shutdown and the window controls. */
+/** Engine status in the top bar (driver, device, rate, buffer, I/O latency); click opens the audio engine settings. */
+class StatusLink final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    StatusLink();
+    std::function<void()> onClick;
+    void setStatus (const juce::String& text, bool running, bool learnMode);
+    void paint (juce::Graphics&) override;
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
+    void mouseUp (const juce::MouseEvent& e) override  { if (e.mouseWasClicked() && onClick) onClick(); }
+
+private:
+    juce::String text;
+    bool running = false, learn = false, hover = false;
+};
+
+/** Top bar (also the window's title bar): logo, engine status, DSP load, MIDI activity, recorder, tools menu,
+    settings, shutdown and the window controls. When the window gets narrow, the recorder shrinks to a
+    cassette button, then the logo to its icon, then the status text disappears (the DSP meter stays). */
 class TopBar final : public juce::Component
 {
 public:
@@ -82,15 +104,17 @@ public:
     /** Native hit-testing: what the point (local coordinates) is for the window (caption, buttons...). */
     WindowControlKind windowControlAt (juce::Point<float>) const;
 
-    Chip midiMap { "MIDI Map", theme::text }, learn { "MIDI Learn", theme::text }, latency { "Latency", theme::text };
+    IconButton tools { IconButton::Kind::wrench }, cassette { IconButton::Kind::cassette };
     IconButton settings { IconButton::Kind::gear }, power { IconButton::Kind::power };
     IconButton minimiseBtn { IconButton::Kind::minimise }, maximiseBtn { IconButton::Kind::maximise }, closeBtn { IconButton::Kind::close };
     DspMeter dsp;
+    StatusLink statusLink;
 
 private:
     UiContext& ctx;
     RecorderMini recorder;
-    juce::Rectangle<int> statusArea;
+    juce::Rectangle<int> statusArea, logoArea, midiArea;
+    bool compactLogo = false;
     juce::String status;
     float cpu = 0, cpuSmooth = 0;
     int cpuTick = 0;
@@ -131,6 +155,9 @@ public:
     void openMidiMap();
     void openLatencyFinder();
     void openDspView();
+    void toggleLearnMode();
+    /** Shows / hides the scene sidebar on the left. */
+    void toggleSceneEditor();
     void openEqWindow (int selectIndex, bool bringToFront = true);
     void refreshAll();
     /** Interface zoom (1 = 100 %): everything in the main window is drawn larger / smaller;
@@ -163,6 +190,7 @@ private:
     int logicalWidth() const  { return juce::roundToInt ((float) getWidth() / uiScale); }
     int logicalHeight() const { return juce::roundToInt ((float) getHeight() / uiScale); }
     void showToast (const juce::String& text, double seconds);
+    void showToolsMenu();
     void meterFrame (double timestamp);
     void finishHotkeyCapture();
     void assignCapturedKey (const juce::KeyPress&);
@@ -176,6 +204,7 @@ private:
     StripArea strips;
     Inspector inspector;
     PanelHost panelHost;
+    std::unique_ptr<SceneSidebar> sceneBar;   // Tools > Scene Editor
     std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow, latencyWindow, dspWindow;
     int shownSelBus = -1;     // bus selected with SEL as shown by the input faders
     uint32_t shownLayout = 0; // engine channel layout the strips were built for
