@@ -154,9 +154,14 @@ cd Hydra-Mixer
 - App: `build\Release\HydraMixer_artefacts\Release\Hydra Mixer.exe`
 - Tests: `build\Release\HydraTests_artefacts\Release\HydraTests.exe`
 
+## License
+
+Copyright (C) 2026 Til. Hydra Mixer is free software under the
+[GNU Affero General Public License v3.0](LICENSE).
+
 ## Third-party code
 
-- [JUCE 8](https://juce.com) (`external/JUCE`, submodule): audio, UI, ASIO, VST3 hosting.
+- [JUCE 8](https://juce.com) (`external/JUCE`, submodule, AGPLv3): audio, UI, ASIO, VST3 hosting.
 - [RNNoise 0.2](https://github.com/xiph/rnnoise) (`external/rnnoise`, BSD license): noise suppression,
   patched to expose its band gains.
 
