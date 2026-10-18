@@ -54,9 +54,10 @@ public:
         routed channels). Empty = device channels 0..n-1. */
     std::vector<int> deviceChannels;
     int deviceChannelCount = 0;           // channels the device has (only set with deviceChannels)
-    int deviceLatencyFrames = 0;          // fixed latency the driver reports (ASIO), in device frames
+    int deviceLatencyFrames = 0;          // fixed latency the driver reports (incl. its buffer), in device frames
 
     double getDeviceRate() const noexcept { return deviceRate; }
+    int getDeviceBlock() const noexcept   { return deviceBlock; }
     int getNumChannels() const noexcept   { return channels; }
 
     /** Stream channel that carries a device channel, or -1. */

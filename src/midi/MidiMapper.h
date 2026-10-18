@@ -142,6 +142,18 @@ public:
     std::array<int, 128> computeGridLeds() const;
 private:
     void clearGridLeds();
+    /** Switches off every LED Hydra may have lit: the pad grid, every mapped note (e.g. mute buttons outside
+        the grid) and, for pad-grid controllers, the remaining button rows. Called when Hydra closes. */
+    void switchOffLeds();
+    /** Asks controllers that support it for the current position of their faders (Akai APC mini: SysEx
+        introduction message, the controller answers with its fader positions). Sent ~0.5 s after an input
+        opened; the answer drives the mapped parameters like a moved fader. */
+    void requestControllerState();
+public:
+    /** Answer to requestControllerState (APC mini SysEx with the fader positions); public for tests. */
+    bool handleStateReply (juce::MidiInput* source, const juce::MidiMessage& m);
+private:
+    double stateRequestAt = 0.0;   // ms (Time::getMillisecondCounterHiRes), 0 = nothing pending
 
     ParamRegistry& params;
     mutable juce::CriticalSection lock;

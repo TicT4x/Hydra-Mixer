@@ -3,13 +3,6 @@
 
 namespace hydra
 {
-/** Popup menus for choosing a strip's source / a bus's destination. */
-namespace IoMenus
-{
-    void showInputMenu (juce::Component& target, UiContext& ctx, int strip, std::function<void()> changed);
-    void showOutputMenu (juce::Component& target, UiContext& ctx, int bus, std::function<void()> changed);
-}
-
 //==============================================================================
 /** Fader value readout under a strip; click to type a value. */
 void makeEditableDbLabel (juce::Label& label, Param& gain);
@@ -69,8 +62,7 @@ private:
     juce::Rectangle<float> hwGroup, virtGroup;
 
     StripHeader header;
-    Chip source;   // marked when the source has a problem (offline, dropouts...)
-    juce::String sourceProblem;
+    Chip source;   // status symbols when the source has a problem (offline, dropouts, ...)
     Knob trim, pan;
     // Routing buttons of the buses in use (EQ / gate / comp / denoiser are switched in the inspector).
     std::vector<std::unique_ptr<Toggle>> hwRoutes, virtRoutes;
@@ -100,8 +92,8 @@ private:
     Bus& bus;
 
     StripHeader header;
-    Chip output;
-    juce::Label outputStatus;
+    Chip output;               // status symbols like the input source chip
+    juce::Label outputStatus;  // "monitoring Bx" 
     Toggle lim, mono, sel, mute;
     bool monitorShown = false;
     int tick = 0;
@@ -177,6 +169,9 @@ public:
 
     /** Recreates the strips for the current channel layout. */
     void rebuild();
+    /** Width at which every strip fits side by side at the current height: no scroll bar and no gap
+        between inputs and outputs (with the default divider position). */
+    int idealWidth() const;
     /** Scrolls the pane of a channel (selection index) so that its strip is visible. */
     void scrollToChannel (int selectIndex);
 
@@ -199,8 +194,9 @@ public:
     std::array<std::vector<int>, 3> getShownOrder() const;
     std::function<void()> onReorderDone, onReorderDiscard;
 
-    /** Strips always have this width (never stretched or squeezed); panes scroll when they do not fit. */
-    static constexpr int kStripWidth = 120, kCaptionHeight = 34, kDividerWidth = 16, kBannerHeight = 46;
+    /** Strips always have this width (never stretched or squeezed); panes scroll when they do not fit.
+        108 px: the default layout (8 inputs, A1-A5, B1-B3) fits side by side on a 1920 px screen at 100 %. */
+    static constexpr int kStripWidth = 108, kCaptionHeight = 34, kDividerWidth = 16, kBannerHeight = 46;
 
     std::vector<std::unique_ptr<InputStripView>> inStrips;
     std::vector<std::unique_ptr<BusStripView>> busStrips;   // A buses first, then B buses

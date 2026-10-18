@@ -8,7 +8,9 @@ bool Session::save (const juce::File& f) const
     root.setAttribute ("version", 2);
     root.setAttribute ("window", windowState);
 
-    const auto mc = engine.getMasterConfig();
+    // While the master device the session asks for is still missing (just after Windows started),
+    // the session keeps asking for it instead of storing the fallback device.
+    const auto mc = waitingForMaster ? requestedMaster : engine.getMasterConfig();
     auto* m = root.createNewChildElement ("MASTER");
     m->setAttribute ("type", mc.typeName);
     m->setAttribute ("device", mc.deviceName);
@@ -153,6 +155,7 @@ bool Session::load (const juce::File& f)
         mc.sampleRate = m->getDoubleAttribute ("rate", 48000.0);
         mc.bufferSize = m->getIntAttribute ("buffer", 0);
     }
+    requestedMaster = mc;
     engine.setMasterConfig (mc);
 
     // Plugins after the engine runs, so they are instantiated at the real sample rate.

@@ -534,6 +534,38 @@ void Switch::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+ValueBox::ValueBox (UiContext& c, Param& p, juce::Colour a) : ParamControl (c, p), accent (a)
+{
+    setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
+}
+
+void ValueBox::press (const juce::MouseEvent&) { dragStartNorm = param.getNormalised(); }
+
+void ValueBox::drag (const juce::MouseEvent& e)
+{
+    const float sens = e.mods.isShiftDown() ? 0.0002f : 0.002f;
+    param.setNormalised (dragStartNorm - (float) e.getDistanceFromDragStartY() * sens);
+}
+
+void ValueBox::release (const juce::MouseEvent& e)
+{
+    if (! e.mouseWasDraggedSinceMouseDown()) editValueAsText (getLocalBounds());
+}
+
+void ValueBox::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat().reduced (0.5f);
+    const bool zero = param.get() == param.range.start;
+    g.setColour (hover ? theme::raised.brighter (0.06f) : theme::bg);
+    g.fillRoundedRectangle (r, 5.0f);
+    g.setColour (zero ? theme::outline : accent.withAlpha (0.7f));
+    g.drawRoundedRectangle (r, 5.0f, 1.0f);
+    g.setColour (zero ? theme::textDim : theme::text);
+    g.setFont (theme::mono (12.5f));
+    g.drawFittedText (param.toText(), getLocalBounds().reduced (6, 0), juce::Justification::centred, 1, 0.8f);
+}
+
+//==============================================================================
 ChoiceSegments::ChoiceSegments (UiContext& c, Param& p, juce::Colour a, juce::StringArray l, std::vector<int> v)
     : ParamControl (c, p), accent (a), labels (l.isEmpty() ? p.choices : l), values (std::move (v)) {}
 
@@ -721,16 +753,13 @@ void Chip::paint (juce::Graphics& g)
     auto r = getLocalBounds().toFloat().reduced (0.5f);
     g.setColour (active ? colour.withAlpha (0.22f) : (hover ? theme::raised.brighter (0.06f) : theme::panel2));
     g.fillRoundedRectangle (r, 6.0f);
-    g.setColour (warning ? theme::warn.withAlpha (0.8f) : active ? colour.withAlpha (0.8f) : theme::outline);
+    bool offline = false;
+    for (auto& s : status) offline |= s.kind == Marker::offline;
+    g.setColour (offline ? theme::mute.withAlpha (0.7f) : ! status.empty() ? theme::warn.withAlpha (0.8f)
+                 : active ? colour.withAlpha (0.8f) : theme::outline);
     g.drawRoundedRectangle (r, 6.0f, 1.0f);
 
     auto tr = r.reduced (7.0f, 0.0f);
-    if (warning)
-    {
-        g.setColour (theme::warn);
-        g.fillEllipse (tr.removeFromLeft (6.0f).withSizeKeepingCentre (6.0f, 6.0f));
-        tr.removeFromLeft (4.0f);
-    }
     if (showArrow)
     {
         auto ar = tr.removeFromRight (8.0f);
@@ -741,9 +770,126 @@ void Chip::paint (juce::Graphics& g)
         g.fillPath (p);
         tr.removeFromRight (3.0f);
     }
+    // Status dots left of the name (red first)
+    markerAreas.clear();
+    for (auto& st : status)
+    {
+        auto m = tr.removeFromLeft (9.0f).withSizeKeepingCentre (9.0f, 9.0f);
+        drawMarker (g, st.kind, m);
+        markerAreas.push_back (m.expanded (3.0f, 6.0f));
+        tr.removeFromLeft (4.0f);
+    }
+    if (icon != Icon::none)
+    {
+        const float s = juce::jmin (14.0f, tr.getHeight() - 6.0f);
+        auto ir = text.isEmpty() ? tr.withSizeKeepingCentre (s, s) : tr.removeFromLeft (s).withSizeKeepingCentre (s, s);
+        drawIcon (g, icon, ir, active ? theme::text : colour);
+        if (text.isEmpty()) return;
+        tr.removeFromLeft (6.0f);
+        if (centred) tr.removeFromRight (s + 6.0f);   // keep the text centred under the whole chip
+    }
     g.setColour (active ? theme::text : colour);
     g.setFont (theme::font (12.0f));
     g.drawFittedText (text, tr.toNearestInt(), centred ? juce::Justification::centred : juce::Justification::centredLeft, 1, 0.8f);
+}
+
+void Chip::setStatus (std::vector<Status> s)
+{
+    // One dot per colour: dropouts and "needs attention" are both yellow and share a dot (and its tooltip).
+    std::vector<Status> merged;
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        const bool red = pass == 0;
+        Status dot { red ? Marker::offline : Marker::attention, {} };
+        bool any = false;
+        for (auto& x : s)
+            if ((x.kind == Marker::offline) == red)
+            {
+                if (any) dot.tip << "\n\n";
+                dot.tip << x.tip;
+                if (x.kind == Marker::dropouts && ! red) dot.kind = Marker::dropouts;
+                any = true;
+            }
+        if (any) merged.push_back (std::move (dot));
+    }
+
+    auto same = [] (const std::vector<Status>& a, const std::vector<Status>& b)
+    {
+        if (a.size() != b.size()) return false;
+        for (size_t k = 0; k < a.size(); ++k)
+            if (a[k].kind != b[k].kind || a[k].tip != b[k].tip) return false;
+        return true;
+    };
+    if (same (merged, status)) return;
+    const bool symbolsChanged = merged.size() != status.size()
+                             || ! std::equal (merged.begin(), merged.end(), status.begin(), [] (auto& a, auto& b) { return a.kind == b.kind; });
+    status = std::move (merged);
+    if (symbolsChanged) repaint();
+}
+
+juce::String Chip::getTooltip()
+{
+    // Over a dot: just what it means. Elsewhere: the problems first, then the chip's own tooltip.
+    const auto p = getMouseXYRelative().toFloat();
+    for (size_t k = 0; k < markerAreas.size() && k < status.size(); ++k)
+        if (markerAreas[k].contains (p)) return status[k].tip;
+    juce::String tip;
+    for (auto& st : status) tip << st.tip << "\n\n";
+    return tip + juce::SettableTooltipClient::getTooltip();
+}
+
+void Chip::drawMarker (juce::Graphics& g, Marker kind, juce::Rectangle<float> r)
+{
+    // Red dot = offline, yellow dot = dropouts / needs attention, with a faint halo so it reads on any chip.
+    const auto c = kind == Marker::offline ? theme::mute : theme::warn;
+    const auto d = juce::jmin (r.getWidth(), r.getHeight());
+    const auto dot = juce::Rectangle<float> (d, d).withCentre (r.getCentre());
+    g.setColour (c.withAlpha (0.25f));
+    g.fillEllipse (dot.expanded (1.5f));
+    g.setColour (c);
+    g.fillEllipse (dot.reduced (0.5f));
+}
+
+void Chip::drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> r, juce::Colour colour)
+{
+    const juce::PathStrokeType stroke (1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+    g.setColour (colour);
+    if (icon == Icon::save)
+    {
+        // Floppy disk: body with a cut corner, shutter at the top, label at the bottom.
+        auto b = r.reduced (0.5f);
+        const float cut = b.getWidth() * 0.24f;
+        juce::Path body;
+        body.startNewSubPath (b.getX(), b.getY());
+        body.lineTo (b.getRight() - cut, b.getY());
+        body.lineTo (b.getRight(), b.getY() + cut);
+        body.lineTo (b.getRight(), b.getBottom());
+        body.lineTo (b.getX(), b.getBottom());
+        body.closeSubPath();
+        g.strokePath (body, stroke);
+        g.fillRect (juce::Rectangle<float> (b.getX() + b.getWidth() * 0.26f, b.getY(), b.getWidth() * 0.4f, b.getHeight() * 0.3f));
+        g.drawRoundedRectangle (juce::Rectangle<float> (b.getX() + b.getWidth() * 0.2f, b.getY() + b.getHeight() * 0.56f,
+                                                        b.getWidth() * 0.6f, b.getHeight() * 0.44f), 1.0f, 1.2f);
+    }
+    else if (icon == Icon::revert)
+    {
+        // Counter-clockwise arrow (back to the stored state).
+        const auto c = r.getCentre();
+        const float rad = r.getWidth() * 0.4f;
+        juce::Path arc;
+        arc.addCentredArc (c.x, c.y, rad, rad, 0.0f, -juce::MathConstants<float>::pi * 0.35f,
+                           juce::MathConstants<float>::pi * 1.25f, true);
+        g.strokePath (arc, stroke);
+        // Arrow head at the start of the arc, pointing against the drawing direction (= counter-clockwise).
+        const float sa = -juce::MathConstants<float>::pi * 0.35f;
+        const juce::Point<float> start (c.x + rad * std::sin (sa), c.y - rad * std::cos (sa));
+        const juce::Point<float> dir (-std::cos (sa), -std::sin (sa));   // tangent, counter-clockwise
+        const juce::Point<float> nrm (dir.y, -dir.x);
+        juce::Path head;
+        const float s = r.getWidth() * 0.26f;
+        head.addTriangle (start + dir * s, start - nrm * (s * 0.8f), start + nrm * (s * 0.8f));
+        g.fillPath (head);
+    }
 }
 //==============================================================================
 void TrashButton::drawIcon (juce::Graphics& g, juce::Rectangle<float> area, juce::Colour colour)

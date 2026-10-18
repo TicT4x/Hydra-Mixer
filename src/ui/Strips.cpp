@@ -3,185 +3,6 @@
 
 namespace hydra
 {
-namespace IoMenus
-{
-namespace
-{
-const char* kLowLatency = "Windows Audio (Low Latency Mode)";
-const char* kExclusive  = "Windows Audio (Exclusive Mode)";
-const char* kShared     = "Windows Audio";
-
-/** Stereo pairs + mono channels of a multichannel device (the master or a secondary ASIO driver). */
-void addChannelList (juce::PopupMenu& menu, const juce::StringArray& names, const IoTarget& base, const IoTarget& current,
-                     std::function<void (IoTarget)> pick)
-{
-    for (int c = 0; c + 1 < names.size(); c += 2)
-    {
-        IoTarget t = base; t.channel = c; t.mono = false;
-        menu.addItem (juce::String (c + 1) + "/" + juce::String (c + 2) + ":  " + names[c] + " + " + names[c + 1],
-                      true, current == t, [pick, t] { pick (t); });
-    }
-    juce::PopupMenu monoMenu;
-    for (int c = 0; c < names.size(); ++c)
-    {
-        IoTarget t = base; t.channel = c; t.mono = true;
-        monoMenu.addItem (juce::String (c + 1) + ":  " + names[c], true, current == t, [pick, t] { pick (t); });
-    }
-    if (names.size() > 0)
-        menu.addSubMenu ("Mono channel", monoMenu);
-}
-
-void addMasterChannels (juce::PopupMenu& menu, const juce::StringArray& names, const IoTarget& current,
-                        std::function<void (IoTarget)> pick)
-{
-    IoTarget base; base.kind = IoTarget::Kind::Master;
-    addChannelList (menu, names, base, current, std::move (pick));
-}
-
-/** Further ASIO interfaces next to the master: each has its own clock and is synchronised to the
-    master like a Windows device, but with ASIO's low latency and all of its channels. */
-void addSecondaryAsio (juce::PopupMenu& menu, Engine& engine, bool inputs, const IoTarget& current,
-                       std::function<void (IoTarget)> pick)
-{
-    const auto drivers = engine.getSecondaryAsioDrivers();
-    if (drivers.isEmpty()) return;
-
-    menu.addSectionHeader ("Other ASIO Devices (synced to the master clock)");
-    for (auto& driver : drivers)
-    {
-        IoTarget base; base.kind = IoTarget::Kind::Device; base.typeName = kAsioTypeName; base.deviceName = driver;
-        juce::PopupMenu sub;
-        const auto names = engine.getAsioChannelNames (driver, inputs);
-        if (names.isEmpty())
-            sub.addItem (juce::String ("(driver cannot be loaded or has no ") + (inputs ? "inputs" : "outputs")
-                         + " - in use by another program?)", false, false, nullptr);
-        addChannelList (sub, names, base, current, pick);
-        menu.addSubMenu (driver, sub, true, nullptr, current.sameStream (base));
-    }
-}
-
-void addDeviceList (juce::PopupMenu& menu, Engine& engine, const juce::String& typeName, bool inputs,
-                    const IoTarget& current, std::function<void (IoTarget)> pick)
-{
-    auto* type = engine.findType (typeName);
-    if (type == nullptr) return;
-    for (auto& name : type->getDeviceNames (inputs))
-    {
-        IoTarget st; st.kind = IoTarget::Kind::Device; st.typeName = typeName; st.deviceName = name;
-        IoTarget m1 = st; m1.mono = true;
-        juce::PopupMenu sub;
-        sub.addItem ("Stereo (1/2)", true, current == st, [pick, st] { pick (st); });
-        sub.addItem ("Mono (Ch 1)", true, current == m1, [pick, m1] { pick (m1); });
-        IoTarget m2 = m1; m2.channel = 1;
-        sub.addItem ("Mono (Ch 2)", true, current == m2, [pick, m2] { pick (m2); });
-        menu.addSubMenu (name, sub, true, nullptr, current.sameStream (st));
-    }
-}
-} // namespace
-
-void showInputMenu (juce::Component& target, UiContext& ctx, int strip, std::function<void()> changed)
-{
-    auto& engine = ctx.engine;
-    const auto current = engine.inputs[(size_t) strip].source;
-    auto pick = [&engine, strip, changed] (IoTarget t) { engine.setInputSource (strip, t); if (changed) changed(); };
-
-    juce::PopupMenu m;
-    m.addItem ("None", true, current.kind == IoTarget::Kind::None, [pick] { pick ({}); });
-
-    if (auto* dev = engine.getMasterDevice())
-    {
-        m.addSectionHeader ("Hardware - " + dev->getName() + " (" + dev->getTypeName() + ")");
-        addMasterChannels (m, engine.getMasterInputNames(), current, pick);
-        if (engine.getMasterInputNames().isEmpty())
-            m.addItem ("(master device has no inputs - choose an ASIO driver for direct inputs)", false, false, nullptr);
-    }
-    addSecondaryAsio (m, engine, true, current, pick);
-
-    m.addSectionHeader ("Windows Recording Devices");
-    juce::PopupMenu ll, ex, sh;
-    addDeviceList (ll, engine, kLowLatency, true, current, pick);
-    addDeviceList (ex, engine, kExclusive, true, current, pick);
-    addDeviceList (sh, engine, kShared, true, current, pick);
-    m.addSubMenu ("Low Latency (shared)", ll);
-    m.addSubMenu ("Exclusive (lowest latency)", ex);
-    m.addSubMenu ("Shared (compatibility)", sh);
-
-    m.addSectionHeader ("Software Inputs");
-
-    // Per-application capture (no driver needed)
-    juce::PopupMenu apps;
-    auto running = listAudioApps();
-    if (current.kind == IoTarget::Kind::App) running.addIfNotAlreadyThere (current.deviceName, true);
-    for (auto& exe : running)
-    {
-        IoTarget t; t.kind = IoTarget::Kind::App; t.deviceName = exe;
-        apps.addItem (exe, true, current == t, [pick, t] { pick (t); });
-    }
-    if (running.isEmpty())
-        apps.addItem ("(no app is playing audio right now)", false, false, nullptr);
-    m.addSubMenu ("Application (per-app capture)", apps);
-
-    // Virtual cables: apps play into the cable, Hydra records its other end
-    juce::PopupMenu cables;
-    for (auto& c : findVirtualCables (engine.getDeviceTypes()))
-    {
-        IoTarget t; t.kind = IoTarget::Kind::Device; t.typeName = kLowLatency; t.deviceName = c.recordingName;
-        cables.addItem (c.label + "      (apps play to \"" + c.playbackName + "\")", true, current.sameStream (t), [pick, t] { pick (t); });
-    }
-    if (cables.getNumItems() == 0)
-        cables.addItem ("(no virtual cable installed - see Settings > Virtual Cables)", false, false, nullptr);
-    m.addSubMenu ("Virtual Cable", cables);
-
-    juce::PopupMenu loop;
-    for (auto& name : listRenderEndpoints())
-    {
-        IoTarget t; t.kind = IoTarget::Kind::Loopback; t.deviceName = name;
-        loop.addItem (name, true, current == t, [pick, t] { pick (t); });
-    }
-    m.addSubMenu ("Capture a Playback Device (Loopback)", loop);
-
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target).withMinimumWidth (target.getWidth()));
-}
-
-void showOutputMenu (juce::Component& target, UiContext& ctx, int bus, std::function<void()> changed)
-{
-    auto& engine = ctx.engine;
-    const auto current = engine.buses[(size_t) bus].output;
-    auto pick = [&engine, bus, changed] (IoTarget t) { engine.setBusOutput (bus, t); if (changed) changed(); };
-
-    juce::PopupMenu m;
-    m.addItem ("None", true, current.kind == IoTarget::Kind::None, [pick] { pick ({}); });
-
-    if (auto* dev = engine.getMasterDevice())
-    {
-        m.addSectionHeader ("Master - " + dev->getName() + " (" + dev->getTypeName() + ")");
-        addMasterChannels (m, engine.getMasterOutputNames(), current, pick);
-    }
-    addSecondaryAsio (m, engine, false, current, pick);
-
-    m.addSectionHeader ("Windows Playback Devices");
-    juce::PopupMenu ll, ex, sh;
-    addDeviceList (ll, engine, kLowLatency, false, current, pick);
-    addDeviceList (ex, engine, kExclusive, false, current, pick);
-    addDeviceList (sh, engine, kShared, false, current, pick);
-    m.addSubMenu ("Low Latency (shared)", ll);
-    m.addSubMenu ("Exclusive (lowest latency)", ex);
-    m.addSubMenu ("Shared (compatibility)", sh);
-
-    m.addSectionHeader ("Software Outputs");
-    juce::PopupMenu cables;
-    for (auto& c : findVirtualCables (engine.getDeviceTypes()))
-    {
-        IoTarget t; t.kind = IoTarget::Kind::Device; t.typeName = kLowLatency; t.deviceName = c.playbackName;
-        cables.addItem (c.label + "      (apps record from \"" + c.recordingName + "\")", true, current.sameStream (t), [pick, t] { pick (t); });
-    }
-    if (cables.getNumItems() == 0)
-        cables.addItem ("(no virtual cable installed - see Settings > Virtual Cables)", false, false, nullptr);
-    m.addSubMenu ("Virtual Cable", cables);
-
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target).withMinimumWidth (target.getWidth()));
-}
-} // namespace IoMenus
 
 //==============================================================================
 StripHeader::StripHeader (UiContext& c, int sel, juce::String b, juce::Colour col,
@@ -301,6 +122,60 @@ void layoutRow (juce::Rectangle<int> row, std::initializer_list<juce::Component*
     }
 }
 
+juce::String agoText (double seconds)
+{
+    const int s = juce::jmax (0, (int) seconds);
+    if (s < 60) return juce::String (s) + " s ago";
+    return juce::String (s / 60) + " min " + juce::String (s % 60).paddedLeft ('0', 2) + " s ago";
+}
+
+/** Status symbols of a source / output chip: offline (red), dropouts of the last 2 minutes (yellow "!"),
+    something that needs attention (yellow dot). Each one explains itself in its tooltip. */
+std::vector<Chip::Status> statusFor (const Engine& engine, const IoTarget& t, bool input)
+{
+    using State = Engine::StreamHealth::State;
+    std::vector<Chip::Status> out;
+    const auto h = engine.getStreamHealth (t, input);
+    const auto name = t.describe();
+    switch (h.state)
+    {
+        case State::none:
+        case State::ok:
+            break;
+        case State::offline:
+            out.push_back ({ Chip::Marker::offline,
+                             "Offline: " + name + " is not running."
+                                 + (h.error.isNotEmpty() ? "\n" + h.error : juce::String())
+                                 + "\nIs it plugged in and not used exclusively by another app? Hydra retries every few seconds." });
+            break;
+        case State::waiting:
+            out.push_back ({ Chip::Marker::attention,
+                             "Waiting for the app: " + t.deviceName + " is not running or plays no sound yet.\n"
+                             "It is connected automatically as soon as it plays." });
+            break;
+        case State::noDriver:
+            out.push_back ({ Chip::Marker::attention,
+                             "Hydra Virtual has no driver yet - nothing is " + juce::String (input ? "received" : "sent") + " here.\n"
+                             "Use a virtual cable (VB-Cable, Virtual Audio Cable) instead: Settings > Virtual Cables." });
+            break;
+    }
+    if (const int n = h.recentTotal(); n > 0)
+    {
+        juce::String tip;
+        tip << n << (n == 1 ? " dropout" : " dropouts") << " in the last 2 minutes  (" << name << ")";
+        int lines = 0;
+        for (auto& d : h.recent)
+        {
+            if (++lines > 6) { tip << "\n   ..."; break; }
+            tip << "\n   " << (d.count > 1 ? juce::String (d.count) + " x  " : juce::String()) << agoText (d.secondsAgo);
+        }
+        tip << "\nA dropout is a short gap: the device's buffer ran empty or overflowed."
+               "\nIf it keeps happening, raise this device's buffer size (or the master's).";
+        out.push_back ({ Chip::Marker::dropouts, tip });
+    }
+    return out;
+}
+
 void styleSmallLabel (juce::Label& l)
 {
     l.setFont (theme::font (10.5f));
@@ -334,7 +209,7 @@ InputStripView::InputStripView (UiContext& c, int i)
         addAndMakeVisible (*list.back());
     }
 
-    source.onClick = [this] { IoMenus::showInputMenu (source, ctx, index, [this] { refresh(); }); };
+    source.onClick = [this] { ctx.select (index); if (ctx.openDevicePicker) ctx.openDevicePicker (index); };
     source.setTooltip ("Select input source (hardware, Windows device, virtual input or loopback)");
     addMouseListener (this, true);
 
@@ -411,8 +286,7 @@ void InputStripView::refresh()
     source.text = strip.source.describe();
     source.active = strip.source.kind != IoTarget::Kind::None;
     source.colour = source.active ? theme::text : theme::textDim;
-    sourceProblem = "?";   // check the new source's state with the next meter update
-    statusTick = 15;
+    statusTick = 15;   // check the new source's state with the next meter update
     source.repaint();
     repaint();
 }
@@ -421,19 +295,7 @@ void InputStripView::updateMeters (float dt)
 {
     meter.update (dt);
     if ((++statusTick & 15) == 0)
-    {
-        const auto problem = strip.source.kind == IoTarget::Kind::None    ? juce::String()
-                           : strip.source.kind == IoTarget::Kind::Virtual ? juce::String ("no driver - use a cable")
-                                                                           : ctx.engine.getStreamStatus (strip.source, true);
-        if (problem != sourceProblem)
-        {
-            sourceProblem = problem;
-            source.warning = problem.isNotEmpty();
-            source.setTooltip ((problem.isNotEmpty() ? strip.source.describe() + ":  " + problem + "\n" : juce::String())
-                               + "Select input source (hardware, Windows device, virtual input or loopback)");
-            source.repaint();
-        }
-    }
+        source.setStatus (statusFor (ctx.engine, strip.source, true));
 }
 
 void InputStripView::paint (juce::Graphics& g)
@@ -522,7 +384,7 @@ BusStripView::BusStripView (UiContext& c, int i)
                                                                &fader, &meter, &dbLabel })
         addAndMakeVisible (comp);
 
-    output.onClick = [this] { IoMenus::showOutputMenu (output, ctx, index, [this] { refresh(); }); };
+    output.onClick = [this] { ctx.select (busSelectIndex (index)); if (ctx.openDevicePicker) ctx.openDevicePicker (busSelectIndex (index)); };
     output.setTooltip ("Select output device for this bus");
     sel.setTooltip ("SEL: the input faders set the level of each input on " + busCode (i)
                     + " (separate from the other buses). With monitoring enabled in Settings > General, "
@@ -576,13 +438,9 @@ void BusStripView::updateMeters (float dt)
     }
     if ((++tick & 15) == 0)
     {
-        // Monitoring note, otherwise only problems (latency is shown in the Latency Finder).
-        if (monitorShown)
-            outputStatus.setText ("monitoring " + busCode (monSrc), juce::dontSendNotification);
-        else
-        outputStatus.setText (bus.output.kind == IoTarget::Kind::None ? juce::String()
-                              : bus.output.kind == IoTarget::Kind::Virtual ? juce::String ("no driver - use a cable")
-                              : ctx.engine.getStreamStatus (bus.output, false), juce::dontSendNotification);
+        // Monitoring note below the output; problems are symbols in the output chip.
+        outputStatus.setText (monitorShown ? "monitoring " + busCode (monSrc) : juce::String(), juce::dontSendNotification);
+        output.setStatus (statusFor (ctx.engine, bus.output, false));
     }
 }
 
@@ -1004,6 +862,14 @@ float StripArea::scaleFor (int paneHeight) const
     // No vertical scrolling: below the strips' minimum height they are drawn smaller.
     const int minHeight = InputStripView::minimumHeight (numHw, numVirt);
     return juce::jlimit (0.4f, 1.0f, (float) paneHeight / (float) minHeight);
+}
+
+int StripArea::idealWidth() const
+{
+    // Same scale as layoutPane; each pane rounded up so neither of them needs its scroll bar.
+    const float s = scaleFor (getHeight() - captionTop() - kCaptionHeight - StripPane::kScrollBar);
+    return (int) std::ceil ((float) inputsWidth (kStripWidth) * s) + (int) std::ceil ((float) outputsWidth (kStripWidth) * s)
+         + kDividerWidth + 1;
 }
 
 int StripArea::defaultSplit() const

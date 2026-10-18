@@ -304,6 +304,87 @@ inline void addRamp (float* dst, const float* src, int n, float g0, float g1) no
     for (int i = 0; i < n; ++i) { dst[i] += src[i] * g; g += step; }
 }
 
+/** Stereo delay for Sync Delay (aligning channels with different device latencies). Costs nothing while
+    the delay is 0. A new delay is reached with a short crossfade between the old and the new read position,
+    so changes (manual or the automatic sync following the drift buffers) do not click. */
+struct DelayLine
+{
+    static constexpr double kMaxMs = 500.0;
+
+    /** Allocates for kMaxMs at this rate (not on the audio thread). */
+    void prepare (double sampleRate)
+    {
+        size = (int) std::ceil (sampleRate * kMaxMs / 1000.0) + 1;
+        bufL.assign ((size_t) size, 0.0f);
+        bufR.assign ((size_t) size, 0.0f);
+        fadeLen = juce::jmax (16, (int) (sampleRate * 0.01));   // 10 ms
+        write = written = current = previous = fadeLeft = 0;
+        active = false;
+    }
+
+    int maxDelay() const noexcept { return size - 1; }
+    int getDelay() const noexcept { return current; }
+
+    void process (float* l, float* r, int n, int wanted) noexcept
+    {
+        if (size <= 1) return;
+        wanted = juce::jlimit (0, size - 1, wanted);
+        if (! active)
+        {
+            if (wanted == 0) return;
+            // Nothing was recorded while the delay was 0: the history starts now. Reads from before that are
+            // silent and the recorded signal fades in, so it does not start with a jump.
+            write = current = written = 0;
+            active = true;
+        }
+        if (fadeLeft == 0 && wanted != current)
+        {
+            previous = current;
+            current = wanted;
+            fadeLeft = fadeLen;
+        }
+        float* L = bufL.data();
+        float* R = bufR.data();
+        auto tap = [&] (int d, float& outL, float& outR)
+        {
+            if (d == 0) { outL = L[write]; outR = R[write]; return; }   // the direct signal
+            const int age = written - d;   // samples recorded before the one d samples ago (>= 1: it exists)
+            if (age <= 0) { outL = outR = 0.0f; return; }
+            int rd = write - d;
+            if (rd < 0) rd += size;
+            const float g = age >= fadeLen ? 1.0f : (float) age / (float) fadeLen;
+            outL = L[rd] * g;
+            outR = R[rd] * g;
+        };
+        for (int i = 0; i < n; ++i)
+        {
+            L[write] = l[i];
+            R[write] = r[i];
+            if (written < size + fadeLen) ++written;
+            float outL, outR;
+            tap (current, outL, outR);
+            if (fadeLeft > 0)
+            {
+                float pl, pr;
+                tap (previous, pl, pr);
+                const float t = (float) fadeLeft / (float) fadeLen;   // weight of the old position
+                outL += t * (pl - outL);
+                outR += t * (pr - outR);
+                --fadeLeft;
+            }
+            l[i] = outL;
+            r[i] = outR;
+            if (++write == size) write = 0;
+        }
+        if (current == 0 && fadeLeft == 0) active = false;   // back to zero delay: stop recording
+    }
+
+private:
+    std::vector<float> bufL, bufR;
+    int size = 0, write = 0, written = 0, current = 0, previous = 0, fadeLeft = 0, fadeLen = 480;
+    bool active = false;
+};
+
 inline float peak (const float* x, int n) noexcept
 {
     auto r = juce::FloatVectorOperations::findMinAndMax (x, n);

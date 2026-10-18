@@ -263,7 +263,7 @@ TopBar::TopBar (UiContext& c) : ctx (c), recorder (c)
     maximiseBtn.onClick = [window] { if (auto* w = window()) w->maximiseButtonPressed(); };
     closeBtn.onClick    = [window] { if (auto* w = window()) w->closeButtonPressed(); };
     cassette.onClick = [this] { ctx.select (kRecorderSelect); };
-    tools.setTooltip ("Tools: Scene Editor, MIDI Learn, MIDI Map, Latency Finder, DSP Load, Recorder");
+    tools.setTooltip ("Tools: Scene Editor, MIDI Learn, MIDI Map, Latency Finder, Sync Delay, DSP Load, Recorder, Restart Audio Engine");
     cassette.setTooltip ("Recorder - click to show it below");
     settings.setTooltip ("Settings: audio engine, MIDI, plugins, monitoring, tray");
     power.setTooltip ("Shut down Hydra Mixer");
@@ -509,6 +509,7 @@ MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys
     ctx.removeChannel = [this] (int sel) { removeChannel (sel); };
     inspector.onScanRequested = [this] { openSettings (3); }; // Plugins tab
     ctx.openEqWindow = [this] (int i) { openEqWindow (i); };
+    ctx.openDevicePicker = [this] (int i) { openDevicePicker (i); };
     ctx.prefsChanged = [this] { if (onPrefsChanged) onPrefsChanged(); };
     ctx.shutdown = [this]
     {
@@ -522,17 +523,9 @@ MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys
     top.power.onClick = [this]
     {
         juce::Component::SafePointer<MainComponent> safe (this);
-        juce::AlertWindow::showAsync (juce::MessageBoxOptions()
-                                          .withIconType (juce::MessageBoxIconType::QuestionIcon)
-                                          .withTitle ("Shut down Hydra Mixer?")
-                                          .withMessage ("All audio routing stops until Hydra Mixer is started again.")
-                                          .withButton ("Shut down")
-                                          .withButton ("Cancel")
-                                          .withAssociatedComponent (this),
-                                      [safe] (int result)
-                                      {
-                                          if (result == 1 && safe != nullptr && safe->ctx.shutdown) safe->ctx.shutdown();
-                                      });
+        dialog::confirm (this, dialog::Kind::danger, "Shut down Hydra Mixer?",
+                         "All audio routing stops until Hydra Mixer is started again.", "Shut down",
+                         [safe] { if (safe != nullptr && safe->ctx.shutdown) safe->ctx.shutdown(); });
     };
     top.tools.onClick = [this] { showToolsMenu(); };
     top.dsp.onClick = [this] { openDspView(); };
@@ -587,6 +580,8 @@ MainComponent::~MainComponent()
     eqWindow.reset();
     latencyWindow.reset();
     dspWindow.reset();
+    syncWindow.reset();
+    deviceWindow.reset();
 }
 
 void MainComponent::select (int index)
@@ -661,18 +656,13 @@ void MainComponent::removeChannel (int sel)
     const bool isInput = sel < kMaxInputs;
     const auto name = isInput ? ctx.engine.inputs[(size_t) sel].name : ctx.engine.buses[(size_t) (sel - kMaxInputs)].name;
     juce::Component::SafePointer<MainComponent> safe (this);
-    juce::AlertWindow::showAsync (juce::MessageBoxOptions()
-                                      .withIconType (juce::MessageBoxIconType::QuestionIcon)
-                                      .withTitle ("Remove " + channelCode (sel) + "  \"" + name + "\"?")
-                                      .withMessage (juce::String ("Its settings, plugins, MIDI mappings and shortcuts are reset")
-                                                    + (isInput ? "." : ", and no input is routed to it any more.")
-                                                    + " The channel can be added again with the + button.")
-                                      .withButton ("Remove")
-                                      .withButton ("Cancel")
-                                      .withAssociatedComponent (this),
-                                  [safe, sel] (int result)
+    dialog::confirm (this, dialog::Kind::danger, "Remove " + channelCode (sel) + "  \"" + name + "\"?",
+                     juce::String ("Its settings, plugins, MIDI mappings and shortcuts are reset")
+                         + (isInput ? "." : ", and no input is routed to it any more.")
+                         + " The channel can be added again with the + button.",
+                     "Remove", [safe, sel]
     {
-        if (result != 1 || safe == nullptr) return;
+        if (safe == nullptr) return;
         auto& self = *safe;
         auto& e = self.ctx.engine;
         // Leave the channel first: the inspector / EQ window hold references to its plugins and parameters.
@@ -776,25 +766,21 @@ void MainComponent::finishReorder()
     if (keys > 0) what << (maps > 0 ? " and " : "") << keys << (keys == 1 ? " keyboard shortcut" : " keyboard shortcuts");
 
     juce::Component::SafePointer<MainComponent> safe (this);
-    juce::AlertWindow::showAsync (juce::MessageBoxOptions()
-                                      .withIconType (juce::MessageBoxIconType::QuestionIcon)
-                                      .withTitle ("Apply the new order")
-                                      .withMessage (what + (maps + keys == 1 ? " belongs" : " belong") + " to channels that move.\n\n"
-                                                    "Follow the channels: your controller keeps controlling the same channels "
-                                                    "(e.g. the fader for your mic still moves the mic).\n"
-                                                    "Keep positions: each control stays on its position (fader 1 controls "
-                                                    "whatever channel is first now).\n\n" + example)
-                                      .withButton ("Follow the channels")
-                                      .withButton ("Keep positions")
-                                      .withButton ("Back")
-                                      .withAssociatedComponent (this),
-                                  [safe, order] (int result)
-                                  {
-                                      if (safe == nullptr || ! safe->strips.isReordering()) return;
-                                      if (result == 1) safe->applyReorder (order, true);
-                                      else if (result == 2) safe->applyReorder (order, false);
-                                      // Back (or closed): stay in Change Order mode.
-                                  });
+    using Role = dialog::Button::Role;
+    dialog::show (this, dialog::Kind::question, "Apply the new order",
+                  what + (maps + keys == 1 ? " belongs" : " belong") + " to channels that move.\n\n"
+                  "Follow the channels: your controller keeps controlling the same channels "
+                  "(e.g. the fader for your mic still moves the mic).\n"
+                  "Keep positions: each control stays on its position (fader 1 controls "
+                  "whatever channel is first now).\n\n" + example,
+                  { { "Follow the channels", Role::primary }, { "Keep positions", Role::normal }, { "Back", Role::cancel } },
+                  [safe, order] (int result)
+                  {
+                      if (safe == nullptr || ! safe->strips.isReordering()) return;
+                      if (result == 0) safe->applyReorder (order, true);
+                      else if (result == 1) safe->applyReorder (order, false);
+                      // Back (or cancelled): stay in Change Order mode.
+                  });
 }
 
 void MainComponent::applyReorder (const std::array<std::vector<int>, 3>& order, bool follow)
@@ -833,6 +819,7 @@ void MainComponent::applyReorder (const std::array<std::vector<int>, 3>& order, 
         }
     }
     undo.clear(); // the values moved between channels: undo must not move them back one by one
+    deviceWindow.reset(); // its channel number may now belong to another channel
 
     const int sel = newIndex (ctx.selected);
     rebuildStrips();
@@ -923,6 +910,16 @@ void MainComponent::toggleSceneEditor()
     repaint();
 }
 
+void MainComponent::restartAudioEngine()
+{
+    // Closing the master releases the graph and with it every stream; secondary drivers close when their last
+    // stream goes and are opened again by the new graph.
+    const auto cfg = ctx.engine.getMasterConfig();
+    const auto err = ctx.engine.setMasterConfig (cfg);
+    refreshAll();
+    showToast (err.isEmpty() ? juce::String ("Audio engine restarted") : "Restart failed: " + err, 3.5);
+}
+
 void MainComponent::showToolsMenu()
 {
     // All tools in one place (the top bar only has room for the wrench).
@@ -936,8 +933,11 @@ void MainComponent::showToolsMenu()
     m.addItem ("MIDI Map...", run (&MainComponent::openMidiMap));
     m.addSeparator();
     m.addItem ("Latency Finder...", run (&MainComponent::openLatencyFinder));
+    m.addItem ("Sync Delay...", run (&MainComponent::openSyncDelay));
     m.addItem ("DSP Load...", run (&MainComponent::openDspView));
     m.addItem ("Recorder", [safe] { if (safe != nullptr) safe->select (kRecorderSelect); });
+    m.addSeparator();
+    m.addItem ("Restart Audio Engine", run (&MainComponent::restartAudioEngine));
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&top.tools).withMinimumWidth (200));
 }
 
@@ -987,6 +987,43 @@ void MainComponent::openDspView()
     dspWindow->setResizeLimits (760, 480, 8000, 4000);
     dspWindow->setVisible (true);
     dspWindow->toFront (true);
+}
+
+void MainComponent::openSyncDelay()
+{
+    if (syncWindow == nullptr)
+        makeToolWindow (syncWindow, "Hydra Mixer - Sync Delay", new SyncDelayView (ctx), 1180, 640);
+    syncWindow->setResizeLimits (720, 360, 8000, 4000);
+    syncWindow->setVisible (true);
+    syncWindow->toFront (true);
+}
+
+void MainComponent::openDevicePicker (int channel)
+{
+    if (channel < 0 || channel >= kRecorderSelect) return;
+    auto* picker = new DevicePicker (ctx, channel);
+    picker->onChanged = [this] { refreshAll(); };
+    juce::Component::SafePointer<MainComponent> safe (this);
+    juce::Component::SafePointer<DevicePicker> self (picker);
+    // Async: the call comes from inside the window that is destroyed. Only if it still shows this picker.
+    picker->onClose = [safe, self]
+    {
+        juce::MessageManager::callAsync ([safe, self]
+        {
+            if (safe != nullptr && self != nullptr && safe->deviceWindow != nullptr
+                && safe->deviceWindow->getContentComponent() == self.getComponent())
+                safe->deviceWindow.reset();
+        });
+    };
+    const auto title = DevicePicker::windowTitle (ctx, channel);
+    if (deviceWindow == nullptr)
+        makeToolWindow (deviceWindow, title, picker, picker->getWidth(), picker->getHeight());
+    else
+        deviceWindow->replaceContent (picker, title);
+    deviceWindow->setResizeLimits (640, 420, 8000, 4000);
+    deviceWindow->setVisible (true);
+    deviceWindow->toFront (true);
+    picker->grabKeyboardFocus();
 }
 
 void MainComponent::assignCapturedKey (const juce::KeyPress& k)
@@ -1112,6 +1149,12 @@ void MainComponent::paintOverChildren (juce::Graphics& g)
         g.setFont (theme::font (13.5f, true));
         g.drawFittedText (toast, r.reduced (14, 0), juce::Justification::centred, 1, 0.8f);
     }
+}
+
+int MainComponent::idealWidth() const
+{
+    const int logical = strips.idealWidth() + (sceneBar != nullptr ? sceneBar->getWidth() : 0);
+    return (int) std::ceil ((float) logical * uiScale);
 }
 
 void MainComponent::resized()

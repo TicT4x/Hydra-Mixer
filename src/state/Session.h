@@ -60,6 +60,8 @@ public:
     };
 
     juce::String windowState;          // stored with the session
+    MasterConfig requestedMaster;      // master device as the loaded session asked for it
+    bool waitingForMaster = false;     // requestedMaster is not open yet (startup with Windows): save it, not the fallback
     AppPrefs prefs;
     std::atomic<uint32_t> prefsVersion { 0 };   // bump after changing prefs (autosave + tray update)
     Hotkeys* hotkeys = nullptr;        // optional: keyboard shortcuts are stored with the session

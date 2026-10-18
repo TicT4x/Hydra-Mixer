@@ -226,6 +226,7 @@ public:
         if (error.isNotEmpty()) return false;
 
         setup (device->getCurrentSampleRate(), device->getCurrentBufferSizeSamples(), numCh, engRate, engBlock);
+        deviceLatencyFrames = device->getInputLatencyInSamples();
         return true;
     }
 
@@ -263,6 +264,7 @@ public:
         if (error.isNotEmpty()) return false;
 
         setup (device->getCurrentSampleRate(), device->getCurrentBufferSizeSamples(), numCh, engRate, engBlock);
+        deviceLatencyFrames = device->getOutputLatencyInSamples();
         return true;
     }
 

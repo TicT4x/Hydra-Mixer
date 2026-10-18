@@ -28,9 +28,33 @@ void ShareChart::setParts (std::vector<Part> newParts, double newTotal)
         rankSteady (newParts, order, [] (const Part& p) { return p.key; }, [] (const Part& p) { return p.value; }, newTotal * 0.002);
     else
         std::stable_sort (newParts.begin(), newParts.end(), [] (const Part& a, const Part& b) { return a.value > b.value; });
+    // The ring and the bars start where the same part was drawn before (new parts grow from zero).
+    std::vector<double> from;
+    for (auto& p : newParts)
+    {
+        double v = 0.0;
+        for (size_t k = 0; k < parts.size() && k < shown.size(); ++k)
+            if (parts[k].key == p.key) { v = shown[k]; break; }
+        from.push_back (v);
+    }
+    if (parts.empty()) { from.clear(); for (auto& p : newParts) from.push_back (p.value); totalShown = newTotal; }
     parts = std::move (newParts);
+    shown = std::move (from);
     total = newTotal;
+    animating = true;
     repaint();
+}
+
+void ShareChart::frame (double timestamp)
+{
+    const double dt = clock.step (timestamp);
+    if (! animating) return;
+    const double eps = juce::jmax (1.0e-6, total * 0.001);
+    bool moved = glide (totalShown, total, dt, eps);
+    for (size_t k = 0; k < parts.size() && k < shown.size(); ++k)
+        moved |= glide (shown[k], parts[k].value, dt, eps);
+    animating = moved;
+    if (moved) repaint();
 }
 
 void ShareChart::paint (juce::Graphics& g)
@@ -62,9 +86,13 @@ void ShareChart::paint (juce::Graphics& g)
         const float thickness = d * 0.2f, radius = d * 0.5f - thickness * 0.5f;
         const float gap = parts.size() > 1 ? 0.012f : 0.0f;
         float angle = 0.0f;
-        for (auto& p : parts)
+        double shownSum = 0.0;
+        for (auto v : shown) shownSum += v;
+        const double ring = juce::jmax (shownSum, totalShown, 1.0e-12);   // segments always close the ring
+        for (size_t k = 0; k < parts.size(); ++k)
         {
-            const float span = juce::MathConstants<float>::twoPi * (float) juce::jmin (1.0, p.value / total);
+            const auto& p = parts[k];
+            const float span = juce::MathConstants<float>::twoPi * (float) juce::jmin (1.0, (k < shown.size() ? shown[k] : p.value) / ring);
             juce::Path seg;
             seg.addCentredArc (pie.getCentreX(), pie.getCentreY(), radius, radius, 0.0f, angle + gap, angle + juce::jmax (gap, span - gap), true);
             g.setColour (p.colour);
@@ -98,13 +126,13 @@ void ShareChart::paint (juce::Graphics& g)
         auto row = r.removeFromTop (rowH);
         const bool rest = i == rowsShown - 1 && rowsShown < (int) parts.size();
         const auto& p = parts[(size_t) i];
-        double value = p.value;
+        double value = p.value, barValue = (size_t) i < shown.size() ? shown[(size_t) i] : p.value;
         juce::String label = p.label;
         juce::Colour colour = p.colour;
         if (rest)
         {
-            value = 0.0;
-            for (size_t k = (size_t) i; k < parts.size(); ++k) value += parts[k].value;
+            value = barValue = 0.0;
+            for (size_t k = (size_t) i; k < parts.size(); ++k) { value += parts[k].value; barValue += k < shown.size() ? shown[k] : parts[k].value; }
             label = juce::String ((int) parts.size() - i) + " more";
             colour = theme::textFaint;
         }
@@ -132,7 +160,7 @@ void ShareChart::paint (juce::Graphics& g)
         g.setColour (theme::panel2);
         g.fillRoundedRectangle (bar, 3.0f);
         g.setColour (colour.withAlpha (0.9f));
-        g.fillRoundedRectangle (bar.withWidth (juce::jmax (3.0f, bar.getWidth() * (float) juce::jmin (1.0, value / total))), 3.0f);
+        g.fillRoundedRectangle (bar.withWidth (juce::jmax (3.0f, bar.getWidth() * (float) juce::jmin (1.0, barValue / juce::jmax (totalShown, 1.0e-12)))), 3.0f);
     }
 }
 

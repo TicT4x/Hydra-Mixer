@@ -153,6 +153,9 @@ void Engine::createParams()
         s.dnAmount     = &params.add (p + "dn.amount", n + "Denoiser Amount", ParamType::Continuous, linRange (0, 100, 1.0f), 100.0f, " %");
         s.dnMode       = &params.addChoice (p + "dn.mode", n + "Denoiser Latency Mode", dsp::Denoiser::modeNames(), dsp::Denoiser::Low);
         s.fxBypass   = &params.addToggle (p + "fx.bypass", n + "FX Bypass");
+        s.syncOn     = &params.addToggle (p + "sync", n + "Sync Delay Auto");
+        s.delayMs    = &params.add (p + "delay", n + "Sync Delay", ParamType::Continuous,
+                                    linRange (0, (float) dsp::DelayLine::kMaxMs, 0.1f), 0.0f, " ms");
         for (int b = 0; b < kMaxBuses; ++b)
             s.route[(size_t) b] = &params.addToggle (p + "route." + busCode (b), n + "-> " + busCode (b), b == 0);
         for (int b = 0; b < kMaxBuses; ++b)
@@ -175,6 +178,9 @@ void Engine::createParams()
         bus.limCeil  = &params.add (p + "lim.ceiling", n + "Limiter Ceiling", ParamType::Continuous, linRange (-30, 0, 0.1f), 0.0f, " dB");
         bus.fxBypass = &params.addToggle (p + "fx.bypass", n + "FX Bypass");
         bus.sel      = &params.addToggle (p + "sel", n + "Select (SEL)");
+        bus.syncOn   = &params.addToggle (p + "sync", n + "Sync Delay Auto");
+        bus.delayMs  = &params.add (p + "delay", n + "Sync Delay", ParamType::Continuous,
+                                    linRange (0, (float) dsp::DelayLine::kMaxMs, 0.1f), 0.0f, " ms");
     }
 
     monOn  = &params.addToggle ("mon.on", "Monitor Selected Bus");
@@ -486,20 +492,49 @@ double Engine::getMasterLatencyMs() const
     return 1000.0 * frames / sampleRate;
 }
 
-double Engine::getIoLatencyMs (const IoTarget& t, bool input) const
+Engine::IoLatency Engine::getIoLatency (const IoTarget& t, bool input) const
 {
+    IoLatency l;
     if (t.kind == IoTarget::Kind::Master || isMasterAsio (t))
     {
-        if (masterDevice == nullptr) return -1.0;
-        const int frames = masterDevice->getCurrentBufferSizeSamples()
-                         + (input ? masterDevice->getInputLatencyInSamples() : masterDevice->getOutputLatencyInSamples());
-        return 1000.0 * frames / sampleRate;
+        if (masterDevice == nullptr || sampleRate <= 0) return l;
+        l.online = l.masterClock = true;
+        l.bufferFrames = masterDevice->getCurrentBufferSizeSamples();
+        l.deviceRate = sampleRate;
+        l.bufferMs = 1000.0 * l.bufferFrames / sampleRate;
+        l.driverMs = 1000.0 * (input ? masterDevice->getInputLatencyInSamples() : masterDevice->getOutputLatencyInSamples()) / sampleRate;
+        return l;
     }
-    if (current == nullptr) return -1.0;
-    auto ms = [] (const AsyncStream& s) { return 1000.0 * (s.latencyFrames.load() + s.deviceLatencyFrames) / juce::jmax (1.0, s.getDeviceRate()); };
-    if (input) { for (auto& s : current->ins)  if (s->target.sameStream (t)) return ms (*s); }
-    else       { for (auto& s : current->outs) if (s->target.sameStream (t)) return ms (*s); }
-    return -1.0;
+    if (current == nullptr) return l;
+    auto fill = [&l] (const AsyncStream& s)
+    {
+        if (s.failed.load()) return;
+        const double rate = juce::jmax (1.0, s.getDeviceRate());
+        l.online = true;
+        l.bufferFrames = s.getDeviceBlock();
+        l.deviceRate = rate;
+        l.driverMs = 1000.0 * s.deviceLatencyFrames / rate;
+        l.clockSyncMs = 1000.0 * s.latencyFrames.load() / rate;
+    };
+    if (input) { for (auto& s : current->ins)  if (s->target.sameStream (t)) { fill (*s); return l; } }
+    else       { for (auto& s : current->outs) if (s->target.sameStream (t)) { fill (*s); return l; } }
+    return l;
+}
+
+double Engine::getIoLatencyMs (const IoTarget& t, bool input) const
+{
+    const auto l = getIoLatency (t, input);
+    return l.online ? l.total() : -1.0;
+}
+
+double Engine::pluginLatencyMs (const PluginChain& chain, const Param& bypassAll) const
+{
+    if (bypassAll.isOn() || sampleRate <= 0) return 0.0;
+    int samples = 0;
+    for (int i = 0; i < chain.size(); ++i)
+        if (auto* s = chain.getSlot (i); s != nullptr && ! s->bypassed && s->instance != nullptr)
+            samples += s->instance->getLatencySamples();
+    return 1000.0 * samples / sampleRate;
 }
 
 std::vector<std::pair<juce::String, uint64_t>> Engine::getStreamDspTicks() const
@@ -519,23 +554,158 @@ std::vector<std::pair<juce::String, uint64_t>> Engine::getStreamDspTicks() const
     return out;
 }
 
-juce::String Engine::getStreamStatus (const IoTarget& t, bool input) const
+Engine::StreamHealth Engine::getStreamHealth (const IoTarget& t, bool input) const
 {
-    if (t.kind == IoTarget::Kind::Master || isMasterAsio (t))
-        return masterDevice != nullptr ? juce::String() : "offline";
+    StreamHealth h;
+    if (t.kind == IoTarget::Kind::None) return h;
+    if (t.kind == IoTarget::Kind::Virtual) { h.state = StreamHealth::State::noDriver; return h; }
 
-    if (current == nullptr) return "offline";
-
-    auto fmt = [] (const AsyncStream& s)
+    const auto nowMs = juce::Time::currentTimeMillis();
+    auto collect = [&h, nowMs] (const DropoutLog& log)
     {
-        if (s.idle.load()) return juce::String ("waiting for app");
-        if (const int u = s.underruns.load(); u > 0) return juce::String (u) + (u == 1 ? " dropout" : " dropouts");
+        for (auto it = log.events.rbegin(); it != log.events.rend(); ++it)
+            h.recent.push_back ({ it->second, (double) (nowMs - it->first) / 1000.0 });
+    };
+    auto errorFor = [this, &t]
+    {
+        juce::StringArray lines;
+        lines.addLines (lastError);
+        for (auto& line : lines)
+            if (line.startsWith (t.describe() + ":")) return line.fromFirstOccurrenceOf (":", false, false).trim();
         return juce::String();
     };
 
-    if (input) { for (auto& s : current->ins)  if (s->target.sameStream (t)) return fmt (*s); }
-    else       { for (auto& s : current->outs) if (s->target.sameStream (t)) return fmt (*s); }
-    return "offline";
+    if (t.kind == IoTarget::Kind::Master || isMasterAsio (t))
+    {
+        if (masterDevice == nullptr) { h.state = StreamHealth::State::offline; h.error = lastError; return h; }
+        h.state = StreamHealth::State::ok;
+        collect (masterDropouts);
+        return h;
+    }
+
+    const AsyncStream* found = nullptr;
+    if (current != nullptr)
+    {
+        if (input) { for (auto& s : current->ins)  if (s->target.sameStream (t)) found = s.get(); }
+        else       { for (auto& s : current->outs) if (s->target.sameStream (t)) found = s.get(); }
+    }
+    if (found == nullptr || found->failed.load())
+    {
+        h.state = StreamHealth::State::offline;
+        h.error = found != nullptr && found->error.isNotEmpty() ? found->error : errorFor();
+        return h;
+    }
+    h.state = found->idle.load() ? StreamHealth::State::waiting : StreamHealth::State::ok;
+    if (auto it = dropoutLogs.find (found); it != dropoutLogs.end()) collect (it->second);
+    return h;
+}
+
+void Engine::updateDropoutLogs()
+{
+    // Dropout counters only grow; remember when they grew, forget what is older than the window.
+    const auto nowMs = juce::Time::currentTimeMillis();
+    const auto oldest = nowMs - (juce::int64) (kDropoutWindowSeconds * 1000.0);
+    auto track = [nowMs, oldest] (DropoutLog& log, int count)
+    {
+        if (count < log.seen) log.seen = count;   // counter restarted (device reopened)
+        if (count > log.seen) log.events.emplace_back (nowMs, count - log.seen);
+        log.seen = count;
+        while (! log.events.empty() && log.events.front().first < oldest) log.events.erase (log.events.begin());
+    };
+
+    if (masterDevice != nullptr)
+        if (const int x = masterDevice->getXRunCount(); x >= 0) track (masterDropouts, x);
+
+    std::map<const AsyncStream*, DropoutLog> next;
+    if (current != nullptr)
+    {
+        auto keep = [&] (const AsyncStream& s)
+        {
+            auto& log = next[&s];
+            if (auto it = dropoutLogs.find (&s); it != dropoutLogs.end()) log = std::move (it->second);
+            else log.seen = s.underruns.load();   // a new stream: count only what happens from now on
+            track (log, s.underruns.load());
+        };
+        for (auto& s : current->ins)  keep (*s);
+        for (auto& s : current->outs) keep (*s);
+    }
+    dropoutLogs = std::move (next);
+}
+
+//==============================================================================
+double Engine::getChannelDelayMs (int ch) const noexcept
+{
+    const Param* manual = ch < kMaxInputs ? inputs[(size_t) ch].delayMs : buses[(size_t) (ch - kMaxInputs)].delayMs;
+    return juce::jlimit (0.0, dsp::DelayLine::kMaxMs, (double) autoDelayMs[(size_t) ch].load (std::memory_order_relaxed) + manual->get());
+}
+
+int Engine::delaySamples (int ch) const noexcept
+{
+    return juce::roundToInt (getChannelDelayMs (ch) * sampleRate / 1000.0);
+}
+
+void Engine::updateSyncDelays()
+{
+    // 1. Latency of every channel without its own delay, smoothed (~1 s): the fill level of the drift buffers
+    //    moves a little all the time. A big jump (other device, plugin added) is taken at once.
+    for (int ch = 0; ch < kMaxInputs + kMaxBuses; ++ch)
+    {
+        auto& st = syncStates[(size_t) ch];
+        double ms = -1.0;
+        bool on = false;
+        if (ch < kMaxInputs)
+        {
+            const auto& s = inputs[(size_t) ch];
+            st.group = (int) Group::inputs;
+            on = s.syncOn->isOn();
+            if (s.active->isOn() && s.source.kind != IoTarget::Kind::None)
+                if (const double dev = getIoLatencyMs (s.source, true); dev >= 0.0)
+                    ms = dev + (s.dnOn->isOn() ? 1000.0 * s.dspLatency.load() / juce::jmax (1.0, sampleRate) : 0.0)
+                       + pluginLatencyMs (s.plugins, *s.fxBypass);
+        }
+        else
+        {
+            const int b = ch - kMaxInputs;
+            const auto& bus = buses[(size_t) b];
+            st.group = (int) (isHwBus (b) ? Group::hwBuses : Group::virtBuses);
+            on = bus.syncOn->isOn();
+            if (bus.active->isOn() && bus.output.kind != IoTarget::Kind::None)
+                if (const double dev = getIoLatencyMs (bus.output, false); dev >= 0.0)
+                    ms = dev + pluginLatencyMs (bus.plugins, *bus.fxBypass);
+        }
+        if (ms < 0.0 || st.measuredMs < 0.0 || std::abs (ms - st.measuredMs) > 5.0) st.measuredMs = ms;
+        else st.measuredMs += 0.1 * (ms - st.measuredMs);
+        st.member = on && st.measuredMs >= 0.0;
+        st.reference = false;
+    }
+
+    // 2. Per group: every member is delayed up to the slowest member. Changes below 0.5 ms are ignored,
+    //    so the delay does not follow the jitter of the drift buffers.
+    for (int group = 0; group < 3; ++group)
+    {
+        double slowest = -1.0;
+        int ref = -1, members = 0;
+        for (int ch = 0; ch < kMaxInputs + kMaxBuses; ++ch)
+            if (const auto& st = syncStates[(size_t) ch]; st.group == group && st.member)
+            {
+                ++members;
+                if (st.measuredMs > slowest) { slowest = st.measuredMs; ref = ch; }
+            }
+        for (int ch = 0; ch < kMaxInputs + kMaxBuses; ++ch)
+        {
+            auto& st = syncStates[(size_t) ch];
+            if (st.group != group) continue;
+            double wanted = 0.0;
+            if (st.member && members > 1)
+            {
+                wanted = juce::jlimit (0.0, dsp::DelayLine::kMaxMs, slowest - st.measuredMs);
+                st.reference = ch == ref;
+            }
+            if (std::abs (wanted - st.autoMs) >= 0.5 || (wanted == 0.0 && st.autoMs != 0.0))
+                st.autoMs = wanted;
+            autoDelayMs[(size_t) ch].store ((float) st.autoMs, std::memory_order_relaxed);
+        }
+    }
 }
 
 //==============================================================================
@@ -550,6 +720,8 @@ void Engine::closeMaster()
     running = false;
     live.store (nullptr);
     graveyard.clear();
+    dropoutLogs.clear();
+    masterDropouts = {};
     if (current != nullptr)
     {
         for (auto& s : current->ins)  s->stop();
@@ -800,6 +972,8 @@ void Engine::enforceExclusiveSelect()
 void Engine::timerCallback()
 {
     enforceExclusiveSelect();
+    updateDropoutLogs();
+    updateSyncDelays();
 
     const auto now = callbackCount.load();
     for (auto it = graveyard.begin(); it != graveyard.end();)
@@ -845,6 +1019,7 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
         s.gate.prepare (sampleRate);
         s.comp.prepare (sampleRate);
         s.denoiser->prepare (sampleRate);
+        s.delay.prepare (sampleRate);
         s.dnWasOn = false;
         s.lastTrim = 1; s.lastL = s.lastR = 0;
         s.lastRoute.fill (0.0f);
@@ -855,6 +1030,7 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
     {
         b.eq.prepare();
         b.limiter.prepare (sampleRate);
+        b.delay.prepare (sampleRate);
         b.lastGain = 0;
     }
     prepareChains();
@@ -1114,6 +1290,9 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
         s.plugins.process (l, r, n, timed);
     lap (DspTimes::plugins);
 
+    // Sync Delay (aligns this input with slower ones); nothing to do while it is 0.
+    s.delay.process (l, r, n, delaySamples (s.index));
+
     if (s.mono->isOn())
     {
         juce::FloatVectorOperations::add (l, r, n);
@@ -1209,6 +1388,8 @@ void Engine::processBus (Bus& b, int n, bool timed) noexcept
     if (b.limOn->isOn())
         b.limiter.process (l, r, n, b.limCeil->get());
     lap (DspTimes::limiter);
+
+    b.delay.process (l, r, n, delaySamples (busChannel (b.index)));
 
     if (! muted)
         b.meter.push (dsp::peak (l, n), dsp::peak (r, n));

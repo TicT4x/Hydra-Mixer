@@ -112,6 +112,8 @@ SceneSidebar::SceneSidebar (UiContext& c, SceneBank& b) : ctx (c), bank (b)
         addAndMakeVisible (chip);
     }
     exportChip.showArrow = true;
+    saveChip.icon = Chip::Icon::save;
+    revertChip.icon = Chip::Icon::revert;
     closeChip.setTooltip ("Close the Scene Editor");
     addChip.setTooltip ("New scene from the current mixer settings");
     importChip.setTooltip ("Add scenes from a .hydrascenes file");
@@ -275,16 +277,11 @@ void SceneSidebar::deleteScene (int i)
 {
     if (! juce::isPositiveAndBelow (i, bank.size())) return;
     juce::Component::SafePointer<SceneSidebar> safe (this);
-    juce::AlertWindow::showAsync (juce::MessageBoxOptions()
-                                      .withIconType (juce::MessageBoxIconType::QuestionIcon)
-                                      .withTitle ("Delete scene \"" + bank.get (i).name + "\"?")
-                                      .withMessage ("Its MIDI assignment and shortcut are removed too. The mixer itself does not change.")
-                                      .withButton ("Delete")
-                                      .withButton ("Cancel")
-                                      .withAssociatedComponent (this),
-                                  [safe, i] (int result)
+    dialog::confirm (this, dialog::Kind::danger, "Delete scene \"" + bank.get (i).name + "\"?",
+                     "Its MIDI assignment and shortcut are removed too. The mixer itself does not change.",
+                     "Delete", [safe, i]
                                   {
-                                      if (result != 1 || safe == nullptr) return;
+                                      if (safe == nullptr) return;
                                       Param* removed = nullptr;
                                       const auto moves = safe->bank.remove (i, removed);
                                       safe->applyTriggerMoves (moves, removed);

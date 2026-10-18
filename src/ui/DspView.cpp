@@ -6,8 +6,6 @@ namespace
 {
 /** Below this a switched-off stage counts as measuring noise (added to the rest instead of shown). */
 constexpr double kNoise = 0.02;
-/** Glide of the shown values towards the measured ones per tick (10 Hz): ~0.3 s to settle. */
-constexpr double kGlide = 0.35;
 
 const std::array<juce::String, DspView::numColumns> kColumnNames { "Denoiser", "EQ", "Gate", "Comp", "Plugins", "Limiter", "Rest" };
 const std::array<juce::Colour, DspView::numColumns> kColumnColours { theme::good, theme::accentIn, theme::solo, theme::accentHw,
@@ -28,7 +26,6 @@ public:
     explicit Table (UiContext& c) : ctx (c) {}
     std::vector<Row> rows;
     double maxCell = 0.0, maxTotal = 0.0;
-    bool writeNumbers = true;   // numbers are rewritten ~3x per second, bars every tick
 
     static constexpr int kPad = 6, kNameW = 210, kTotalW = 180, kHeadH = 26, kRowH = 34, kMinColW = 74;
 
@@ -83,7 +80,7 @@ public:
             // Total: number + bar relative to the heaviest row
             auto total = r.removeFromLeft (kTotalW).reduced (4, 0);
             g.setFont (theme::mono (12.5f));
-            g.setColour (row.totalShown >= 25.0 ? theme::warn : theme::text);
+            g.setColour (row.totalLabel >= 25.0 ? theme::warn : theme::text);
             g.drawText (percent (row.totalLabel), total.removeFromLeft (68), juce::Justification::centredLeft);
             auto bar = total.withSizeKeepingCentre (total.getWidth() - 8, 6).toFloat();
             g.setColour (theme::bg);
@@ -117,8 +114,8 @@ public:
             const int col = columnAt (e.x);
             if (r.engine) tip = r.engineText;
             else if (col == plugins && r.pluginInfo.isNotEmpty()) tip = r.pluginInfo;
-            else if (col >= 0) tip = r.title + "  ·  " + kColumnNames[(size_t) col] + ":  " + (r.present[(size_t) col] ? percent (r.shown[(size_t) col]) : juce::String ("off"));
-            else tip = r.title + ":  " + percent (r.totalShown) + " of the audio period";
+            else if (col >= 0) tip = r.title + "  ·  " + kColumnNames[(size_t) col] + ":  " + (r.present[(size_t) col] ? percent (r.label[(size_t) col]) : juce::String ("off"));
+            else tip = r.title + ":  " + percent (r.totalLabel) + " of the audio period";
             if (r.selectIndex >= 0) tip << "\nclick: show it in the mixer";
         }
         setTooltip (tip);
@@ -355,29 +352,23 @@ void DspView::measure()
         rows.push_back (std::move (r));
     }
 
-    // Glide the shown values towards the measurement (no jumps); the order is the mixer's and never changes.
-    // Numbers are rewritten only every third tick, so they stay readable; bars and tints move every tick.
-    const bool writeText = (tick++ % 3) == 0;
-    double maxCell = 0.0, maxTotal = 0.0;
+    // The shown values continue from where they are (frame() glides them to the new targets); the order is the
+    // mixer's and never changes. Numbers are rewritten once per second with the mean of that second.
+    const double nowMs = juce::Time::getMillisecondCounterHiRes();
+    const bool writeText = nowMs - lastLabelTime >= kLabelPeriodMs;
+    if (writeText) lastLabelTime = nowMs;
     for (auto& r : rows)
     {
         const auto it = previous.find (r.key);
         const Row* old = it != previous.end() ? it->second : nullptr;
-        auto glide = [] (double from, double to) { return from + kGlide * (to - from); };
-        r.totalShown = old != nullptr ? glide (old->totalShown, r.totalTarget) : r.totalTarget;
-        for (int c = 0; c < numColumns; ++c)
-        {
-            r.shown[(size_t) c] = old != nullptr ? glide (old->shown[(size_t) c], r.target[(size_t) c]) : r.target[(size_t) c];
-            if (r.present[(size_t) c] && ! r.engine) maxCell = juce::jmax (maxCell, r.shown[(size_t) c]);
-        }
+        r.totalShown = old != nullptr ? old->totalShown : r.totalTarget;
+        r.shown = old != nullptr ? old->shown : r.target;
         const bool write = writeText || old == nullptr;
-        r.label = write ? r.shown : old->label;
-        r.totalLabel = write ? r.totalShown : old->totalLabel;
+        r.label = write ? r.target : old->label;
+        r.totalLabel = write ? r.totalTarget : old->totalLabel;
         if (! write) { r.engineText = old->engineText; r.pluginInfo = old->pluginInfo; }
-        maxTotal = juce::jmax (maxTotal, r.totalShown);
     }
-    totalShown += kGlide * (totalTarget - totalShown);
-    if (writeText) totalLabel = totalShown;
+    if (writeText) { totalLabel = totalTarget; peakLabel = peakLoad; }
 
     if (writeText)
     {
@@ -386,7 +377,7 @@ void DspView::measure()
             if (! r.engine)
                 for (int c = 0; c < numColumns; ++c)
                     if (r.present[(size_t) c] && c != rest)
-                        cells.emplace_back (r.shown[(size_t) c], r.title + "  ·  " + kColumnNames[(size_t) c]);
+                        cells.emplace_back (r.label[(size_t) c], r.title + "  ·  " + kColumnNames[(size_t) c]);
         std::sort (cells.begin(), cells.end(), [] (auto& x, auto& y) { return std::get<0> (x) > std::get<0> (y); });
         juce::StringArray top;
         for (size_t k = 0; k < juce::jmin ((size_t) 3, cells.size()); ++k)
@@ -403,12 +394,40 @@ void DspView::measure()
         else
             summary = e.getMasterDevice() == nullptr ? "Audio engine stopped - open Settings > Audio Engine." : "Measuring...";
     }
+    const bool newLayout = rows.size() != table->rows.size();
     table->rows = std::move (rows);
+    if ((int) table->rows.size() * Table::kRowH + 2 * Table::kPad + Table::kHeadH != table->getHeight()) resized();
+    if (writeText || newLayout)
+    {
+        table->repaint();
+        repaint (getLocalBounds().withHeight (Table::kPad + 140));
+    }
+}
+
+void DspView::frame (double timestamp)
+{
+    // Bars, tints and the peak marker glide to the latest measurement on every display frame.
+    const double dt = clock.step (timestamp);
+    constexpr double eps = 0.002;   // % of the audio period: far below a pixel
+    bool rowsMoved = false, headMoved = false;
+    double maxCell = 0.0, maxTotal = 0.0;
+    for (auto& r : table->rows)
+    {
+        rowsMoved |= glide (r.totalShown, r.totalTarget, dt, eps);
+        for (int c = 0; c < numColumns; ++c)
+        {
+            rowsMoved |= glide (r.shown[(size_t) c], r.target[(size_t) c], dt, eps);
+            if (r.present[(size_t) c] && ! r.engine) maxCell = juce::jmax (maxCell, r.shown[(size_t) c]);
+        }
+        maxTotal = juce::jmax (maxTotal, r.totalShown);
+    }
+    headMoved |= glide (totalShown, totalTarget, dt, eps);
+    headMoved |= glide (peakShown, peakLoad, dt, eps);
+    rowsMoved |= std::abs (maxCell - table->maxCell) > 1.0e-9 || std::abs (maxTotal - table->maxTotal) > 1.0e-9;
     table->maxCell = maxCell;
     table->maxTotal = maxTotal;
-    if ((int) table->rows.size() * Table::kRowH + 2 * Table::kPad + Table::kHeadH != table->getHeight()) resized();
-    table->repaint();
-    repaint (getLocalBounds().withHeight (Table::kPad + 140));
+    if (rowsMoved) table->repaint();
+    if (headMoved) repaint (getLocalBounds().withHeight (Table::kPad + 140));
 }
 
 void DspView::paint (juce::Graphics& g)
@@ -426,7 +445,7 @@ void DspView::paint (juce::Graphics& g)
     // Total: big number + bar with the recent peak
     auto total = head.removeFromTop (34);
     g.setFont (theme::mono (22.0f));
-    g.setColour (totalShown >= 70.0 ? theme::mute : totalShown >= 40.0 ? theme::warn : theme::text);
+    g.setColour (totalLabel >= 70.0 ? theme::mute : totalLabel >= 40.0 ? theme::warn : theme::text);
     g.drawText (percent (totalLabel), total.removeFromLeft (130), juce::Justification::centredLeft);
     auto bar = total.removeFromLeft (juce::jmin (520, total.getWidth() - 140)).withSizeKeepingCentre (juce::jmin (520, total.getWidth() - 140), 10).toFloat();
     g.setColour (theme::panel2);
@@ -434,12 +453,12 @@ void DspView::paint (juce::Graphics& g)
     const auto load = (float) juce::jlimit (0.0, 1.0, totalShown / 100.0);
     g.setColour (load < 0.4f ? theme::good : load < 0.7f ? theme::solo : theme::mute);
     g.fillRoundedRectangle (bar.withWidth (juce::jmax (3.0f, bar.getWidth() * load)), 5.0f);
-    const float px = bar.getX() + bar.getWidth() * (float) juce::jlimit (0.0, 1.0, peakLoad / 100.0);
+    const float px = bar.getX() + bar.getWidth() * (float) juce::jlimit (0.0, 1.0, peakShown / 100.0);
     g.setColour (theme::text);
     g.fillRect (px - 1.0f, bar.getY() - 4.0f, 2.0f, bar.getHeight() + 8.0f);
     g.setColour (theme::textDim);
     g.setFont (theme::font (12.0f));
-    g.drawText ("peak " + percent (peakLoad), total.withTrimmedLeft (14), juce::Justification::centredLeft);
+    g.drawText ("peak " + percent (peakLabel), total.withTrimmedLeft (14), juce::Justification::centredLeft);
     head.removeFromTop (8);
 
     g.setColour (theme::textDim);

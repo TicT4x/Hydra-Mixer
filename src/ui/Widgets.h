@@ -1,5 +1,6 @@
 #pragma once
 #include "Theme.h"
+#include "Dialog.h"
 #include "engine/Engine.h"
 #include "midi/MidiMapper.h"
 #include "midi/Hotkeys.h"
@@ -44,6 +45,9 @@ struct UiContext
 
     /** Opens the large EQ editor window for a channel (same index scheme as 'selected'). */
     std::function<void (int)> openEqWindow;
+
+    /** Opens the device selection window of a channel (same index scheme): input source / bus output. */
+    std::function<void (int)> openDevicePicker;
 
     /** Application preferences in session->prefs were changed (tray icon etc.). */
     std::function<void()> prefsChanged;
@@ -215,6 +219,26 @@ private:
 };
 
 //==============================================================================
+/** Numeric value in a box (e.g. "12.5 ms"): drag up / down to change (Shift = fine), click to type a value. */
+class ValueBox final : public ParamControl
+{
+public:
+    ValueBox (UiContext& c, Param& p, juce::Colour accent);
+    void paint (juce::Graphics&) override;
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
+
+private:
+    void press (const juce::MouseEvent&) override;
+    void drag (const juce::MouseEvent&) override;
+    void release (const juce::MouseEvent&) override;
+    float wheelStep() const override { return 0.002f; }
+    juce::Colour accent;
+    float dragStartNorm = 0;
+    bool hover = false;
+};
+
+//==============================================================================
 /** Segmented selector for a choice parameter (e.g. denoiser latency mode). */
 class ChoiceSegments final : public ParamControl
 {
@@ -279,15 +303,34 @@ public:
     juce::String text;
     juce::Colour colour;
     bool active = false, showArrow = true, centred = false;
-    bool warning = false;   // problem marker (yellow dot + outline), details in the tooltip
+
+    /** Symbol drawn left of the text (or alone, centred, when the text is empty). */
+    enum class Icon { none, save, revert };
+    Icon icon = Icon::none;
+    static void drawIcon (juce::Graphics&, Icon, juce::Rectangle<float> area, juce::Colour);
+
+    /** Status dots left of the name (device problems): red = offline, yellow = dropouts or something that
+        needs attention. Problems of the same colour share one dot. The chip's tooltip starts with what the
+        dots mean (dropouts: how many and when). */
+    enum class Marker { attention, offline, dropouts };
+    struct Status { Marker kind; juce::String tip; };
+    /** Replaces the status dots; repaints only if they changed. */
+    void setStatus (std::vector<Status>);
+    const std::vector<Status>& getStatus() const noexcept { return status; }
+    static void drawMarker (juce::Graphics&, Marker, juce::Rectangle<float> area);
 
     void paint (juce::Graphics&) override;
+    juce::String getTooltip() override;
     void mouseUp (const juce::MouseEvent& e) override { if (e.mouseWasClicked() && onClick) onClick(); }
     void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
     void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
 
 protected:
     bool hover = false;
+
+private:
+    std::vector<Status> status;
+    std::vector<juce::Rectangle<float>> markerAreas;   // where each status symbol was drawn
 };
 
 /** Chip with a trash-can icon (remove a plugin, delete a recording); turns red on hover, dimmed when disabled. */

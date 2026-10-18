@@ -1142,21 +1142,16 @@ private:
         const auto file = rec.getLoadedFile();
         if (file == juce::File() || rec.isRecording()) return;
         juce::Component::SafePointer<RecorderDetail> safe (this);
-        juce::AlertWindow::showAsync (juce::MessageBoxOptions()
-                                          .withIconType (juce::MessageBoxIconType::WarningIcon)
-                                          .withTitle ("Delete this recording?")
-                                          .withMessage (file.getFileName() + "\n\nThe track is removed from the recorder and the file is moved to the Recycle Bin.")
-                                          .withButton ("Delete")
-                                          .withButton ("Cancel")
-                                          .withAssociatedComponent (this),
-                                      [safe, file] (int result)
-                                      {
-                                          if (result != 1 || safe == nullptr || safe->rec.getLoadedFile() != file) return;
-                                          juce::String err;
-                                          if (! safe->rec.deleteLoadedFile (err))
-                                              juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Recorder", err);
-                                          safe->refreshTexts();
-                                      });
+        dialog::confirm (this, dialog::Kind::danger, "Delete this recording?",
+                         file.getFileName() + "\n\nThe track is removed from the recorder and the file is moved to the Recycle Bin.",
+                         "Delete", [safe, file]
+                         {
+                             if (safe == nullptr || safe->rec.getLoadedFile() != file) return;
+                             juce::String err;
+                             if (! safe->rec.deleteLoadedFile (err))
+                                 dialog::message (safe.getComponent(), dialog::Kind::warning, "Recorder", err);
+                             safe->refreshTexts();
+                         });
     }
 
     void confirmCut()
@@ -1165,24 +1160,17 @@ private:
         if (file == juce::File() || ! rec.isTrimmed()) return;
         const bool wav = file.hasFileExtension ("wav");
         juce::Component::SafePointer<RecorderDetail> safe (this);
-        juce::AlertWindow::showAsync (juce::MessageBoxOptions()
-                                          .withIconType (juce::MessageBoxIconType::QuestionIcon)
-                                          .withTitle ("Cut the recording?")
-                                          .withMessage (file.getFileName() + "\n\nKeeps " + formatTime (rec.getTrimIn()) + " - "
-                                                        + formatTime (rec.getTrimOut()) + ". "
-                                                        + (wav ? "The original file goes to the Recycle Bin."
-                                                               : "The result is saved as a new WAV file next to it."))
-                                          .withButton ("Cut")
-                                          .withButton ("Cancel")
-                                          .withAssociatedComponent (this),
-                                      [safe, file] (int result)
-                                      {
-                                          if (result != 1 || safe == nullptr || safe->rec.getLoadedFile() != file) return;
-                                          juce::String err;
-                                          if (! safe->rec.applyTrim (err))
-                                              juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Recorder", err);
-                                          safe->refreshTexts();
-                                      });
+        dialog::confirm (this, dialog::Kind::question, "Cut the recording?",
+                         file.getFileName() + "\n\nKeeps " + formatTime (rec.getTrimIn()) + " - " + formatTime (rec.getTrimOut()) + ". "
+                             + (wav ? "The original file goes to the Recycle Bin." : "The result is saved as a new WAV file next to it."),
+                         "Cut", [safe, file]
+                         {
+                             if (safe == nullptr || safe->rec.getLoadedFile() != file) return;
+                             juce::String err;
+                             if (! safe->rec.applyTrim (err))
+                                 dialog::message (safe.getComponent(), dialog::Kind::warning, "Recorder", err);
+                             safe->refreshTexts();
+                         });
     }
 
     void chooseFolder()
@@ -1218,7 +1206,7 @@ private:
                                   if (safe == nullptr || ! fc.getResult().existsAsFile()) return;
                                   juce::String err;
                                   if (! safe->rec.loadFile (fc.getResult(), err))
-                                      juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Recorder", err);
+                                      dialog::message (safe.getComponent(), dialog::Kind::warning, "Recorder", err);
                               });
     }
 
@@ -1484,7 +1472,7 @@ void PluginChainView::showAddMenu (juce::Component& target)
                 auto inst = eng.pluginHost.create (d, eng.getSampleRate(), eng.getBlockSize(), err);
                 if (inst == nullptr)
                 {
-                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Plugin", "Could not load " + d.name + "\n" + err);
+                    dialog::message (safe.getComponent(), dialog::Kind::warning, "Plugin could not be loaded", d.name + "\n" + err);
                     return;
                 }
                 safe->chain.add (std::move (inst), d);

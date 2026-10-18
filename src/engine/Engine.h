@@ -7,6 +7,8 @@
 #include "PluginChain.h"
 #include "Recorder.h"
 
+#include <map>
+
 namespace hydra
 {
 struct Meter
@@ -69,6 +71,7 @@ struct InputStrip
     Param *compOn {}, *compInput {}, *compThr {}, *compRatio {}, *compKnee {}, *compAttack {}, *compRelease {}, *compMakeup {}, *compAuto {};
     Param *dnOn {}, *dnAmount {}, *dnMode {};
     Param *fxBypass {};
+    Param *syncOn {}, *delayMs {};   // Sync Delay: automatic alignment with the input sync group / manual delay
     std::array<Param*, kMaxBuses> route {};
     std::array<Param*, kMaxBuses> send {};   // per-bus fader level (edited while a bus is selected with SEL)
 
@@ -83,6 +86,7 @@ struct InputStrip
     // audio-thread state
     dsp::Gate gate;
     dsp::Compressor comp;
+    dsp::DelayLine delay;
     std::unique_ptr<dsp::Denoiser> denoiser = std::make_unique<dsp::Denoiser>();
     bool dnWasOn = false;
     float lastTrim = 1, lastL = 0, lastR = 0;
@@ -103,9 +107,11 @@ struct Bus
     Param *active {};   // slot in use (shown as a strip and processed); see Engine::addBus / removeBus
     Param *gain {}, *mute {}, *mono {}, *limOn {}, *limCeil {}, *fxBypass {};
     Param *sel {};   // SEL: input faders edit the sends to this bus (exclusive), optional monitoring
+    Param *syncOn {}, *delayMs {};   // Sync Delay (see InputStrip)
     ParamEq eq;
 
     dsp::Limiter limiter;
+    dsp::DelayLine delay;
     float lastGain = 0;
     std::vector<float> l, r;
 };
@@ -219,11 +225,56 @@ public:
     double getSampleRate() const noexcept { return sampleRate; }
     int getBlockSize() const noexcept { return blockSize; }
     double getMasterLatencyMs() const;
-    /** Problem of a strip's source / a bus's output ("offline", "waiting for app", "3 dropouts"),
-        empty while it runs fine. Latency is shown in the Latency Finder. */
-    juce::String getStreamStatus (const IoTarget& t, bool input) const;
+
+    /** State of a strip's source / a bus's output, for the status symbols in the strips. Message thread. */
+    struct StreamHealth
+    {
+        enum class State { none, ok, offline, waiting, noDriver };
+        State state = State::none;
+        juce::String error;                        // why it is offline (if known)
+        struct Dropouts { int count; double secondsAgo; };
+        std::vector<Dropouts> recent;              // dropouts of the last kDropoutWindowSeconds, newest first
+        int recentTotal() const { int n = 0; for (auto& d : recent) n += d.count; return n; }
+    };
+    static constexpr double kDropoutWindowSeconds = 120.0;   // older dropouts are no longer shown
+    StreamHealth getStreamHealth (const IoTarget& t, bool input) const;
+
+    /** Where the device-side latency of a strip's source / a bus's output comes from. Message thread. */
+    struct IoLatency
+    {
+        bool online = false;
+        bool masterClock = false;   // runs on the master clock: no clock sync buffer
+        double bufferMs = 0.0;      // master: one buffer period
+        double driverMs = 0.0;      // what the driver reports (converters, safety buffers; secondary devices: incl. their buffer)
+        double clockSyncMs = 0.0;   // secondary devices: ring + resampler binding them to the master clock (moves slightly)
+        int bufferFrames = 0;       // device period
+        double deviceRate = 0.0;
+        double total() const noexcept { return bufferMs + driverMs + clockSyncMs; }
+    };
+    IoLatency getIoLatency (const IoTarget& t, bool input) const;
     /** Device-side latency of a strip's source / a bus's output in ms (-1 = offline). */
     double getIoLatencyMs (const IoTarget& t, bool input) const;
+    /** Latency of the active (not bypassed) plugins of a chain in ms. Message thread. */
+    double pluginLatencyMs (const PluginChain&, const Param& bypassAll) const;
+
+    //--------------------------------------------------------------------------
+    // Sync Delay: channels of one group (inputs, hardware outputs, virtual outputs) with sync on are delayed
+    // so that they all have the latency of the slowest of them (e.g. two microphones on two interfaces).
+    // On top of that every channel can have a manual delay (delayMs). Computed here at 10 Hz from the live,
+    // smoothed latencies; the audio thread crossfades to a new delay.
+    struct SyncState
+    {
+        double measuredMs = -1.0;   // latency of the channel without its delay (input / output side), -1 = offline
+        double autoMs = 0.0;        // automatic part of the delay now applied
+        bool member = false;        // sync on and online
+        bool reference = false;     // the slowest member (gets no automatic delay)
+        int group = 0;              // Group as int
+    };
+    /** Sync state of an input (0..kMaxInputs-1) or a bus (kMaxInputs + bus). Message thread. */
+    const SyncState& getSyncState (int channel) const noexcept { return syncStates[(size_t) channel]; }
+    /** Total delay (automatic + manual) the channel gets, in ms. */
+    double getChannelDelayMs (int channel) const noexcept;
+    static constexpr int busChannel (int bus) noexcept { return kMaxInputs + bus; }
     juce::StringArray getMasterInputNames() const;
     juce::StringArray getMasterOutputNames() const;
 
@@ -263,6 +314,17 @@ private:
     void processChunk (const Graph& g, const float* const* in, int numIn, float* const* out, int numOut, int offset, int n) noexcept;
     void processStrip (InputStrip& s, const float* srcL, const float* srcR, int n, bool anySolo, bool monoSource, bool timed) noexcept;
     void processBus (Bus& b, int n, bool timed) noexcept;
+    void updateDropoutLogs();
+    void updateSyncDelays();
+    int delaySamples (int channel) const noexcept;   // audio thread
+
+    // Message thread: dropouts per stream as (time in ms, count), pruned after kDropoutWindowSeconds.
+    struct DropoutLog { int seen = 0; std::vector<std::pair<juce::int64, int>> events; };
+    std::map<const AsyncStream*, DropoutLog> dropoutLogs;
+    DropoutLog masterDropouts;
+
+    std::array<SyncState, kMaxInputs + kMaxBuses> syncStates {};
+    std::array<std::atomic<float>, kMaxInputs + kMaxBuses> autoDelayMs {};   // read by the audio thread
 
     juce::OwnedArray<juce::AudioIODeviceType> types;
     std::unique_ptr<juce::AudioIODevice> masterDevice;

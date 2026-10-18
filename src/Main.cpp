@@ -1,5 +1,6 @@
 #include "ui/MainComponent.h"
 #include "state/Session.h"
+#include "state/Autostart.h"
 
 #include <windows.h>
 
@@ -31,12 +32,28 @@ public:
         setTitleBarHeight (0);
         setContentOwned (new MainComponent (e, m, k, s), true);
         setResizable (true, false);
-        setResizeLimits (1100, 700, 8000, 4000);
+        setResizeLimits (900, 700, 8000, 4000);
         auto area = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userArea;
-        centreWithSize (juce::jmin (1680, (int) (area.getWidth() * 0.94)), juce::jmin (1000, (int) (area.getHeight() * 0.92)));
+        centreWithSize (juce::jmin (1840, (int) (area.getWidth() * 0.96)), juce::jmin (1000, (int) (area.getHeight() * 0.92)));
     }
 
     MainComponent* getMain() const { return dynamic_cast<MainComponent*> (getContentComponent()); }
+
+    /** Width so that all channels sit side by side without a scroll bar or a gap (height and position are
+        kept, unless the window would leave the screen). Returns false if they do not fit on the screen. */
+    bool fitToChannels()
+    {
+        auto* mc = getMain();
+        if (mc == nullptr || isFullScreen() || isMinimised()) return false;
+        const auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (getScreenBounds());
+        if (display == nullptr) return false;
+        const auto area = display->userBounds.getSmallestIntegerContainer();
+        const int wanted = mc->idealWidth() + (getWidth() - mc->getWidth());
+        const int w = juce::jlimit (getConstrainer() != nullptr ? getConstrainer()->getMinimumWidth() : 0, area.getWidth(), wanted);
+        const int x = juce::jlimit (area.getX(), juce::jmax (area.getX(), area.getRight() - w), getX());
+        setBounds (x, getY(), w, getHeight());
+        return wanted <= area.getWidth();
+    }
 
     std::function<void()> onClose, onMinimised;
 
@@ -112,7 +129,7 @@ public:
     const juce::String getApplicationVersion() override { return JUCE_APPLICATION_VERSION_STRING; }
     bool moreThanOneInstanceAllowed() override          { return false; }
 
-    void initialise (const juce::String&) override
+    void initialise (const juce::String& commandLine) override
     {
         tuneProcessForAudio();
         juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
@@ -128,9 +145,17 @@ public:
         const bool loaded = session->loadDefault();
 
         theme::fontScale = session->prefs.fontScale; // before the UI creates its labels
+        // The window starts exactly as wide as the channels need, so the divider goes to its default place (no gap).
+        if (session->prefs.stripSplit >= 0.0f)
+        {
+            session->prefs.stripSplit = -1.0f;
+            session->prefsVersion.fetch_add (1);
+        }
         window = std::make_unique<MainWindow> (*engine, *midi, *hotkeys, *session);
         if (session->windowState.isNotEmpty())
             window->restoreWindowStateFromString (session->windowState);
+        if (auto* mc = window->getMain()) mc->setUiScale (session->prefs.uiScale);
+        window->fitToChannels();   // just wide enough for all channels
         window->onClose = [this]
         {
             if (session->prefs.closeToTray) hideToTray();
@@ -153,8 +178,13 @@ public:
 
         engine->addChangeListener (&changeCounter);
         lastState = stateKey();
-        logLine ("started, session " + juce::String (loaded ? "loaded" : "not found / defaults"));
+        startedWithWindows = commandLine.contains (Autostart::kArgument);
+        logLine ("started" + juce::String (startedWithWindows ? " with Windows" : "") + ", session "
+                 + juce::String (loaded ? "loaded" : "not found / defaults"));
+        checkMasterAfterStart();
         startTimer (1000);
+        // Keeps the autostart entry pointing at this exe (rebuilt / moved); off the critical startup path.
+        juce::Timer::callAfterDelay (8000, [] { Autostart::refreshIfMoved(); });
     }
 
     void shutdown() override
@@ -251,8 +281,50 @@ private:
         return k;
     }
 
+    /** Right after Windows started, the audio driver of the master device may not be ready yet: the engine then
+        runs on another device (or none). Keep asking for the session's device for a while. */
+    bool masterMissing() const
+    {
+        const auto& want = session->requestedMaster;
+        auto* d = engine->getMasterDevice();
+        return d == nullptr || (want.deviceName.isNotEmpty() && (d->getName() != want.deviceName || d->getTypeName() != want.typeName));
+    }
+
+    void checkMasterAfterStart()
+    {
+        session->waitingForMaster = masterMissing() && session->requestedMaster.deviceName.isNotEmpty();
+        if (session->waitingForMaster)
+            logLine ("master device " + session->requestedMaster.deviceName + " not available yet, retrying");
+    }
+
+    void retryMaster()
+    {
+        if (! session->waitingForMaster) return;
+        if (++masterRetryTicks > kMasterRetrySeconds)
+        {
+            session->waitingForMaster = false;   // give up: the device now running is kept
+            logLine ("master device " + session->requestedMaster.deviceName + " did not appear, keeping "
+                     + engine->getMasterConfig().deviceName);
+            return;
+        }
+        if (masterRetryTicks % 3 != 0) return;
+        auto* type = engine->findType (session->requestedMaster.typeName);
+        if (type == nullptr) return;
+        type->scanForDevices();
+        if (! type->getDeviceNames (false).contains (session->requestedMaster.deviceName)) return;
+        if (engine->setMasterConfig (session->requestedMaster).isEmpty() && ! masterMissing())
+        {
+            session->waitingForMaster = false;
+            logLine ("master device " + session->requestedMaster.deviceName + " opened after "
+                     + juce::String (masterRetryTicks) + " s");
+            if (auto* mc = window->getMain()) mc->refreshAll();
+        }
+    }
+
     void timerCallback() override
     {
+        retryMaster();
+
         // Debounced autosave: write ~2 s after the last change.
         const auto key = stateKey();
         if (key != lastState || changeCounter.changes > 0)
@@ -280,6 +352,9 @@ private:
     ChangeCounter changeCounter;
     juce::String lastState, pendingState;
     int pendingChanges = -1, quietTicks = 0;
+    bool startedWithWindows = false;
+    int masterRetryTicks = 0;
+    static constexpr int kMasterRetrySeconds = 90;
 };
 } // namespace hydra
 

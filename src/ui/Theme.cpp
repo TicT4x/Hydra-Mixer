@@ -47,6 +47,9 @@ LookAndFeel::LookAndFeel()
     setColour (juce::TableHeaderComponent::backgroundColourId, panel2);
     setColour (juce::TableHeaderComponent::textColourId, textDim);
     setColour (juce::TableHeaderComponent::outlineColourId, outline);
+    setColour (juce::TooltipWindow::backgroundColourId, panel2);
+    setColour (juce::TooltipWindow::textColourId, text);
+    setColour (juce::TooltipWindow::outlineColourId, outline);
 }
 
 void LookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool over, bool down)

@@ -1,6 +1,7 @@
 #include "Settings.h"
 #include "state/VoicemeeterImport.h"
 #include "state/Session.h"
+#include "state/Autostart.h"
 
 namespace hydra
 {
@@ -131,7 +132,7 @@ private:
         cfg.bufferSize = bufBox.getSelectedId() == 100000 ? 0 : bufBox.getSelectedId();
         const auto err = ctx.engine.setMasterConfig (cfg);
         if (err.isNotEmpty())
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Audio device", err);
+            dialog::message (this, dialog::Kind::warning, "Audio device", err);
         loadCurrent();
         if (onChanged) onChanged();
     }
@@ -625,19 +626,18 @@ private:
             return;
         }
         juce::Component::SafePointer<BackupTab> safe (this);
-        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Load settings",
-            "Replace all current settings with\n" + f.getFullPathName() + " ?\n\nYour current settings are backed up first.",
-            "Load", "Cancel", nullptr,
-            juce::ModalCallbackFunction::create ([safe, f] (int result)
+        dialog::confirm (this, dialog::Kind::warning, "Load settings?",
+            "Replace all current settings with\n" + f.getFullPathName() + "\n\nYour current settings are backed up first.",
+            "Load", [safe, f]
             {
-                if (result == 0 || safe == nullptr) return;
+                if (safe == nullptr) return;
                 juce::String err;
                 const bool ok = safe->ctx.session->importFrom (f, err);
                 safe->status.setText (ok ? "Loaded " + f.getFileName() + "  (previous settings are in the backup list)" : err,
                                       juce::dontSendNotification);
                 safe->reloadList();
                 if (ok && safe->onReplaced) safe->onReplaced();
-            }));
+            });
     }
 
     UiContext& ctx;
@@ -862,6 +862,21 @@ public:
         addAndMakeVisible (shutdown);
         shutdown.setColour (juce::TextButton::buttonColourId, theme::mute.withAlpha (0.25f));
         shutdown.onClick = [this] { if (ctx.shutdown) ctx.shutdown(); };
+
+        // Start with Windows (Task Scheduler entry, see Autostart)
+        addAndMakeVisible (autostart);
+        autostart.setButtonText ("Start Hydra Mixer when Windows starts");
+        autostart.setToggleState (Autostart::isEnabled(), juce::dontSendNotification);
+        autostart.setTooltip ("Starts right when you log on, before other apps and with high priority, "
+                              "so audio works from the first moment. Combine with \"Start hidden in the tray\".");
+        autostart.onClick = [this]
+        {
+            const bool want = autostart.getToggleState();
+            const auto error = Autostart::setEnabled (want);
+            autostart.setToggleState (Autostart::isEnabled(), juce::dontSendNotification);
+            if (error.isNotEmpty())
+                dialog::message (this, dialog::Kind::warning, "Start with Windows", error);
+        };
     }
 
     void paint (juce::Graphics& g) override
@@ -901,7 +916,7 @@ public:
 
         trayTitle.setBounds (r.removeFromTop (22));
         r.removeFromTop (4);
-        for (auto* b : { &trayIcon, &closeTray, &minTray, &startTray })
+        for (auto* b : { &autostart, &trayIcon, &closeTray, &minTray, &startTray })
             b->setBounds (r.removeFromTop (28).withWidth (520));
         r.removeFromTop (8);
         trayHelp.setBounds (r.removeFromTop (40));
@@ -911,12 +926,12 @@ public:
 
 private:
     UiContext& ctx;
-    juce::Label monTitle { {}, "MONITORING (SEL)" }, trayTitle { {}, "WINDOW & SYSTEM TRAY" }, displayTitle { {}, "DISPLAY" };
+    juce::Label monTitle { {}, "MONITORING (SEL)" }, trayTitle { {}, "STARTUP, WINDOW & SYSTEM TRAY" }, displayTitle { {}, "DISPLAY" };
     juce::Label monHelp, monBusL { {}, "Monitor output" }, trayHelp, uiScaleL { {}, "Interface size" }, fontScaleL { {}, "Text size" };
     juce::ComboBox uiScale, fontScale;
     Switch monOn;
     ChoiceSegments monBus;
-    juce::ToggleButton trayIcon, closeTray, minTray, startTray;
+    juce::ToggleButton autostart, trayIcon, closeTray, minTray, startTray;
     juce::TextButton shutdown { "Shut down Hydra Mixer" };
     juce::Rectangle<int> divider, divider2;
 };
@@ -1068,9 +1083,10 @@ MidiMapPanel::MidiMapPanel (UiContext& c) : ctx (c)
     };
     clearButton.onClick = [this]
     {
-        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Clear MIDI mappings",
-                                            "Remove all MIDI mappings?", "Remove all", "Cancel", nullptr,
-                                            juce::ModalCallbackFunction::create ([this] (int r) { if (r == 1) ctx.midi.clearAll(); }));
+        juce::Component::SafePointer<MidiMapPanel> safe (this);
+        dialog::confirm (this, dialog::Kind::danger, "Clear all MIDI mappings?",
+                         "Every MIDI assignment is removed. Keyboard shortcuts stay.", "Remove all",
+                         [safe] { if (safe != nullptr) safe->ctx.midi.clearAll(); });
     };
     startTimerHz (5);
     reload();

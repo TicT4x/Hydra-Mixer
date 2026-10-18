@@ -12,8 +12,8 @@ namespace hydra
       Columns are the processing stages (Denoiser, EQ, Gate, Comp, Plugins, Limiter, Rest); every cell shows
       its share of the audio period and is tinted by how expensive it is. Stages that are switched off show "-".
 
-    The order never changes, values are averaged over one second and glide to their new value (no jumps);
-    the numbers are rewritten about 3x per second, the bars move smoothly. 100 % = the engine would no longer
+    The order never changes. Measured 10x per second as the mean of the last second; bars and tints glide
+    there every display frame, the numbers show the 1 s mean and are rewritten once per second. 100 % = the engine would no longer
     keep up. The engine measures only while this window exists. Clicking a row selects that channel. */
 class DspView final : public juce::Component, private juce::Timer
 {
@@ -31,7 +31,7 @@ public:
         juce::Colour colour;
         int selectIndex = -1;
         bool engine = false;
-        std::array<double, numColumns> target {}, shown {}, label {};   // label: value as written (~3x per second)
+        std::array<double, numColumns> target {}, shown {}, label {};   // label: value as written (once per second)
         std::array<bool, numColumns> present {};
         double totalTarget = 0.0, totalShown = 0.0, totalLabel = 0.0;
     };
@@ -48,6 +48,7 @@ private:
 
     void timerCallback() override;
     void measure();
+    void frame (double timestamp);   // display frame: bars glide to the measurement
     Reading read() const;
 
     UiContext& ctx;
@@ -55,7 +56,9 @@ private:
     std::unique_ptr<Table> table;
     std::deque<Reading> history;   // last ~1.5 s of readings
     juce::String summary, hotspots;
-    double totalTarget = 0, totalShown = 0, totalLabel = 0, peakLoad = 0;
-    int tick = 0;
+    double totalTarget = 0, totalShown = 0, totalLabel = 0, peakLoad = 0, peakShown = 0, peakLabel = 0;
+    double lastLabelTime = 0;   // ms
+    FrameClock clock;
+    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
 };
 } // namespace hydra

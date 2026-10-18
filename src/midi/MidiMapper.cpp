@@ -51,7 +51,7 @@ MidiMapper::MidiMapper (ParamRegistry& registry) : params (registry)
 MidiMapper::~MidiMapper()
 {
     stopTimer();
-    clearGridLeds();
+    switchOffLeds();
     for (auto& in : openInputs) in->stop();
     openInputs.clear();
 }
@@ -69,6 +69,7 @@ void MidiMapper::setInputEnabled (const juce::String& name, bool enabled)
                 in->start();
                 openInputs.push_back (std::move (in));
                 enabledInputs.addIfNotAlreadyThere (name);
+                stateRequestAt = juce::Time::getMillisecondCounterHiRes() + 500.0;
             }
             return;
         }
@@ -125,6 +126,74 @@ void MidiMapper::clearGridLeds()
     for (int n = led.firstNote; n <= led.lastNote && n < 128; ++n)
         feedback->sendMessageNow (juce::MidiMessage::noteOn (led.channel, n, (juce::uint8) 0));
     ledSent.fill (-1);
+}
+
+void MidiMapper::switchOffLeds()
+{
+    if (feedback == nullptr) return;
+    clearGridLeds();
+    const juce::ScopedLock sl (lock);
+    // Mapped buttons outside the grid (APC mini: track / scene buttons used as mutes) keep their LED
+    // otherwise. Faders and knobs (CC) are left where they are: a motor fader must not move on exit.
+    for (auto& m : mappings)
+        if (m.source == MidiMapping::Source::Note && ! led.contains (m.number))
+            feedback->sendMessageNow (juce::MidiMessage::noteOn (m.channel == 0 ? 1 : m.channel, m.number, (juce::uint8) 0));
+    if (led.grid)
+        for (int n = 0; n < 128; ++n)
+            if (! led.contains (n))
+                feedback->sendMessageNow (juce::MidiMessage::noteOn (1, n, (juce::uint8) 0));
+}
+
+namespace
+{
+constexpr juce::uint8 kAkai = 0x47, kApcMiniMk1 = 0x28, kApcMiniMk2 = 0x4f;
+constexpr int kApcFirstFaderCc = 48;   // faders 1-8 + master on CC 48..56, channel 1
+
+/** Akai model id for a port name (0 = not a controller that can report its faders). */
+juce::uint8 akaiModelFor (const juce::String& portName)
+{
+    if (! portName.containsIgnoreCase ("APC MINI")) return 0;
+    return portName.containsIgnoreCase ("mk2") ? kApcMiniMk2 : kApcMiniMk1;
+}
+} // namespace
+
+void MidiMapper::requestControllerState()
+{
+    // Most controllers cannot be asked where their faders are (they only send when moved). The Akai APC
+    // mini answers the introduction message (the one Ableton sends) with the position of all 9 faders.
+    for (auto& in : openInputs)
+    {
+        const auto model = akaiModelFor (in->getName());
+        if (model == 0) continue;
+        // Same port name on the output side; reuse the feedback output if it is that device.
+        std::unique_ptr<juce::MidiOutput> temp;
+        juce::MidiOutput* out = feedback != nullptr && feedbackId == in->getName() ? feedback.get() : nullptr;
+        if (out == nullptr)
+            for (auto& info : juce::MidiOutput::getAvailableDevices())
+                if (info.name == in->getName()) { temp = juce::MidiOutput::openDevice (info.identifier); out = temp.get(); break; }
+        if (out == nullptr) continue;
+
+        const juce::uint8 mode = model == kApcMiniMk1 ? 0x41 : 0x00;   // mk1: Ableton Live mode, mk2: no modes
+        const juce::uint8 msg[] = { 0xf0, kAkai, 0x7f, model, 0x60, 0x00, 0x04, mode, 0x01, 0x00, 0x00, 0xf7 };
+        out->sendMessageNow (juce::MidiMessage (msg, (int) sizeof (msg)));
+    }
+}
+
+bool MidiMapper::handleStateReply (juce::MidiInput* sourceDev, const juce::MidiMessage& msg)
+{
+    // Reply: F0 47 <dev> <model> 61 <len hi> <len lo> <fader 1> ... <fader 9> F7  (values 0..127)
+    const auto* d = msg.getSysExData();
+    const int n = msg.getSysExDataSize();
+    if (n < 6 || d[0] != kAkai || d[3] != 0x61 || (d[2] != kApcMiniMk1 && d[2] != kApcMiniMk2)) return false;
+    const int len = juce::jmin (n - 6, (d[4] << 7) | d[5], 9);
+    const int channel = 1;
+    for (int k = 0; k < len; ++k)
+    {
+        // Fed through the normal path, exactly as if the fader had been moved to where it stands.
+        const auto cc = juce::MidiMessage::controllerEvent (channel, kApcFirstFaderCc + k, d[6 + k] & 0x7f);
+        handleIncomingMidiMessage (sourceDev, cc);
+    }
+    return true;
 }
 
 std::array<int, 128> MidiMapper::computeGridLeds() const
@@ -348,6 +417,12 @@ void MidiMapper::clearAll()
 //==============================================================================
 void MidiMapper::handleIncomingMidiMessage (juce::MidiInput* sourceDev, const juce::MidiMessage& msg)
 {
+    if (msg.isSysEx())
+    {
+        handleStateReply (sourceDev, msg);
+        return;
+    }
+
     MidiMapping::Source src;
     int number = 0, raw = 0, rawMax = 127;
     bool press = false, release = false;
@@ -483,10 +558,17 @@ void MidiMapper::timerCallback()
                         {
                             in->start();
                             openInputs.push_back (std::move (in));
+                            stateRequestAt = juce::Time::getMillisecondCounterHiRes() + 500.0;
                         }
             }
         if (feedback == nullptr && feedbackId.isNotEmpty())
             setFeedbackOutput (feedbackId);
+    }
+
+    if (stateRequestAt > 0.0 && juce::Time::getMillisecondCounterHiRes() >= stateRequestAt)
+    {
+        stateRequestAt = 0.0;
+        requestControllerState();
     }
 
     if (feedback == nullptr) return;

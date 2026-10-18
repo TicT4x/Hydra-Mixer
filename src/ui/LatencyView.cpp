@@ -7,6 +7,7 @@ namespace
 const juce::Colour kDeviceIn = theme::accentIn;
 const juce::Colour kDenoiser = theme::good;
 const juce::Colour kPlugin   = theme::warn;
+const juce::Colour kSync     = theme::accentVirt;
 
 double samplesToMs (const Engine& e, int samples) { return 1000.0 * samples / juce::jmax (1.0, e.getSampleRate()); }
 
@@ -18,7 +19,9 @@ void addPlugins (const Engine& e, std::vector<LatencyView::Node>& nodes, const P
     for (int i = 0; i < chain.size(); ++i)
         if (auto* s = chain.getSlot (i); s != nullptr && ! s->bypassed)
             nodes.push_back ({ s->instance->getName(), "VST3 plugin", samplesToMs (e, s->instance->getLatencySamples()),
-                               kPlugin.interpolatedWith (theme::solo, 0.3f * (float) (k++ % 3)), sel });
+                               kPlugin.interpolatedWith (theme::solo, 0.3f * (float) (k++ % 3)), sel,
+                               "VST3 plugin: the latency it reports itself (look-ahead, linear phase, ...).\n"
+                               "A zero-latency / live mode of the plugin or bypassing it removes it." });
 }
 
 double sum (const std::vector<LatencyView::Node>& nodes)
@@ -40,7 +43,63 @@ juce::String titled (const juce::String& code, const juce::String& name)
 }
 juce::String inputTitle (const Engine& e, int i) { return titled ("IN " + juce::String (i + 1), e.inputs[(size_t) i].name); }
 juce::String busTitle (const Engine& e, int b)   { return titled (busCode (b), e.buses[(size_t) b].name); }
+juce::String channelTitle (const Engine& e, int ch) { return ch < kMaxInputs ? inputTitle (e, ch) : busTitle (e, ch - kMaxInputs); }
+
+/** Sync Delay stage of a channel (input index or Engine::busChannel), if it has one. */
+void addSyncDelay (const Engine& e, std::vector<LatencyView::Node>& nodes, int ch, int sel)
+{
+    const double total = e.getChannelDelayMs (ch);
+    if (total <= 0.0) return;
+    const auto& st = e.getSyncState (ch);
+    const double manual = total - st.autoMs;
+    juce::String ref;
+    for (int k = 0; k < kMaxInputs + kMaxBuses; ++k)
+        if (const auto& o = e.getSyncState (k); o.reference && o.group == st.group) ref = channelTitle (e, k);
+
+    juce::String detail, why;
+    if (st.autoMs > 0.0)
+    {
+        detail = manual > 0.005 ? "auto + manual" : "auto";
+        why << "Added on purpose (Tools > Sync Delay): this channel is faster than " << ref
+            << ", so it waits " << ms (st.autoMs) << " to line up with it (Auto sync).";
+        if (manual > 0.005) why << "\nManual delay on top: " << ms (manual) << ".";
+    }
+    else
+    {
+        detail = "manual";
+        why << "Added on purpose (Tools > Sync Delay): manual delay of this channel.";
+    }
+    nodes.push_back ({ "Sync delay", detail, total, kSync, sel, why });
+}
 } // namespace
+
+juce::String explainIoLatency (const Engine& e, const IoTarget& t, bool input)
+{
+    const auto l = e.getIoLatency (t, input);
+    juce::String s;
+    s << (input ? "Input device: " : "Output device: ") << t.describe();
+    if (! l.online) return s << "\nOffline - no latency to show.";
+    auto frames = [&l] (double msValue) { return juce::String (juce::roundToInt (msValue * l.deviceRate / 1000.0)) + " samples"; };
+    if (l.masterClock)
+    {
+        s << "\nMaster device: it runs the engine's clock, so no clock sync is needed."
+          << "\n   Buffer:  " << ms (l.bufferMs) << "  (" << l.bufferFrames << " samples at " << (int) l.deviceRate << " Hz)"
+          << "\n   Driver / converters:  " << ms (l.driverMs) << "  (" << frames (l.driverMs) << ", as the driver reports it)"
+          << "\nSmaller buffer = less latency (Settings > Audio Engine), but more CPU and a higher risk of dropouts.";
+    }
+    else
+    {
+        const bool asio = t.kind == IoTarget::Kind::Device && t.typeName == kAsioTypeName;
+        s << "\nSecondary device: it has its own clock, bound to the master clock by a resampler"
+          << "\nwith drift control (" << (asio ? "ASIO clock sync" : "clock sync") << ")."
+          << "\n   Device buffer + driver:  " << ms (l.driverMs) << "  (period " << l.bufferFrames << " samples at "
+          << (int) l.deviceRate << " Hz)"
+          << "\n   Clock sync buffer:  " << ms (l.clockSyncMs) << "  (keeps the two clocks from running dry; moves a little)"
+          << "\n" << (asio ? "A smaller buffer in the driver's control panel reduces both."
+                           : "The device's ASIO driver, Exclusive or Low Latency mode reduce it.");
+    }
+    return s;
+}
 
 juce::String LatencyView::Flow::signature() const
 {
@@ -320,8 +379,10 @@ public:
                 total = flow.lanes[(size_t) hit.lane].ms + flow.busMs;
             }
             if (node != nullptr)
-                tip << node->label << "\n" << node->detail << "\nadds " << ms (node->ms) << "  (" << percent (node->ms, total)
-                    << " of this path)";
+            {
+                tip << node->label << "  -  adds " << ms (node->ms) << "  (" << percent (node->ms, total) << " of this path)\n";
+                tip << (node->why.isNotEmpty() ? node->why : node->detail);
+            }
             else if (hit.lane >= 0)
                 tip << flow.lanes[(size_t) hit.lane].title << ": click to show this path in the chart below";
         }
@@ -474,7 +535,7 @@ LatencyView::LatencyView (UiContext& c) : ctx (c)
     addAndMakeVisible (viewport);
     addAndMakeVisible (breakdown.get());
     refresh();
-    startTimerHz (4);
+    startTimerHz (10);
     setSize (1000, 680);
 }
 
@@ -485,25 +546,37 @@ void LatencyView::timerCallback() { refresh(); }
 void LatencyView::measureDevices()
 {
     // The device latency includes the drift buffer's fill level, which moves a little all the time.
-    // Exponential smoothing (~1 s at 4 Hz) keeps the numbers calm; a big jump (other device) is taken at once.
+    // Sampled 10x per second; the shown value is the mean of the last second, rewritten once per second.
+    // A big jump (other device, offline / back) is shown at once.
     auto& e = ctx.engine;
-    auto smooth = [] (std::map<int, double>& store, int key, double v)
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    const bool publish = now - lastPublish >= kLabelPeriodMs;
+    if (publish) lastPublish = now;
+    auto sample = [publish] (std::map<int, double>& store, std::map<int, Mean>& means, int key, double v)
     {
+        auto& mean = means[key];
         auto it = store.find (key);
-        if (v < 0.0 || it == store.end() || it->second < 0.0 || std::abs (v - it->second) > 5.0) store[key] = v;
-        else it->second += 0.3 * (v - it->second);
+        if (v < 0.0 || it == store.end() || it->second < 0.0 || std::abs (v - it->second) > 5.0)
+        {
+            store[key] = v;
+            mean.reset();
+            if (v >= 0.0) mean.add (v);
+            return;
+        }
+        mean.add (v);
+        if (publish) it->second = mean.take (v);
     };
     for (int i = 0; i < kMaxInputs; ++i)
     {
         const auto& s = e.inputs[(size_t) i];
-        if (! e.isInputActive (i) || s.source.kind == IoTarget::Kind::None) { inDevMs.erase (i); continue; }
-        smooth (inDevMs, i, e.getIoLatencyMs (s.source, true));
+        if (! e.isInputActive (i) || s.source.kind == IoTarget::Kind::None) { inDevMs.erase (i); inMeans.erase (i); continue; }
+        sample (inDevMs, inMeans, i, e.getIoLatencyMs (s.source, true));
     }
     for (int b = 0; b < kMaxBuses; ++b)
     {
         const auto& bus = e.buses[(size_t) b];
-        if (! e.isBusActive (b) || bus.output.kind == IoTarget::Kind::None) { outDevMs.erase (b); continue; }
-        smooth (outDevMs, b, e.getIoLatencyMs (bus.output, false));
+        if (! e.isBusActive (b) || bus.output.kind == IoTarget::Kind::None) { outDevMs.erase (b); outMeans.erase (b); continue; }
+        sample (outDevMs, outMeans, b, e.getIoLatencyMs (bus.output, false));
     }
 }
 
@@ -515,7 +588,7 @@ double LatencyView::inputSideMs (int i) const
     const auto& s = e.inputs[(size_t) i];
     std::vector<Node> nodes;
     addPlugins (e, nodes, s.plugins, *s.fxBypass, i);
-    return it->second + (s.dnOn->isOn() ? samplesToMs (e, s.dspLatency.load()) : 0.0) + sum (nodes);
+    return it->second + (s.dnOn->isOn() ? samplesToMs (e, s.dspLatency.load()) : 0.0) + sum (nodes) + e.getChannelDelayMs (i);
 }
 
 double LatencyView::busSideMs (int b) const
@@ -527,7 +600,7 @@ double LatencyView::busSideMs (int b) const
     const auto& bus = e.buses[(size_t) b];
     std::vector<Node> nodes;
     addPlugins (e, nodes, bus.plugins, *bus.fxBypass, busSelectIndex (b));
-    return it->second + sum (nodes);
+    return it->second + sum (nodes) + e.getChannelDelayMs (Engine::busChannel (b));
 }
 
 LatencyView::Flow LatencyView::build (int b) const
@@ -540,12 +613,13 @@ LatencyView::Flow LatencyView::build (int b) const
     f.busTitle = busTitle (e, b);
 
     addPlugins (e, f.busNodes, bus.plugins, *bus.fxBypass, busSelectIndex (b));
+    addSyncDelay (e, f.busNodes, Engine::busChannel (b), busSelectIndex (b));
     f.hasOutput = bus.output.kind != IoTarget::Kind::None;
     if (f.hasOutput)
     {
         const auto it = outDevMs.find (b);
         f.busNodes.push_back ({ "Output device", bus.output.describe(), it != outDevMs.end() ? it->second : -1.0,
-                                theme::busColour (b), busSelectIndex (b) });
+                                theme::busColour (b), busSelectIndex (b), explainIoLatency (e, bus.output, false) });
     }
     f.busMs = sum (f.busNodes);
 
@@ -559,14 +633,19 @@ LatencyView::Flow LatencyView::build (int b) const
         lane.input = i;
         lane.title = inputTitle (e, i);
         const auto it = inDevMs.find (i);
-        lane.nodes.push_back ({ "Input device", s.source.describe(), it != inDevMs.end() ? it->second : -1.0, kDeviceIn, i });
+        lane.nodes.push_back ({ "Input device", s.source.describe(), it != inDevMs.end() ? it->second : -1.0, kDeviceIn, i,
+                                explainIoLatency (e, s.source, true) });
         if (s.dnOn->isOn())
         {
             const int mode = juce::roundToInt (s.dnMode->get());
             lane.nodes.push_back ({ "Denoiser", "RNNoise, " + s.dnMode->choices[mode] + " mode",
-                                    samplesToMs (e, s.dspLatency.load()), kDenoiser, i });
+                                    samplesToMs (e, s.dspLatency.load()), kDenoiser, i,
+                                    "RNNoise, " + s.dnMode->choices[mode] + " mode. It analyses the sound in 10 ms frames;\n"
+                                    "the latency mode sets how far it looks ahead (Ultra Low 0 ms ... Native HQ 30 ms):\n"
+                                    "more look-ahead = cleaner result." });
         }
         addPlugins (e, lane.nodes, s.plugins, *s.fxBypass, i);
+        addSyncDelay (e, lane.nodes, i, i);
         lane.ms = sum (lane.nodes);
         f.lanes.push_back (std::move (lane));
     }
@@ -689,7 +768,7 @@ void LatencyView::paint (juce::Graphics& g)
     g.fillRect (breakdown->getBounds().getX(), breakdown->getY() - 8, breakdown->getWidth(), 1);
 
     drawLegend (g, getLocalBounds().reduced (18, 0).removeFromTop (36).withTrimmedTop (8),
-                   { { "Input device", kDeviceIn }, { "Denoiser", kDenoiser }, { "Plugin", kPlugin },
+                   { { "Input device", kDeviceIn }, { "Denoiser", kDenoiser }, { "Plugin", kPlugin }, { "Sync delay", kSync },
                      { "Output device", theme::busColour (juce::jmax (0, bus)) } });
 }
 

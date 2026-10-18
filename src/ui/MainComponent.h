@@ -4,6 +4,8 @@
 #include "Settings.h"
 #include "LatencyView.h"
 #include "DspView.h"
+#include "SyncDelayView.h"
+#include "DevicePicker.h"
 #include "SceneEditor.h"
 #include "state/UndoHistory.h"
 
@@ -155,9 +157,15 @@ public:
     void openMidiMap();
     void openLatencyFinder();
     void openDspView();
+    void openSyncDelay();
+    /** Device selection window of a channel (input source / bus output); one window, follows the last strip. */
+    void openDevicePicker (int channel);
     void toggleLearnMode();
     /** Shows / hides the scene sidebar on the left. */
     void toggleSceneEditor();
+    /** Closes and reopens the master device and every other device (same settings), e.g. after a driver
+        stopped delivering audio without reporting an error. */
+    void restartAudioEngine();
     void openEqWindow (int selectIndex, bool bringToFront = true);
     void refreshAll();
     /** Interface zoom (1 = 100 %): everything in the main window is drawn larger / smaller;
@@ -187,6 +195,10 @@ private:
     void applyReorder (const std::array<std::vector<int>, 3>& order, bool assignmentsFollow);
     void discardReorder();
     /** Size of the main window's contents in unscaled (logical) units. */
+public:
+    /** Window content width (pixels) at which all channels fit side by side (see StripArea::idealWidth). */
+    int idealWidth() const;
+private:
     int logicalWidth() const  { return juce::roundToInt ((float) getWidth() / uiScale); }
     int logicalHeight() const { return juce::roundToInt ((float) getHeight() / uiScale); }
     void showToast (const juce::String& text, double seconds);
@@ -205,7 +217,7 @@ private:
     Inspector inspector;
     PanelHost panelHost;
     std::unique_ptr<SceneSidebar> sceneBar;   // Tools > Scene Editor
-    std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow, latencyWindow, dspWindow;
+    std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow, latencyWindow, dspWindow, syncWindow, deviceWindow;
     int shownSelBus = -1;     // bus selected with SEL as shown by the input faders
     uint32_t shownLayout = 0; // engine channel layout the strips were built for
     float uiScale = 1.0f;
@@ -213,6 +225,8 @@ private:
     double toastUntil = 0;
     double lastMeterFrame = 0;
     Param* hotkeyTarget = nullptr;   // waiting for a key press to assign
+    // Tooltips of every window (main and tool windows); without one JUCE shows none at all.
+    juce::TooltipWindow tooltips { nullptr, 600 };
     // Meters follow the display refresh (capped at ~60 Hz) instead of a coarse timer.
     juce::VBlankAttachment vblank { this, [this] (double t) { meterFrame (t); } };
 };

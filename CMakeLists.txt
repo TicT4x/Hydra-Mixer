@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(HydraMixer VERSION 0.1.0 LANGUAGES C CXX)
+project(HydraMixer VERSION 0.6.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -31,6 +31,14 @@ juce_add_gui_app(HydraMixer
     COMPANY_NAME "Hydra"
     VERSION ${PROJECT_VERSION}
     ICON_BIG "${CMAKE_SOURCE_DIR}/resources/icon.png")
+
+# The .ico is generated at configure time and the .rc is compiled without dependency scanning:
+# reconfigure when the PNG changes and recompile the resources when the .ico changes,
+# otherwise the exe keeps the old icon.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/resources/icon.png")
+set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/HydraMixer_artefacts/JuceLibraryCode/HydraMixer_resources.rc"
+    TARGET_DIRECTORY HydraMixer_rc_lib
+    PROPERTIES OBJECT_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/HydraMixer_artefacts/JuceLibraryCode/icon.ico")
 
 file(GLOB_RECURSE HYDRA_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/*.cpp"
@@ -82,7 +90,7 @@ endif()
 
 # Offline DSP tests (run: build\<cfg>\HydraTests_artefacts\<cfg>\HydraTests.exe)
 juce_add_console_app(HydraTests PRODUCT_NAME "HydraTests")
-target_sources(HydraTests PRIVATE tests/DenoiserTest.cpp tests/SessionTest.cpp tests/MidiRangeTest.cpp tests/AppCaptureTest.cpp tests/LedTest.cpp tests/RecorderTest.cpp tests/AsioSecondaryTest.cpp tests/UndoTest.cpp tests/ReorderTest.cpp tests/SceneTest.cpp
+target_sources(HydraTests PRIVATE tests/DenoiserTest.cpp tests/SessionTest.cpp tests/MidiRangeTest.cpp tests/AppCaptureTest.cpp tests/LedTest.cpp tests/RecorderTest.cpp tests/AsioSecondaryTest.cpp tests/UndoTest.cpp tests/ReorderTest.cpp tests/SceneTest.cpp tests/SyncDelayTest.cpp
     src/core/Denoiser.cpp src/engine/Engine.cpp src/engine/IoStreams.cpp src/engine/AsioSecondary.cpp src/engine/Recorder.cpp src/engine/PluginChain.cpp
     src/midi/MidiMapper.cpp src/midi/Hotkeys.cpp src/state/Session.cpp src/state/VoicemeeterImport.cpp src/state/UndoHistory.cpp src/state/Scenes.cpp)
 target_include_directories(HydraTests PRIVATE "${CMAKE_SOURCE_DIR}/src")
