@@ -1,0 +1,15 @@
+# Build output
+build/
+out/
+.vs/
+*.user
+
+# Reference only, not part of the project
+Voicemeeter*Setup*.zip
+
+# Local/runtime files
+*.log
+.claude/settings.local.json
+
+# Local notes for Claude Code
+CLAUDE.md
