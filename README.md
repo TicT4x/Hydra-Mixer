@@ -11,7 +11,7 @@
 
 ![Hydra Mixer](docs/screenshot.png)
 
-**Wiki & Tutorial (Deutsch):** https://tict4x.github.io/Hydra-Mixer/
+**Wiki & tutorial:** https://tict4x.github.io/Hydra-Mixer/ (English / [Deutsch](https://tict4x.github.io/Hydra-Mixer/de/))
 
 > **Status: 0.6, early release.** The mixer, the UI and the DSP are complete and covered by offline tests.
 > Real-world signal flow (ASIO with real hardware, loopback, drift compensation, VST3 loading, MIDI
