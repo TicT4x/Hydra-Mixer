@@ -1,0 +1,1252 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hydra Mixer Wiki</title>
+<meta name="description" content="Wiki und Tutorial für Hydra Mixer, den Low-Latency-Audiomixer für Windows: Einstieg, Bedienung und Nachschlagewerk aller Funktionen.">
+<link rel="alternate" hreflang="en" href="../">
+<link rel="icon" href="../icon.png">
+<style>
+:root {
+  --bg: #0f1216;
+  --bg2: #151a20;
+  --panel: #1a2028;
+  --panel2: #212934;
+  --line: #2a3340;
+  --text: #dfe5ec;
+  --muted: #8d99a8;
+  --accent: #35c7d9;
+  --accent2: #7b8cff;
+  --green: #4cd18a;
+  --yellow: #f2c14e;
+  --red: #ef5b5b;
+  --orange: #f08c3c;
+  --code: #10151b;
+  --shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 8px 24px rgba(0,0,0,.25);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f5f7fa; --bg2: #eef1f5; --panel: #ffffff; --panel2: #f0f3f7; --line: #d9dfe7;
+    --text: #18202a; --muted: #5c6a7a; --accent: #0e8fa1; --accent2: #4c5fd6;
+    --green: #1e9b5a; --yellow: #b48300; --red: #c93838; --orange: #c56516; --code: #eef2f6;
+    --shadow: 0 1px 2px rgba(0,0,0,.06);
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f5f7fa; --bg2: #eef1f5; --panel: #ffffff; --panel2: #f0f3f7; --line: #d9dfe7;
+  --text: #18202a; --muted: #5c6a7a; --accent: #0e8fa1; --accent2: #4c5fd6;
+  --green: #1e9b5a; --yellow: #b48300; --red: #c93838; --orange: #c56516; --code: #eef2f6;
+  --shadow: 0 1px 2px rgba(0,0,0,.06);
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15.5px/1.65 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, kbd, .mono { font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: .88em; }
+code { background: var(--code); border: 1px solid var(--line); padding: .05em .35em; border-radius: 4px; overflow-wrap: anywhere; }
+kbd {
+  background: var(--panel2); border: 1px solid var(--line); border-bottom-width: 2px;
+  padding: .05em .45em; border-radius: 5px; white-space: nowrap;
+}
+.ui { font-weight: 600; color: var(--text); background: var(--panel2); border-radius: 4px; padding: 0 .3em; }
+
+/* Top bar */
+header.top {
+  position: sticky; top: 0; z-index: 20; height: 56px;
+  display: flex; align-items: center; gap: 14px; padding: 0 18px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+header.top .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .02em; color: var(--text); }
+header.top .brand img { width: 28px; height: 28px; }
+header.top .brand small { color: var(--muted); font-weight: 500; }
+.search { margin-left: auto; position: relative; flex: 0 1 340px; }
+.search input {
+  width: 100%; padding: 8px 12px 8px 34px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--text); font: inherit; font-size: 14px; outline: none;
+}
+.search input:focus { border-color: var(--accent); }
+.search svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); }
+.iconbtn {
+  background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 8px;
+  width: 36px; height: 36px; display: grid; place-items: center; cursor: pointer; flex: none;
+}
+.iconbtn:hover { border-color: var(--accent); }
+#menuBtn { display: none; }
+.lang { display: flex; flex: none; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; height: 36px; }
+.lang a { display: grid; place-items: center; padding: 0 10px; font-size: 13px; font-weight: 600; color: var(--muted); background: var(--panel); }
+.lang a:hover { text-decoration: none; color: var(--text); }
+.lang a.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--panel)); }
+
+/* Layout */
+.layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); max-width: 1320px; margin: 0 auto; }
+nav.side {
+  position: sticky; top: 56px; height: calc(100vh - 56px); overflow-y: auto;
+  padding: 18px 10px 40px 18px; border-right: 1px solid var(--line);
+}
+nav.side .grp { margin: 16px 0 4px; font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+nav.side a { display: block; padding: 4px 10px; border-radius: 6px; color: var(--text); font-size: 14px; }
+nav.side a:hover { background: var(--panel); text-decoration: none; }
+nav.side a.active { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+nav.side a.hidden { display: none; }
+nav.side .nores { color: var(--muted); font-size: 13px; padding: 8px 10px; display: none; }
+
+main { padding: 28px 40px 80px; min-width: 0; }
+main section { max-width: 900px; padding-bottom: 12px; border-bottom: 1px solid var(--line); margin-bottom: 34px; }
+main section.dim { opacity: .25; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; }
+h2 { font-size: 25px; margin: 0 0 12px; padding-top: 6px; }
+h2 .num { color: var(--accent); font-weight: 600; margin-right: 6px; }
+h3 { font-size: 18px; margin: 26px 0 8px; }
+h4 { font-size: 15.5px; margin: 18px 0 6px; color: var(--accent); }
+p { margin: 8px 0 12px; }
+ul, ol { padding-left: 22px; margin: 8px 0 14px; }
+li { margin: 3px 0; }
+.lead { font-size: 17.5px; color: var(--muted); max-width: 760px; }
+
+.hero { display: grid; gap: 20px; }
+.hero img.shot { width: 100%; border-radius: 10px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+.badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.badge { font-size: 12.5px; padding: 3px 10px; border-radius: 99px; background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
+.badge b { color: var(--text); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; margin: 16px 0; }
+.card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;
+  box-shadow: var(--shadow); color: var(--text);
+}
+a.card:hover { border-color: var(--accent); text-decoration: none; }
+.card h4 { margin: 0 0 4px; }
+.card p { margin: 0; font-size: 14px; color: var(--muted); }
+
+.note, .warn, .tip {
+  border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 8px 8px 0;
+  padding: 10px 14px; margin: 14px 0; font-size: 14.5px;
+}
+.warn { border-left-color: var(--orange); }
+.tip { border-left-color: var(--green); }
+.note b:first-child, .warn b:first-child, .tip b:first-child { display: block; margin-bottom: 2px; }
+
+table { border-collapse: collapse; width: 100%; margin: 12px 0 18px; font-size: 14.5px; display: block; overflow-x: auto; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { background: var(--panel); font-weight: 600; white-space: nowrap; }
+tbody tr:hover td { background: color-mix(in srgb, var(--panel) 60%, transparent); }
+
+/* Steps */
+ol.steps { list-style: none; counter-reset: s; padding: 0; }
+ol.steps > li { counter-increment: s; position: relative; padding: 2px 0 12px 44px; }
+ol.steps > li::before {
+  content: counter(s); position: absolute; left: 0; top: 0; width: 30px; height: 30px; border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent);
+  display: grid; place-items: center; font-weight: 700; font-size: 14px;
+}
+
+/* Signal flow */
+.flow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 14px 0 18px; }
+.flow span {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 4px 10px;
+  font-size: 13.5px; white-space: nowrap;
+}
+.flow span.k { border-color: var(--accent); color: var(--accent); }
+.flow i { color: var(--muted); font-style: normal; }
+
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin-right: 4px; }
+.dot.r { background: var(--red); } .dot.y { background: var(--yellow); } .dot.g { background: var(--green); }
+
+.diagram { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 14px 0; overflow-x: auto; }
+.diagram svg { display: block; min-width: 640px; width: 100%; height: auto; }
+.diagram text { fill: var(--text); font: 13px "Segoe UI", system-ui, sans-serif; }
+.diagram .sub { fill: var(--muted); font-size: 11.5px; }
+.diagram .box { fill: var(--panel2); stroke: var(--line); }
+.diagram .box.k { stroke: var(--accent); }
+.diagram .arrow { stroke: var(--muted); fill: none; stroke-width: 1.5; }
+.diagram .arrow.k { stroke: var(--accent); }
+
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;margin:10px 0 16px}
+pre code{background:none;border:0;padding:0}
+footer { color: var(--muted); font-size: 13px; padding: 10px 0 30px; }
+mark { background: color-mix(in srgb, var(--yellow) 40%, transparent); color: inherit; border-radius: 2px; }
+
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  #menuBtn { display: grid; }
+  nav.side {
+    position: fixed; left: 0; top: 56px; width: 290px; z-index: 30; background: var(--bg);
+    transform: translateX(-100%); transition: transform .2s; box-shadow: var(--shadow);
+  }
+  body.navopen nav.side { transform: none; }
+  main { padding: 20px 16px 60px; }
+  header.top .brand small { display: none; }
+  h1 { font-size: 27px; }
+}
+@media (max-width: 520px) { .search { flex-basis: auto; } header.top { gap: 8px; padding: 0 10px; } header.top .brand { font-size: 0; gap: 0; } .lang a { padding: 0 8px; } }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <button class="iconbtn" id="menuBtn" aria-label="Navigation öffnen">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  </button>
+  <a class="brand" href="#start"><img src="../icon.png" alt="">Hydra Mixer <small>Wiki &amp; Tutorial</small></a>
+  <div class="search">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="q" type="search" placeholder="Suchen … (z. B. Gate, MIDI, Loopback)  /" autocomplete="off">
+  </div>
+  <nav class="lang" aria-label="Sprache / Language">
+    <a href="../" hreflang="en" lang="en" data-lang="en">EN</a>
+    <a href="./" hreflang="de" class="on" aria-current="true" data-lang="de">DE</a>
+  </nav>
+  <button class="iconbtn" id="themeBtn" aria-label="Hell/Dunkel umschalten" title="Hell/Dunkel">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+  </button>
+</header>
+
+<div class="layout">
+<nav class="side" id="nav">
+  <div class="grp">Einstieg</div>
+  <a href="#start">Willkommen</a>
+  <a href="#install">Installation</a>
+  <a href="#quickstart">Tutorial: Erste Schritte</a>
+  <a href="#concepts">Grundkonzepte</a>
+  <div class="grp">Oberfläche</div>
+  <a href="#ui">Überblick Hauptfenster</a>
+  <a href="#topbar">Top-Bar</a>
+  <a href="#strips">Strips (Kanalzüge)</a>
+  <a href="#controls">Regler bedienen</a>
+  <a href="#channels">Kanäle verwalten</a>
+  <a href="#devices">Geräteauswahl</a>
+  <div class="grp">Signalverarbeitung</div>
+  <a href="#inspector">Inspector</a>
+  <a href="#denoiser">Denoiser</a>
+  <a href="#eq">Equalizer</a>
+  <a href="#gate">Gate &amp; Voice Key</a>
+  <a href="#comp">Kompressor</a>
+  <a href="#vst">VST3-Plugins</a>
+  <a href="#buses">Busse &amp; Limiter</a>
+  <a href="#sel">SEL &amp; Monitoring</a>
+  <div class="grp">Werkzeuge</div>
+  <a href="#recorder">Recorder</a>
+  <a href="#scenes">Szenen</a>
+  <a href="#latency">Latency Finder</a>
+  <a href="#syncdelay">Sync Delay</a>
+  <a href="#dsp">DSP Load</a>
+  <a href="#undo">Undo / Redo</a>
+  <div class="grp">Steuerung</div>
+  <a href="#midi">MIDI Learn</a>
+  <a href="#apc">APC mini &amp; LEDs</a>
+  <a href="#hotkeys">Tastenkürzel</a>
+  <div class="grp">Einstellungen</div>
+  <a href="#settings">Settings</a>
+  <a href="#backup">Backup &amp; Transfer</a>
+  <a href="#vmimport">Voicemeeter-Import</a>
+  <a href="#virtual">Virtuelle Geräte</a>
+  <div class="grp">Nachschlagen</div>
+  <a href="#recipes">Rezepte</a>
+  <a href="#shortcuts">Maus &amp; Tastatur</a>
+  <a href="#troubleshoot">Fehlerbehebung</a>
+  <a href="#files">Dateien &amp; Ordner</a>
+  <a href="#glossary">Glossar</a>
+  <div class="nores" id="nores">Keine Treffer.</div>
+</nav>
+
+<main id="main">
+
+<!-- ============================================================ -->
+<section id="start">
+  <div class="hero">
+    <div>
+      <h1>Hydra Mixer Wiki</h1>
+      <p class="lead">Hydra Mixer ist ein virtueller Audiomixer für Windows mit möglichst geringer Latenz, eine Alternative zu Voicemeeter Potato. Diese Seite führt dich Schritt für Schritt durch die Einrichtung und erklärt jede Funktion zum Nachschlagen.</p>
+      <div class="badges">
+        <span class="badge"><b>Version</b> 0.6</span>
+        <span class="badge"><b>System</b> Windows 10 / 11, 64 Bit, AVX2</span>
+        <span class="badge"><b>Treiber</b> ASIO · WASAPI</span>
+        <span class="badge"><b>Plugins</b> VST3</span>
+        <span class="badge"><b>Steuerung</b> MIDI · Hotkeys</span>
+      </div>
+    </div>
+    <img class="shot" src="../screenshot.png" alt="Hauptfenster von Hydra Mixer mit Input-Strips links, Output-Strips rechts und dem Inspector unten">
+  </div>
+
+  <h3>Wo fange ich an?</h3>
+  <div class="cards">
+    <a class="card" href="#quickstart"><h4>Neu hier?</h4><p>Das Tutorial bringt dich in 10 Minuten vom Download zum ersten Mix.</p></a>
+    <a class="card" href="#vmimport"><h4>Von Voicemeeter?</h4><p>Einstellungen importieren und die Unterschiede kennen.</p></a>
+    <a class="card" href="#recipes"><h4>Konkretes Ziel?</h4><p>Rezepte: Stream-Mix, Mikro entrauschen, Spotify einbinden …</p></a>
+    <a class="card" href="#troubleshoot"><h4>Problem?</h4><p>Kein Ton, Knackser, gelbe Punkte: Lösungen.</p></a>
+  </div>
+
+  <div class="note"><b>Status: frühe Version.</b> Mixer, Oberfläche und DSP sind fertig und durch Offline-Tests abgedeckt. Der echte Signalfluss mit verschiedener Hardware (mehrere ASIO-Geräte, Loopback, VST3, MIDI-Controller) ist noch wenig erprobt. Fehlerberichte sind willkommen: <a href="https://github.com/TicT4x/Hydra-Mixer/issues">GitHub Issues</a>.</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="install">
+  <h2><span class="num">1</span>Installation</h2>
+  <ol class="steps">
+    <li>Lade <code>HydraMixer-0.6-win64.zip</code> von der <a href="https://github.com/TicT4x/Hydra-Mixer/releases">Releases-Seite</a> herunter.</li>
+    <li>Entpacke das Archiv an einen beliebigen Ort, z. B. <code>C:\Tools\Hydra Mixer</code>. Es gibt keinen Installer und keine Laufzeitumgebung.</li>
+    <li>Starte <code>Hydra Mixer.exe</code>. Beim ersten Start wählt Hydra ein Standardgerät. Danach suchst du dir in den <a href="#settings">Settings</a> dein Master-Gerät aus.</li>
+  </ol>
+  <h3>Voraussetzungen</h3>
+  <ul>
+    <li>Windows 10 oder 11, 64 Bit.</li>
+    <li>Ein Prozessor mit AVX2 (praktisch alle Intel-CPUs ab 2013 und AMD-CPUs ab 2015).</li>
+    <li>Empfohlen: ein Audio-Interface mit ASIO-Treiber. Ohne ASIO funktioniert Hydra auch mit Windows-Audio (WASAPI), dann ist die Latenz etwas höher.</li>
+  </ul>
+  <h3>Aus dem Quellcode bauen</h3>
+  <p>Benötigt werden die Visual Studio 2026 Build Tools (MSVC, C++-Workload), CMake ab 3.25 und Ninja.</p>
+<pre><code>git clone --recursive https://github.com/TicT4x/Hydra-Mixer.git
+cd Hydra-Mixer
+.\build.ps1                # Release
+.\build.ps1 -Config Debug</code></pre>
+  <p>Die fertige App liegt unter <code>build\Release\HydraMixer_artefacts\Release\Hydra Mixer.exe</code>, die Tests unter <code>build\Release\HydraTests_artefacts\Release\HydraTests.exe</code>.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="quickstart">
+  <h2><span class="num">2</span>Tutorial: Erste Schritte</h2>
+  <p>In diesem Tutorial richtest du einen typischen Mix ein: Mikrofon und Spiel/Musik rein, Kopfhörer und Stream raus.</p>
+
+  <h3>Schritt 1: Master-Gerät wählen</h3>
+  <ol class="steps">
+    <li>Klicke oben rechts auf das <span class="ui">Zahnrad</span> (oder auf den Statustext mit dem Treibernamen in der Top-Bar). Es öffnet sich <span class="ui">Settings → Audio Engine</span>.</li>
+    <li>Wähle unter <span class="ui">Driver</span> <b>ASIO</b> und darunter dein Interface. Hast du kein ASIO, nimm <span class="ui">Windows Audio (Low Latency Mode)</span>.</li>
+    <li>Stelle <span class="ui">Sample rate</span> (meist 48000) und <span class="ui">Buffer size</span> ein. Kleiner Puffer = weniger Latenz, aber mehr CPU-Last. Bei ASIO legst du die Puffergröße oft im <span class="ui">ASIO Control Panel</span> fest.</li>
+    <li>Klicke auf <span class="ui">Apply / Restart</span>.</li>
+  </ol>
+  <div class="tip"><b>Warum ist das wichtig?</b> Das Master-Gerät ist der Taktgeber des ganzen Mixers. Seine Ein- und Ausgänge laufen ohne zusätzlichen Puffer, also mit der geringsten Latenz. Alles andere wird an diesen Takt angepasst. Mehr dazu unter <a href="#concepts">Grundkonzepte</a>.</div>
+
+  <h3>Schritt 2: Mikrofon auf einen Input legen</h3>
+  <ol class="steps">
+    <li>Klicke im ersten Input-Strip auf den <span class="ui">Geräte-Chip</span> unter dem Kanalnamen. Es öffnet sich die <a href="#devices">Geräteauswahl</a>.</li>
+    <li>Wähle links <span class="ui">Master</span> (bzw. <span class="ui">Hardware</span>) und rechts den Kanal deines Mikrofons, z. B. <span class="ui">Mono 1</span>. Der Klick übernimmt sofort, ein Doppelklick übernimmt und schließt.</li>
+    <li>Sprich ins Mikrofon. Der Pegelmeter im Strip schlägt aus. Ist er zu leise, drehe am <span class="ui">GAIN</span>-Knob oben im Strip.</li>
+    <li>Doppelklick auf den Kanalnamen benennt ihn um, z. B. in „Mic“.</li>
+  </ol>
+
+  <h3>Schritt 3: Spiel oder Musik einbinden</h3>
+  <ol class="steps">
+    <li>Öffne im zweiten Input die Geräteauswahl und wähle <span class="ui">Application</span>.</li>
+    <li>Wähle die App, z. B. <code>Spotify.exe</code>. Die Liste zeigt nur Apps, die gerade Ton ausgeben. Fehlt sie, starte die Wiedergabe und klicke <span class="ui">Refresh</span>.</li>
+    <li>Damit du die App nicht doppelt hörst, stelle ihre Ausgabe in <i>Windows-Einstellungen → System → Sound → Lautstärkemixer</i> auf ein Gerät, das du nicht abhörst.</li>
+  </ol>
+  <p>Alternativen: <span class="ui">Loopback</span> nimmt alles auf, was Windows auf einem Wiedergabegerät abspielt. Mehr unter <a href="#virtual">Virtuelle Geräte</a>.</p>
+
+  <h3>Schritt 4: Ausgänge festlegen</h3>
+  <ol class="steps">
+    <li>Rechts siehst du die <b>Hardware Outputs</b> (A1, A2, …) und die <b>Virtual Outputs</b> (B1, B2, …).</li>
+    <li>Klicke beim Bus <b>A1</b> auf den Geräte-Chip und wähle deine Kopfhörer bzw. Lautsprecher.</li>
+    <li>Für einen Stream-Mix gibst du z. B. <b>B1</b> auf ein virtuelles Kabel aus, das OBS als Mikrofon aufnimmt (siehe <a href="#virtual">Virtuelle Geräte</a>), oder nimmst B1 mit dem <a href="#recorder">Recorder</a> auf.</li>
+  </ol>
+
+  <h3>Schritt 5: Routing</h3>
+  <ol class="steps">
+    <li>Jeder Input-Strip hat Routing-Buttons <b>A1 A2 A3 …</b> und <b>B1 B2 …</b>. Ein leuchtender Button heißt: Dieser Input geht auf diesen Bus.</li>
+    <li>Schalte beim Mikrofon z. B. <b>B1</b> ein (Stream) und bei der Musik <b>A1</b> und <b>B1</b> (du hörst sie, der Stream auch).</li>
+    <li>Mit den Fadern stellst du die Lautstärke ein. Klick auf die dB-Zahl unter dem Fader erlaubt die direkte Eingabe, z. B. <code>-6</code>.</li>
+  </ol>
+
+  <h3>Schritt 6: Mikrofon verbessern</h3>
+  <ol class="steps">
+    <li>Klicke auf den Mic-Strip. Unten im <a href="#inspector">Inspector</a> erscheinen seine Effekte.</li>
+    <li>Schalte den <a href="#denoiser">Denoiser</a> ein (entfernt Lüfter, Tastatur, Rauschen).</li>
+    <li>Optional: <a href="#eq">EQ</a> mit Low Cut bei ca. 80 Hz, <a href="#gate">Gate</a> mit Voice Key, <a href="#comp">Kompressor</a> mit Auto Gain.</li>
+  </ol>
+  <div class="tip"><b>Fertig.</b> Hydra speichert jede Änderung automatisch nach ca. 2 Sekunden. Du musst nichts sichern. Als Nächstes lohnen sich <a href="#midi">MIDI Learn</a>, <a href="#hotkeys">Tastenkürzel</a> und <a href="#scenes">Szenen</a>.</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="concepts">
+  <h2><span class="num">3</span>Grundkonzepte</h2>
+
+  <h3>Inputs, Hardware- und Virtual Outputs</h3>
+  <table>
+    <thead><tr><th>Begriff</th><th>Anzahl</th><th>Bedeutung</th></tr></thead>
+    <tbody>
+      <tr><td><b>Input</b> (IN 1–16)</td><td>bis 16, Standard 8</td><td>Eine Signalquelle: Mikrofon, Interface-Kanal, App, Loopback, virtuelles Kabel. Jeder Input hat seine eigene Effektkette.</td></tr>
+      <tr><td><b>Hardware Output</b> (A1–A8)</td><td>bis 8, Standard 5</td><td>Ein Ausgangsbus, meist auf echte Ausgänge (Kopfhörer, Lautsprecher).</td></tr>
+      <tr><td><b>Virtual Output</b> (B1–B8)</td><td>bis 8, Standard 3</td><td>Ein Bus für Mixe, die nicht direkt abgehört werden: Stream, Aufnahme, Discord. Kann ebenfalls auf ein Gerät (z. B. ein virtuelles Kabel) ausgegeben werden.</td></tr>
+    </tbody>
+  </table>
+  <p>A- und B-Busse funktionieren technisch gleich. Der Unterschied ist die Gruppierung in der Oberfläche, der <a href="#recorder">Recorder</a> nimmt B-Busse auf, und <a href="#sel">Monitoring</a> ersetzt einen A-Bus.</p>
+
+  <h3>Signalfluss</h3>
+  <p>Jeder Input durchläuft diese Kette, in dieser Reihenfolge:</p>
+  <div class="flow">
+    <span class="k">Quelle</span><i>→</i><span>Gain</span><i>→</i><span>Denoiser</span><i>→</i><span>EQ (8 Bänder)</span><i>→</i><span>Gate</span><i>→</i><span>Kompressor</span><i>→</i><span>VST3-Kette</span><i>→</i><span>Sync Delay</span><i>→</i><span>Mono</span><i>→</i><span>Fader / Pan</span><i>→</i><span class="k">Routing A/B</span>
+  </div>
+  <p>Jeder Bus summiert die gerouteten Inputs und verarbeitet sie weiter:</p>
+  <div class="flow">
+    <span class="k">Summe</span><i>→</i><span>EQ</span><i>→</i><span>VST3-Kette</span><i>→</i><span>Mono</span><i>→</i><span>Fader / Mute</span><i>→</i><span>Limiter</span><i>→</i><span>Sync Delay</span><i>→</i><span class="k">Ausgabegerät</span>
+  </div>
+
+  <h3 id="clock">Das Master-Gerät als Clock</h3>
+  <p>Jedes Audiogerät hat seinen eigenen Takt (Clock), und keine zwei Clocks laufen exakt gleich schnell. Hydra löst das so:</p>
+  <div class="diagram" aria-label="Diagramm: Master-Gerät direkt an der Engine, weitere Geräte über Ringpuffer und Resampler">
+    <svg viewBox="0 0 760 230" role="img">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor" style="color:var(--muted)"/></marker></defs>
+      <rect class="box k" x="20" y="20" width="200" height="56" rx="8"/>
+      <text x="120" y="44" text-anchor="middle">Master-Gerät (ASIO)</text>
+      <text class="sub" x="120" y="62" text-anchor="middle">gibt den Takt vor</text>
+      <rect class="box k" x="300" y="70" width="170" height="90" rx="8"/>
+      <text x="385" y="108" text-anchor="middle">Hydra Engine</text>
+      <text class="sub" x="385" y="128" text-anchor="middle">läuft im Callback</text>
+      <text class="sub" x="385" y="143" text-anchor="middle">des Masters</text>
+      <path class="arrow k" d="M220 48 C 260 48, 260 100, 298 100" marker-end="url(#ah)"/>
+      <text class="sub" x="300" y="56">direkt, ohne Puffer</text>
+      <rect class="box" x="20" y="150" width="200" height="56" rx="8"/>
+      <text x="120" y="174" text-anchor="middle">Weitere Geräte</text>
+      <text class="sub" x="120" y="192" text-anchor="middle">WASAPI, Loopback, App, 2. ASIO</text>
+      <rect class="box" x="236" y="168" width="52" height="22" rx="4"/>
+      <text class="sub" x="262" y="183" text-anchor="middle">Ring</text>
+      <path class="arrow" d="M220 178 L 234 178" marker-end="url(#ah)"/>
+      <path class="arrow" d="M288 178 C 296 178, 296 140, 298 140" marker-end="url(#ah)"/>
+      <text class="sub" x="236" y="214">Ringpuffer + Resampler</text>
+      <rect class="box" x="560" y="40" width="180" height="56" rx="8"/>
+      <text x="650" y="64" text-anchor="middle">Master-Ausgänge</text>
+      <text class="sub" x="650" y="82" text-anchor="middle">direkt</text>
+      <rect class="box" x="560" y="140" width="180" height="56" rx="8"/>
+      <text x="650" y="164" text-anchor="middle">Andere Ausgabegeräte</text>
+      <text class="sub" x="650" y="182" text-anchor="middle">über Drift-Ausgleich</text>
+      <path class="arrow k" d="M470 100 C 510 100, 510 68, 558 68" marker-end="url(#ah)"/>
+      <path class="arrow" d="M470 135 C 510 135, 510 168, 558 168" marker-end="url(#ah)"/>
+    </svg>
+  </div>
+  <ul>
+    <li>Das <b>Master-Gerät</b> (ideal ASIO) ist die einzige Clock. Seine Kanäle haben keine zusätzliche Latenz.</li>
+    <li>Alle <b>anderen Geräte</b> hängen über einen Ringpuffer und einen Resampler daran. Ein selbstregelnder <b>Drift-Ausgleich</b> passt die Abtastrate laufend minimal an, damit der Puffer weder leer- noch überläuft. Das kostet ein paar Millisekunden Latenz.</li>
+    <li>Mehrere Kanäle desselben Interfaces bleiben untereinander sample-genau.</li>
+  </ul>
+  <div class="tip"><b>Faustregel:</b> Lege die Geräte, bei denen Latenz zählt (Mikrofon, Kopfhörer), auf das Master-Gerät. Apps, Loopback und zweite Geräte sind für Musik, Spiele und Streams völlig ausreichend.</div>
+
+  <h3>Automatisches Speichern</h3>
+  <p>Jede Änderung wird nach ca. 2 Sekunden in <code>session.xml</code> gespeichert. Bei jedem Start wird zusätzlich ein Backup angelegt (bis zu 40). Siehe <a href="#backup">Backup &amp; Transfer</a>.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="ui">
+  <h2><span class="num">4</span>Überblick Hauptfenster</h2>
+  <p>Das Hauptfenster besteht aus drei Bereichen:</p>
+  <table>
+    <thead><tr><th>Bereich</th><th>Lage</th><th>Inhalt</th></tr></thead>
+    <tbody>
+      <tr><td><a href="#topbar">Top-Bar</a></td><td>oben</td><td>Logo, Status der Audio-Engine, Recorder-Mini, Werkzeuge, DSP-Anzeige, Settings, Ausschalten, Fensterknöpfe. Die Top-Bar ist gleichzeitig die Titelleiste: an freien Stellen ziehen verschiebt das Fenster.</td></tr>
+      <tr><td><a href="#strips">Strips</a></td><td>Mitte</td><td>Links die Inputs, rechts die Hardware- und Virtual Outputs. Beide Seiten scrollen getrennt seitwärts.</td></tr>
+      <tr><td><a href="#inspector">Inspector</a></td><td>unten</td><td>Die Effekte des ausgewählten Kanals (Denoiser, EQ, Gate, Kompressor, VST3, Limiter) oder der Recorder.</td></tr>
+    </tbody>
+  </table>
+  <p>Beim Start wird das Fenster genau so breit, dass alle Strips nebeneinander passen. Größe von Oberfläche und Schrift lassen sich unter <a href="#settings">Settings → General</a> einstellen (75–200 %).</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="topbar">
+  <h2><span class="num">5</span>Top-Bar</h2>
+  <table>
+    <thead><tr><th>Element</th><th>Funktion</th></tr></thead>
+    <tbody>
+      <tr><td>Logo &amp; Statustext</td><td>Zeigt Treiber und Master-Gerät. Klick öffnet <span class="ui">Settings → Audio Engine</span>. Ist die Engine gestoppt, steht das hier.</td></tr>
+      <tr><td>Recorder-Mini</td><td>Aufnahme, Play/Pause, Stop. Wird es eng, wird daraus ein Kassetten-Symbol, das den Recorder öffnet.</td></tr>
+      <tr><td><span class="ui">Schraubenschlüssel</span> (Tools)</td><td>Menü mit <a href="#scenes">Scene Editor</a>, <a href="#midi">MIDI Learn Mode</a>, <a href="#midi">MIDI Map</a>, <a href="#latency">Latency Finder</a>, <a href="#syncdelay">Sync Delay</a>, <a href="#dsp">DSP Load</a>, <a href="#recorder">Recorder</a> und <a href="#troubleshoot">Restart Audio Engine</a>. Im Learn-Modus leuchtet der Schlüssel gelb.</td></tr>
+      <tr><td>DSP-Anzeige</td><td>Anteil der verfügbaren Rechenzeit pro Audioblock. Klick öffnet <a href="#dsp">DSP Load</a>.</td></tr>
+      <tr><td><span class="ui">Zahnrad</span></td><td>Öffnet die <a href="#settings">Settings</a>.</td></tr>
+      <tr><td><span class="ui">Power</span></td><td>Beendet Hydra Mixer (mit Bestätigung). Wichtig, wenn das Schließen-Kreuz nur in den Tray minimiert.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================ -->
+<section id="strips">
+  <h2><span class="num">6</span>Strips (Kanalzüge)</h2>
+  <h3>Input-Strip</h3>
+  <p>Von oben nach unten:</p>
+  <ul>
+    <li><b>Name</b>: Doppelklick zum Umbenennen.</li>
+    <li><b>Geräte-Chip</b>: aktuelle Quelle. Klick öffnet die <a href="#devices">Geräteauswahl</a>. Farbige Punkte links vom Namen zeigen Probleme (siehe unten).</li>
+    <li><b>GAIN</b>: Eingangsverstärkung vor allen Effekten.</li>
+    <li><b>Routing-Buttons</b>: A1, A2, … und B1, B2, … (je drei pro Reihe, nur aktive Busse).</li>
+    <li><b>MONO</b>, <b>SOLO</b>, <b>MUTE</b>.</li>
+    <li><b>Fader</b> mit Pegelmeter und dB-Anzeige, darunter Pan.</li>
+  </ul>
+  <p>Ein Klick irgendwo in einen Strip wählt ihn im <a href="#inspector">Inspector</a> aus. Ist ein Kanal gemutet oder durch Solo stumm, zeigt der Meter grau den Pegel, den er ohne Mute hätte.</p>
+
+  <h3>Bus-Strip</h3>
+  <p>Name, Ausgabegerät, <b>SEL</b> (siehe <a href="#sel">SEL &amp; Monitoring</a>), MONO, MUTE, Fader mit Meter.</p>
+
+  <h3>Status-Punkte am Geräte-Chip</h3>
+  <table>
+    <thead><tr><th>Punkt</th><th>Bedeutung</th></tr></thead>
+    <tbody>
+      <tr><td><span class="dot r"></span>Rot</td><td>Gerät offline (abgezogen, belegt oder fehlerhaft).</td></tr>
+      <tr><td><span class="dot y"></span>Gelb</td><td>Dropouts in den letzten 2 Minuten, oder ein Hinweis: wartet auf die App, „Hydra Virtual“ ohne Treiber.</td></tr>
+    </tbody>
+  </table>
+  <p>Fahre mit der Maus über den Punkt: Der Tooltip erklärt das Problem, bei Dropouts mit Anzahl und Alter („12 s ago“).</p>
+
+  <h3>Platz verteilen</h3>
+  <p>Zwischen Inputs und Outputs liegt ein Trenner. Ziehen verschiebt den Platz, Doppelklick stellt die Standardaufteilung her. Das Mausrad scrollt die Strips seitwärts. Ist das Fenster zu niedrig, werden die Strips verkleinert statt vertikal zu scrollen.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="controls">
+  <h2><span class="num">7</span>Regler bedienen</h2>
+  <p>Alle Fader, Knobs und Schalter funktionieren gleich:</p>
+  <table>
+    <thead><tr><th>Aktion</th><th>Wirkung</th></tr></thead>
+    <tbody>
+      <tr><td>Ziehen</td><td>Wert ändern. Mit <kbd>Shift</kbd> fein.</td></tr>
+      <tr><td>Klick auf die Fader-Bahn</td><td>Fader gleitet zu dieser Position (mit <kbd>Shift</kbd> nicht).</td></tr>
+      <tr><td>Mausrad</td><td>Wert schrittweise ändern. Mit <kbd>Shift</kbd> feinere Schritte.</td></tr>
+      <tr><td>Doppelklick</td><td>Auf Standardwert zurücksetzen.</td></tr>
+      <tr><td>Klick auf den Wert unter dem Regler</td><td>Textfeld für direkte Eingabe, z. B. <code>-6</code>, <code>2.5k</code>, <code>-inf</code>.</td></tr>
+      <tr><td>Rechtsklick</td><td>Kontextmenü: <span class="ui">MIDI Learn</span>, <span class="ui">Clear MIDI Mapping</span>, <span class="ui">MIDI Range (calibrate)</span>, <span class="ui">Assign Keyboard Shortcut...</span> (bei Schaltern), <span class="ui">Reset to Default</span>.</td></tr>
+    </tbody>
+  </table>
+  <p>Jeder Regler ist automatisch per <a href="#midi">MIDI</a> steuerbar, jeder Schalter zusätzlich per <a href="#hotkeys">Tastenkürzel</a>.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="channels">
+  <h2><span class="num">8</span>Kanäle verwalten</h2>
+  <h3>Hinzufügen</h3>
+  <p>Klicke auf das <span class="ui">+</span> neben der Überschrift <b>Inputs</b>, <b>Hardware Outputs</b> oder <b>Virtual Outputs</b>. Der nächste freie Platz wird aktiviert (max. 16 Inputs, 8 A-, 8 B-Busse).</p>
+  <h3>Umbenennen und Entfernen</h3>
+  <p>Rechtsklick auf Kopf oder Hintergrund eines Strips → <span class="ui">Rename</span> oder <span class="ui">Remove</span>. Beim Entfernen werden Einstellungen, Plugins, MIDI-Zuweisungen und Tastenkürzel des Kanals zurückgesetzt (mit Bestätigung). Mindestens ein Input und ein A-Bus bleiben immer.</p>
+  <h3>Reihenfolge ändern</h3>
+  <ol class="steps">
+    <li>Rechtsklick auf einen Strip → <span class="ui">Change Order...</span>. Über den Strips erscheint eine Leiste mit <span class="ui">Done</span> und <span class="ui">Discard</span>.</li>
+    <li>Ziehe die Strips innerhalb ihrer Gruppe (Inputs, A-Busse, B-Busse) an die gewünschte Stelle.</li>
+    <li><span class="ui">Done</span> (<kbd>Enter</kbd>) übernimmt, <span class="ui">Discard</span> (<kbd>Esc</kbd>) verwirft.</li>
+  </ol>
+  <p>Ein Kanal bekommt die Nummer seiner neuen Position. Bei Bussen wandern Routing, Sends, Recorder- und Monitor-Einstellungen mit. Liegen MIDI-Zuweisungen oder Tastenkürzel auf verschobenen Kanälen, fragt Hydra:</p>
+  <ul>
+    <li><b>Follow the channels</b>: Dein Controller steuert weiterhin dieselben Kanäle, jetzt an neuer Position.</li>
+    <li><b>Keep positions</b>: Jeder Hardware-Regler bleibt auf seiner Position (Fader 1 steuert weiter Strip 1, also jetzt einen anderen Kanal).</li>
+  </ul>
+  <p>Danach wird die Undo-Historie geleert.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="devices">
+  <h2><span class="num">9</span>Geräteauswahl</h2>
+  <p>Ein Klick auf den Geräte-Chip eines Strips öffnet das Fenster <b>Input source</b> bzw. <b>Output device</b>. Es hat drei Spalten: <b>Connection</b> → <b>Device</b> → <b>Channels</b>. Darunter steht eine Erklärung der gewählten Verbindungsart. Oben zeigt „Now: …“ die aktuelle Wahl.</p>
+  <table>
+    <thead><tr><th>Verbindungsart</th><th>Wofür</th><th>Latenz</th></tr></thead>
+    <tbody>
+      <tr><td><b>None</b></td><td>Kanal empfängt nichts bzw. Bus wird gemischt, aber nicht ausgegeben.</td><td>–</td></tr>
+      <tr><td><b>Master</b> / Hardware</td><td>Kanäle des Master-Geräts.</td><td>am geringsten, kein Zusatzpuffer</td></tr>
+      <tr><td><b>Other ASIO Devices</b></td><td>Ein zweites ASIO-Interface, synchronisiert auf die Master-Clock.</td><td>gering, plus Clock-Sync-Puffer</td></tr>
+      <tr><td><b>Windows Audio (Low Latency)</b></td><td>Windows-Geräte im geteilten Modus mit kleinem Puffer.</td><td>gering</td></tr>
+      <tr><td><b>Windows Audio (Exclusive)</b></td><td>Exklusiver Zugriff auf das Gerät. Andere Apps können es dann nicht nutzen.</td><td>am geringsten bei WASAPI</td></tr>
+      <tr><td><b>Shared</b> (compatibility)</td><td>Klassischer geteilter Modus für Geräte, die nichts anderes können.</td><td>höher</td></tr>
+      <tr><td><b>Application</b> (nur Inputs)</td><td>Ton genau einer App samt Kindprozessen, verbindet sich bei App-Neustart automatisch neu.</td><td>mittel</td></tr>
+      <tr><td><b>Virtual Cable</b></td><td>VB-CABLE oder Virtual Audio Cable, wenn installiert.</td><td>mittel</td></tr>
+      <tr><td><b>Loopback</b> (nur Inputs)</td><td>Alles, was Windows auf einem Wiedergabegerät abspielt.</td><td>mittel bis höher</td></tr>
+    </tbody>
+  </table>
+  <h3>Bedienung</h3>
+  <ul>
+    <li>Klick auf einen Kanal übernimmt sofort, das Fenster bleibt offen. Doppelklick übernimmt und schließt.</li>
+    <li>Geräte mit nur einer Option (Apps, Kabel, Loopback) werden schon mit dem Klick auf das Gerät gewählt.</li>
+    <li>Punkte markieren den Weg zur aktuellen Wahl, ein Haken den aktuellen Kanal.</li>
+    <li>Kanäle gibt es als <b>Stereopaare</b> (Stereo 1/2, …) oder <b>Mono</b>.</li>
+    <li><span class="ui">Refresh</span> liest Geräte und Apps neu ein. <kbd>Esc</kbd>, <kbd>Enter</kbd> oder <span class="ui">Done</span> schließen.</li>
+    <li>Das Fenster folgt dem zuletzt angeklickten Strip, du kannst also mehrere Kanäle nacheinander einrichten.</li>
+  </ul>
+  <div class="note"><b>Mehrere ASIO-Interfaces</b> Unter <span class="ui">Other ASIO Devices</span> kannst du neben dem Master weitere ASIO-Treiber nutzen. Ein Treiber wird nur einmal geöffnet, mit der Puffergröße aus seinem eigenen Control Panel. Startet er neu (z. B. nach einer Änderung im Control Panel) oder hängt er, öffnet Hydra ihn automatisch neu.</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="inspector">
+  <h2><span class="num">10</span>Inspector</h2>
+  <p>Der Inspector unten zeigt die Effekte des ausgewählten Kanals nebeneinander in einer Effektleiste, die als Ganzes seitwärts scrollt. Jede Sektion hat oben einen Ein-Schalter (z. B. <span class="ui">EQ ON</span>, <span class="ui">GATE ON</span>). Die wichtigsten Regler sind direkt sichtbar, alle weiteren im <span class="ui">…</span>-Menü (<i>More settings</i>).</p>
+  <table>
+    <thead><tr><th>Kanal</th><th>Sektionen</th></tr></thead>
+    <tbody>
+      <tr><td>Input</td><td><a href="#denoiser">Denoiser</a> · <a href="#eq">Equalizer</a> · <a href="#gate">Gate</a> · <a href="#comp">Compressor</a> · <a href="#vst">VST3 Insert Chain</a> (mit PHASE und BYPASS im Kopf)</td></tr>
+      <tr><td>Bus</td><td><a href="#eq">Equalizer</a> · <a href="#vst">VST3 Insert Chain</a> · <a href="#buses">Limiter</a></td></tr>
+      <tr><td>Recorder</td><td>Record Source · Recording · Play To (siehe <a href="#recorder">Recorder</a>)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================ -->
+<section id="denoiser">
+  <h2><span class="num">11</span>Denoiser</h2>
+  <p>Jeder Input hat einen eingebauten Rauschunterdrücker auf Basis von <b>RNNoise</b>, einem neuronalen Netz für Sprache. Er entfernt Lüfter, Tastaturklappern, Brummen und Raumrauschen. Standardmäßig ist er aus.</p>
+  <h3>Regler</h3>
+  <table>
+    <thead><tr><th>Regler</th><th>Bedeutung</th></tr></thead>
+    <tbody>
+      <tr><td><span class="ui">DENOISER ON</span></td><td>Ein/Aus.</td></tr>
+      <tr><td><span class="ui">AMOUNT</span></td><td>Mischung aus Original und entrauschtem Signal. Beide sind zeitlich exakt ausgerichtet, es gibt also keine Kammfilter-Effekte.</td></tr>
+      <tr><td>Latenz-Modus (im <span class="ui">…</span>-Menü)</td><td>Siehe Tabelle.</td></tr>
+    </tbody>
+  </table>
+  <table>
+    <thead><tr><th>Modus</th><th>Latenz</th><th>Hinweis</th></tr></thead>
+    <tbody>
+      <tr><td>Ultra Low</td><td>0 ms</td><td>Keine Verzögerung, Wortanfänge können minimal leiden.</td></tr>
+      <tr><td><b>Low</b> (Standard)</td><td>10 ms</td><td>Guter Kompromiss für Live-Sprache.</td></tr>
+      <tr><td>Aligned</td><td>20 ms</td><td>Bessere Qualität.</td></tr>
+      <tr><td>Native HQ</td><td>30 ms</td><td>Originalverhalten von RNNoise, beste Qualität.</td></tr>
+    </tbody>
+  </table>
+  <p>Kosten: ca. 1,8 % eines CPU-Kerns pro Stereokanal.</p>
+  <div class="warn"><b>Nur bei 48 kHz</b> RNNoise arbeitet mit 48 kHz. Läuft die Engine mit einer anderen Abtastrate, wird der Denoiser umgangen und das UI zeigt einen Hinweis.</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="eq">
+  <h2><span class="num">12</span>Equalizer</h2>
+  <p>Inputs und Busse haben denselben parametrischen EQ mit <b>8 Bändern</b>. Ein Band ist nur sichtbar (als farbiger Punkt), wenn es benutzt wird. Ein neuer Kanal startet ohne Punkte.</p>
+  <h3>Bedienung der Kurve</h3>
+  <table>
+    <thead><tr><th>Aktion</th><th>Wirkung</th></tr></thead>
+    <tbody>
+      <tr><td>Hover nahe der Kurve</td><td>Ein Geisterpunkt zeigt, wo ein neues Band entstehen würde.</td></tr>
+      <tr><td>Klick auf freie Stelle</td><td>Neues Band (Bell) an dieser Stelle.</td></tr>
+      <tr><td>Punkt ziehen</td><td>Frequenz (waagrecht) und Gain (senkrecht).</td></tr>
+      <tr><td>Mausrad über Punkt</td><td>Güte (Q).</td></tr>
+      <tr><td>Doppelklick / Rechtsklick auf Punkt</td><td>Entfernen bzw. Typ ändern.</td></tr>
+      <tr><td>Typ-Leiste + Knobs</td><td>Typ, GAIN, FREQ, Q des gewählten Bands, <span class="ui">Remove</span> zum Entfernen.</td></tr>
+    </tbody>
+  </table>
+  <h3>Filtertypen</h3>
+  <table>
+    <thead><tr><th>Typ</th><th>Wirkung</th><th>Typischer Einsatz</th></tr></thead>
+    <tbody>
+      <tr><td>Bell</td><td>Anheben/Absenken um eine Frequenz.</td><td>Stimme präsenter (+3 dB bei 3 kHz), Dröhnen raus (−4 dB bei 250 Hz).</td></tr>
+      <tr><td>Notch</td><td>Sehr schmale Absenkung.</td><td>Brummen (50 Hz) oder Pfeifton entfernen.</td></tr>
+      <tr><td>Band Pass</td><td>Nur ein Frequenzbereich bleibt.</td><td>Telefon-/Funk-Effekt.</td></tr>
+      <tr><td>High Cut</td><td>Hohe Frequenzen weg.</td><td>Zischen, Rauschen.</td></tr>
+      <tr><td>Low Cut</td><td>Tiefe Frequenzen weg.</td><td>Trittschall, Pop-Geräusche beim Mikro (ca. 80 Hz).</td></tr>
+      <tr><td>Low Shelf / High Shelf</td><td>Alles unter/über einer Frequenz anheben oder absenken.</td><td>Bass oder Höhen insgesamt.</td></tr>
+    </tbody>
+  </table>
+  <p>Q-Bereich 0,1–100, Gain ±18 dB.</p>
+  <h3>Großes EQ-Fenster</h3>
+  <p>Der Pfeil-Button im EQ-Kopf öffnet ein eigenes Fenster mit großer Kurve, allen Bändern mit Werten und einem <b>Live-Spektrum</b> des Signals nach dem EQ (Skala rechts in dBFS). Das Fenster folgt dem gewählten Kanal. Das Spektrum wird nur berechnet, solange das Fenster offen ist.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="gate">
+  <h2><span class="num">13</span>Gate &amp; Voice Key</h2>
+  <p>Ein Gate schaltet den Kanal leise, solange das Signal unter einer Schwelle liegt, z. B. damit das Mikrofon in Sprechpausen keine Hintergrundgeräusche überträgt.</p>
+  <table>
+    <thead><tr><th>Regler</th><th>Bedeutung</th></tr></thead>
+    <tbody>
+      <tr><td><span class="ui">THRESHOLD</span></td><td>Pegel, ab dem das Gate öffnet.</td></tr>
+      <tr><td><span class="ui">RANGE</span></td><td>Wie stark im geschlossenen Zustand abgesenkt wird (z. B. −80 dB = praktisch stumm, −10 dB = nur leiser).</td></tr>
+      <tr><td><span class="ui">ATTACK</span></td><td>Wie schnell das Gate öffnet.</td></tr>
+      <tr><td><span class="ui">HOLD</span></td><td>Wie lange es mindestens offen bleibt.</td></tr>
+      <tr><td><span class="ui">RELEASE</span></td><td>Wie schnell es danach schließt.</td></tr>
+      <tr><td><span class="ui">SIDECHAIN BP</span> + <span class="ui">SC FREQ</span></td><td>Das Gate „hört“ nur auf einen Frequenzbereich, z. B. um tiefes Brummen zu ignorieren.</td></tr>
+      <tr><td><span class="ui">VOICE KEY</span> + <span class="ui">VOICE THR</span></td><td>Das Gate öffnet nur, wenn der Pegel über THRESHOLD liegt <b>und</b> der Denoiser Sprache erkennt (Wahrscheinlichkeit über VOICE THR).</td></tr>
+    </tbody>
+  </table>
+  <div class="tip"><b>Voice Key</b> braucht den eingeschalteten <a href="#denoiser">Denoiser</a>. Ohne ihn arbeitet das Gate als normales Pegel-Gate. Mit Voice Key bleiben Tastatur, Husten und Klicks draußen, auch wenn sie laut sind.</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="comp">
+  <h2><span class="num">14</span>Kompressor</h2>
+  <p>Der Kompressor gleicht Lautstärkeunterschiede aus: Laute Stellen werden abgesenkt, das Ganze wird gleichmäßiger. Eine Kennlinie zeigt die Wirkung samt aktueller Gain-Reduktion.</p>
+  <table>
+    <thead><tr><th>Regler</th><th>Bedeutung</th></tr></thead>
+    <tbody>
+      <tr><td><span class="ui">INPUT</span></td><td>Pegel vor dem Kompressor.</td></tr>
+      <tr><td><span class="ui">THRESH</span></td><td>Ab diesem Pegel wird komprimiert.</td></tr>
+      <tr><td><span class="ui">RATIO</span></td><td>Stärke. 4:1 heißt: 4 dB mehr Eingang ergeben 1 dB mehr Ausgang.</td></tr>
+      <tr><td><span class="ui">KNEE</span></td><td>Weicher Übergang um die Schwelle.</td></tr>
+      <tr><td><span class="ui">ATTACK</span> / <span class="ui">RELEASE</span></td><td>Reaktionszeit beim Einsetzen bzw. Loslassen.</td></tr>
+      <tr><td><span class="ui">MAKEUP</span></td><td>Pegel nach dem Kompressor wieder anheben.</td></tr>
+      <tr><td><span class="ui">AUTO GAIN</span></td><td>Gleicht die Reduktion bei 0 dBFS automatisch aus, MAKEUP ist dann nicht nötig.</td></tr>
+    </tbody>
+  </table>
+  <p>Startwerte für Sprache: Threshold −20 dB, Ratio 3:1, Attack 10 ms, Release 150 ms, Auto Gain an.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="vst">
+  <h2><span class="num">15</span>VST3-Plugins</h2>
+  <p>Jeder Input und jeder Bus hat eine <b>VST3 Insert Chain</b>. Die Plugins laufen der Reihe nach, ohne zusätzliche Pufferung (ihre eigene Latenz zeigt der <a href="#latency">Latency Finder</a>).</p>
+  <h3>Plugins einrichten</h3>
+  <ol class="steps">
+    <li><span class="ui">Settings → Plugins</span>: Suchordner eintragen (einer pro Zeile, Standard ist der übliche VST3-Ordner) und <span class="ui">Scan for plugins</span> klicken. Ein Plugin, das beim Scan abstürzt, wird gemerkt und künftig übersprungen.</li>
+    <li>Im Inspector: <span class="ui">+ Add VST3 Plugin</span> (leere Kette) bzw. das <span class="ui">+</span> hinter der letzten Karte.</li>
+  </ol>
+  <h3>Bedienung</h3>
+  <ul>
+    <li><b>Editor öffnen</b>: Doppelklick auf die Karte oder <span class="ui">EDIT</span>.</li>
+    <li><b>Reihenfolge</b>: Karten per Drag &amp; Drop verschieben.</li>
+    <li><b>Bypass</b>: pro Plugin auf der Karte, für die ganze Kette mit <span class="ui">BYPASS</span> im Sektionskopf.</li>
+    <li><b>Entfernen</b>: Mülleimer-Symbol.</li>
+    <li><span class="ui">PHASE</span> im Kopf der Sektion (Inputs) kehrt die Polarität um.</li>
+  </ul>
+  <div class="note"><b>Stabilität</b> Der Audio-Thread wartet nie auf ein Plugin, das gerade geladen oder bearbeitet wird. Lässt sich ein Plugin nicht laden, zeigt die Karte „Plugin could not be loaded“.</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="buses">
+  <h2><span class="num">16</span>Busse &amp; Limiter</h2>
+  <p>Jeder Bus hat Fader, Mute, Mono, den 8-Band-<a href="#eq">EQ</a>, eine <a href="#vst">VST3-Kette</a>, einen <b>Limiter</b> und ein frei wählbares Ausgabegerät.</p>
+  <h3>Limiter</h3>
+  <p>Der Limiter am Ende des Busses verhindert, dass der Pegel über <span class="ui">CEILING</span> steigt, z. B. damit ein Stream nie übersteuert. Er arbeitet latenzfrei.</p>
+  <h3>Sends</h3>
+  <p>Jeder Input hat pro Bus einen eigenen Send-Pegel (Standard 0 dB), der nach dem Strip-Fader wirkt. Eingestellt wird er über <a href="#sel">SEL</a>.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="sel">
+  <h2><span class="num">17</span>SEL &amp; Monitoring</h2>
+  <h3>SEL: eigener Mix pro Bus</h3>
+  <p>Drückst du <b>SEL</b> an einem Bus, steuern die Input-Fader nicht mehr die Gesamtlautstärke, sondern nur noch den Pegel jedes Inputs <i>auf diesem Bus</i>. Nicht geroutete Inputs werden gedimmt. So baust du z. B. einen Stream-Mix, in dem die Musik leiser ist als in deinen Kopfhörern.</p>
+  <ol class="steps">
+    <li>SEL an B1 drücken. Die Fader springen auf die Send-Pegel für B1.</li>
+    <li>Musik-Fader auf −12 dB ziehen. Im Stream ist die Musik jetzt leiser, in deinen Kopfhörern unverändert.</li>
+    <li>SEL erneut drücken, um zur normalen Ansicht zurückzukehren.</li>
+  </ol>
+  <p>Es kann immer nur ein Bus SEL haben. Ein MIDI-Fader, der den Hauptfader eines Inputs steuert, steuert bei aktivem SEL ebenfalls den Send, Motorfader springen mit.</p>
+  <h3>Monitoring</h3>
+  <p>Unter <span class="ui">Settings → General → MONITORING (SEL)</span> schaltest du <span class="ui">Monitor selected bus</span> ein und wählst <span class="ui">Monitor output</span> (A1–A5). Dann <b>ersetzt</b> der SEL-Bus die Summe dieses A-Busses: Du hörst auf deinen Kopfhörern genau den Mix, den du gerade bearbeitest (z. B. den Stream). EQ, Fader und Limiter des Monitor-Busses wirken weiter.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="recorder">
+  <h2><span class="num">18</span>Recorder</h2>
+  <p>Der Recorder nimmt einen B-Bus als WAV auf und spielt Audiodateien auf beliebige Busse. Öffnen über <span class="ui">Tools → Recorder</span> oder die Zeitanzeige in der Top-Bar. Er hat drei Bereiche:</p>
+  <table>
+    <thead><tr><th>Bereich</th><th>Inhalt</th></tr></thead>
+    <tbody>
+      <tr><td><b>Record Source</b> (links)</td><td>Welcher B-Bus aufgenommen wird, Zielordner (Standard <code>Dokumente\Hydra Recordings</code>), Format WAV 16 / 24 / 32-bit float.</td></tr>
+      <tr><td><b>Recording</b> (Mitte)</td><td>Transport, Zeit, Waveform, Dateiname, Datei laden/zeigen/löschen.</td></tr>
+      <tr><td><b>Play To</b> (rechts)</td><td>A- und B-Busse, auf die die Wiedergabe geht, und Wiedergabepegel.</td></tr>
+    </tbody>
+  </table>
+  <h3>Transport</h3>
+  <table>
+    <thead><tr><th>Symbol</th><th>Funktion</th></tr></thead>
+    <tbody>
+      <tr><td>● Aufnahme</td><td>Startet die Aufnahme des gewählten B-Busses (nach Fader und Limiter). Zweiter Klick stoppt.</td></tr>
+      <tr><td>▶ / ❚❚</td><td>Play / Pause. Pause merkt sich die Position. Am Dateiende geht es zurück auf 0.</td></tr>
+      <tr><td>■ Stop</td><td>Beendet Aufnahme und Wiedergabe, Position auf 0.</td></tr>
+      <tr><td>Loop</td><td>Wiederholt die Datei bzw. den Trim-Bereich.</td></tr>
+      <tr><td>Papierkorb</td><td>Entlädt die Datei und verschiebt sie in den Windows-Papierkorb (mit Bestätigung).</td></tr>
+    </tbody>
+  </table>
+  <h3>Waveform, Seek und Trim</h3>
+  <ul>
+    <li>Die Waveform wächst während der Aufnahme live mit.</li>
+    <li>Klick oder Ziehen in die Waveform springt an diese Stelle. Im Stopp setzt das den Startpunkt für Play.</li>
+    <li>Die Griffe am linken und rechten Rand nach innen ziehen setzt In- und Out-Punkt (nicht destruktiv, außerhalb grau). Wiedergabe und Loop laufen nur in diesem Bereich.</li>
+    <li><span class="ui">Cut</span> schreibt den Bereich in die Datei (WAV: Original geht in den Papierkorb; andere Formate: neue Datei <code>name_trimmed.wav</code>). <span class="ui">Reset</span> setzt die Griffe zurück.</li>
+  </ul>
+  <p>Abspielbar sind WAV, AIFF, FLAC, Ogg und MP3, mit automatischer Anpassung der Abtastrate. <span class="ui">Last Take</span> lädt die letzte Aufnahme.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="scenes">
+  <h2><span class="num">19</span>Szenen</h2>
+  <p>Eine Szene ist ein Schnappschuss aller Mixer-Parameter (Fader, Mutes, Routing, Effekte, Sends …). Nicht enthalten sind Geräte, Kanalnamen, Plugins und welche Kanäle aktiv sind. Typische Szenen: „Gaming“, „Stream“, „Call“, „Musik“.</p>
+  <p>Öffnen: <span class="ui">Tools → Scene Editor</span>. Die Szenen erscheinen als Leiste links im Hauptfenster.</p>
+  <table>
+    <thead><tr><th>Aktion</th><th>Wirkung</th></tr></thead>
+    <tbody>
+      <tr><td><span class="ui">+</span> / New scene</td><td>Neue Szene aus dem aktuellen Mixer.</td></tr>
+      <tr><td>Klick auf eine Szene</td><td>Lädt sie sofort (ohne Rückfrage) und macht sie zur bearbeiteten Szene.</td></tr>
+      <tr><td>Mixer verändern</td><td>Die Zeile zeigt „edited - not saved“ und die Anzahl der Änderungen.</td></tr>
+      <tr><td><span class="ui">Save</span> (Diskette)</td><td>Übernimmt den aktuellen Mixer in die Szene.</td></tr>
+      <tr><td><span class="ui">Recall</span> (Pfeil zurück)</td><td>Lädt die Szene erneut und verwirft die ungespeicherten Änderungen.</td></tr>
+      <tr><td><span class="ui">…</span>-Menü</td><td>Rename, Duplicate, Move up/down, Delete, Export, Import.</td></tr>
+      <tr><td>STEP ◀ ▶</td><td>Vorherige/nächste Szene.</td></tr>
+      <tr><td>Rechtsklick auf Szene / Pfeile</td><td>MIDI Learn oder Tastenkürzel zum Abrufen.</td></tr>
+    </tbody>
+  </table>
+  <p>Szenen lassen sich als <code>.hydrascenes</code>-Datei exportieren und importieren (alle oder nur die gewählte). Beim Löschen oder Verschieben wandern MIDI-Zuweisungen und Tastenkürzel mit.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="latency">
+  <h2><span class="num">20</span>Latency Finder</h2>
+  <p><span class="ui">Tools → Latency Finder</span> zeigt, wie viel Verzögerung jeder Weg vom Input zum Output hat und woher sie kommt. Es ist die einzige Stelle in Hydra mit Latenzwerten.</p>
+  <h3>Aufbau</h3>
+  <ol>
+    <li><b>Matrix</b> (oben): Inputs × Outputs mit der Gesamtlatenz jedes gerouteten Pfads. Klick auf eine Zelle zeigt genau diesen Pfad.</li>
+    <li><b>Signalfluss</b>: Input-Gerät → Denoiser → jedes Plugin → Sync Delay → Bus-Plugins → Output-Gerät. Jede Stufe zeigt „+x ms“ (was sie hinzufügt), ihren Anteil in % und „at y ms“ (Summe bis dahin).</li>
+    <li><b>Latency share</b>: Donut und Rangliste der Anteile für den gewählten Pfad.</li>
+  </ol>
+  <p>Fährst du mit der Maus über ein Input- oder Output-Gerät, erklärt ein Tooltip, woraus sich seine Latenz zusammensetzt (Puffer, Treiber/Wandler, Clock-Sync-Puffer) und wie du sie senkst. Klick auf eine Zeile wählt den Kanal auch im Hauptfenster.</p>
+  <div class="tip"><b>Latenz senken</b>
+  <ul style="margin:4px 0 0">
+    <li>Kleinere Puffergröße im ASIO Control Panel bzw. in Settings → Audio Engine.</li>
+    <li>Wichtige Kanäle auf das Master-Gerät legen (kein Clock-Sync-Puffer).</li>
+    <li>Windows-Geräte im Exclusive- oder Low-Latency-Modus statt Shared.</li>
+    <li>Denoiser-Modus Ultra Low oder Low.</li>
+    <li>Plugins mit Lookahead in den Zero-Latency-Modus schalten oder umgehen.</li>
+  </ul></div>
+</section>
+
+<!-- ============================================================ -->
+<section id="syncdelay">
+  <h2><span class="num">21</span>Sync Delay</h2>
+  <p>Verschiedene Geräte haben unterschiedliche Latenz. Kommt z. B. die Kamera über einen langsameren Weg als das Mikrofon, oder laufen zwei Ausgänge auseinander, gleicht Sync Delay das aus.</p>
+  <p>Öffnen: <span class="ui">Tools → Sync Delay</span>. Pro Gruppe (Inputs, Hardware Outputs, Virtual Outputs) siehst du jeden Kanal mit:</p>
+  <table>
+    <thead><tr><th>Spalte</th><th>Bedeutung</th></tr></thead>
+    <tbody>
+      <tr><td>LATENCY</td><td>Eigene Latenz des Kanals.</td></tr>
+      <tr><td>AUTO SYNC</td><td>Schalter. Alle Kanäle einer Gruppe mit Auto Sync werden auf den langsamsten von ihnen verzögert. Der langsamste ist mit „slowest: sets the time“ markiert.</td></tr>
+      <tr><td>AUTO DELAY</td><td>Automatisch berechnete Verzögerung, folgt der Live-Latenz.</td></tr>
+      <tr><td>MANUAL DELAY</td><td>Zusätzliche Verzögerung von Hand (0–500 ms), z. B. für ein weiter entferntes Mikrofon oder Lippensynchronität im Stream.</td></tr>
+      <tr><td>RESULT</td><td>Gesamtergebnis. Der Balken zeigt eigene Latenz (voll) und Delay (schraffiert).</td></tr>
+    </tbody>
+  </table>
+  <p><span class="ui">Sync all</span> / <span class="ui">Sync none</span> schalten Auto Sync für die ganze Gruppe. Delay-Werte sind MIDI-lernbar und Teil von Undo und Szenen. Änderungen werden mit einem kurzen Crossfade übernommen.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="dsp">
+  <h2><span class="num">22</span>DSP Load</h2>
+  <p>Klick auf die DSP-Anzeige in der Top-Bar (oder <span class="ui">Tools → DSP Load</span>) zeigt, was wie viel Rechenzeit kostet. Werte sind Anteile der verfügbaren Zeit pro Audioblock, gemittelt über 1 Sekunde, mit Peak.</p>
+  <ul>
+    <li><b>Gesamtlast</b> als Balken mit Peak-Marker.</li>
+    <li><b>Biggest consumers</b>: die drei teuersten Stufen.</li>
+    <li><b>Tabelle</b>: eine Zeile pro Kanal in Mixer-Reihenfolge, Spalten Denoiser / EQ / Gate / Comp / Plugins / Limiter / Rest. Zellen sind nach Last eingefärbt.</li>
+    <li><b>Engine-Zeile</b>: Resampling der Zweitgeräte, Recorder, Mixing.</li>
+  </ul>
+  <p>Gemessen wird nur, solange das Fenster offen ist. Klick auf eine Zeile wählt den Kanal im Mixer.</p>
+  <div class="note"><b>Richtwert</b> Unter ca. 50 % bist du auf der sicheren Seite. Nähert sich der Peak 100 %, drohen Knackser: Puffer vergrößern oder teure Plugins/Denoiser reduzieren.</div>
+</section>
+
+<!-- ============================================================ -->
+<section id="undo">
+  <h2><span class="num">23</span>Undo / Redo</h2>
+  <p><kbd>Ctrl</kbd>+<kbd>Z</kbd> macht die letzte Änderung rückgängig, <kbd>Ctrl</kbd>+<kbd>Y</kbd> (oder <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>) stellt sie wieder her. Das gilt im Hauptfenster und in allen Werkzeugfenstern. Ein Hinweis zeigt, was rückgängig gemacht wurde.</p>
+  <ul>
+    <li>Erfasst werden alle gespeicherten Parameter in <b>einer</b> Historie: Fader, Routing, EQ, Gate usw. Bis zu 200 Schritte.</li>
+    <li>Ein Schritt entsteht, wenn eine Bewegung abgeschlossen ist (Maus losgelassen und kurz Ruhe).</li>
+    <li>Nicht erfasst: Änderungen per MIDI, Kanäle hinzufügen/entfernen, Namen, Geräte, Plugins.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="midi">
+  <h2><span class="num">24</span>MIDI Learn</h2>
+  <p>Jeder Regler und Schalter in Hydra lässt sich mit einem MIDI-Controller steuern.</p>
+  <h3>Einrichten</h3>
+  <ol class="steps">
+    <li><span class="ui">Settings → MIDI</span>: Unter <span class="ui">MIDI inputs (controllers)</span> deinen Controller aktivieren. Optional unter <span class="ui">Feedback output</span> denselben Controller als Ausgang wählen (für LEDs und Motorfader).</li>
+    <li>Rechtsklick auf einen Regler → <span class="ui">MIDI Learn</span>.</li>
+    <li>Bewege den Hardware-Regler oder drücke die Taste. Fertig.</li>
+  </ol>
+  <p>Für viele Zuweisungen am Stück: <span class="ui">Tools → MIDI Learn Mode</span>. Dann reicht ein Linksklick auf den Regler und eine Bewegung am Controller, für beliebig viele Regler nacheinander. Der Schraubenschlüssel leuchtet gelb, die Statuszeile zeigt einen Hinweis.</p>
+  <h3>Modi</h3>
+  <table>
+    <thead><tr><th>Modus</th><th>Verhalten</th><th>Für</th></tr></thead>
+    <tbody>
+      <tr><td>Absolute</td><td>Position des Hardware-Reglers = Wert.</td><td>Fader, Potis</td></tr>
+      <tr><td>Toggle</td><td>Jeder Druck schaltet um.</td><td>Mute-Tasten</td></tr>
+      <tr><td>Momentary</td><td>An, solange gedrückt.</td><td>Push-to-Talk</td></tr>
+      <tr><td>Relative</td><td>Endlos-Encoder senden Schritte.</td><td>Drehgeber ohne Anschlag</td></tr>
+    </tbody>
+  </table>
+  <p>Unterstützt werden CC, Note und Pitch Bend. Jede Zuweisung kann invertiert werden.</p>
+  <h3>MIDI Map</h3>
+  <p><span class="ui">Tools → MIDI Map</span> listet alle Zuweisungen in einer Tabelle: Modus, Invert, Bereich ändern, einzelne Zuweisungen löschen oder <span class="ui">Remove all</span>.</p>
+  <h3>MIDI-Range</h3>
+  <p>Rechtsklick → <span class="ui">MIDI Range (calibrate)</span> legt fest, welchen Wertebereich der Hardware-Regler überstreicht, z. B. nur −∞ bis 0 dB. Damit hast du mehr Feinauflösung im genutzten Bereich. Optionen: aktueller Wert als Minimum/Maximum, Presets (<i>Fader: -inf .. 0 dB</i>, <i>-inf .. +6 dB</i>, <i>Full range</i>) oder Werte in der MIDI Map eintippen. Ein gelber Balken am Fader zeigt den Bereich. Feedback an Motorfader wird passend umgerechnet.</p>
+  <p>Global: <span class="ui">Settings → MIDI → MIDI faders stop at 0 dB</span> setzt das Maximum aller Fader-Zuweisungen auf 0 dB (statt +12 dB), auch für künftig gelernte.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="apc">
+  <h2><span class="num">25</span>APC mini &amp; LED-Feedback</h2>
+  <p>Für Controller mit Pad-Raster (z. B. <b>Akai APC mini</b>) färbt Hydra die Pads nach Zustand ein:</p>
+  <table>
+    <thead><tr><th>Pad</th><th>Farbe (APC mini)</th></tr></thead>
+    <tbody>
+      <tr><td>Zugewiesen und an</td><td><span class="dot g"></span>Grün</td></tr>
+      <tr><td>Zugewiesen und aus</td><td><span class="dot y"></span>Gelb</td></tr>
+      <tr><td>Nicht zugewiesen, in der Reihe/Spalte eines gemuteten Kanals</td><td><span class="dot r"></span>Rot</td></tr>
+      <tr><td>Nicht zugewiesen</td><td>Aus</td></tr>
+    </tbody>
+  </table>
+  <p>Hydra erkennt automatisch, ob das Raster reihen- oder spaltenweise belegt ist. Profile unter <span class="ui">Settings → MIDI → LED feedback profile</span>: Generic, APC mini mk1, APC mini mk2. Wird ein „APC MINI“ als Feedback-Ausgang gewählt, wird das passende Profil automatisch gesetzt. Beim Beenden gehen alle LEDs aus.</p>
+  <p>Beim Start fragt Hydra die aktuellen Faderpositionen einer APC mini ab, damit Mixer und Hardware übereinstimmen (bei mk1 noch unbestätigt). Andere Controller können ihre Position nicht melden: Dort übernimmt Hydra den Wert erst, wenn du den Fader bewegst.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="hotkeys">
+  <h2><span class="num">26</span>Tastenkürzel</h2>
+  <p>Jeder Schalter (Mute, Solo, Routing, SEL, Szenen, Recorder …) lässt sich auf eine Taste oder Maustaste legen.</p>
+  <ol class="steps">
+    <li>Rechtsklick auf den Schalter → <span class="ui">Assign Keyboard Shortcut...</span></li>
+    <li>Drücke die gewünschte Kombination bzw. Maustaste.</li>
+  </ol>
+  <table>
+    <thead><tr><th>Kombination</th><th>Wirkt</th></tr></thead>
+    <tbody>
+      <tr><td>Mit <kbd>Ctrl</kbd> oder <kbd>Alt</kbd>, oder eine F-Taste</td><td><b>Global</b>, also auch im Spiel oder wenn Hydra im Tray ist.</td></tr>
+      <tr><td>Ohne Modifier (z. B. nur <kbd>M</kbd>)</td><td>Nur wenn Hydra den Fokus hat.</td></tr>
+      <tr><td>Mittlere Maustaste, Daumentasten (optional mit Ctrl/Alt/Shift)</td><td>Immer global. Der Klick wird zusätzlich an die andere App weitergegeben.</td></tr>
+    </tbody>
+  </table>
+  <p>Ist eine Kombination bereits von einer anderen App global belegt, gilt sie in Hydra nur bei Fokus (ein Hinweis sagt das). Ändern oder entfernen über dasselbe Rechtsklick-Menü.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="settings">
+  <h2><span class="num">27</span>Settings</h2>
+  <p>Öffnen über das Zahnrad in der Top-Bar.</p>
+  <h3>General</h3>
+  <ul>
+    <li><b>DISPLAY</b>: <span class="ui">Interface size</span> (Größe aller Elemente) und <span class="ui">Text size</span>, je 75–200 %.</li>
+    <li><b>MONITORING (SEL)</b>: <span class="ui">Monitor selected bus</span> und <span class="ui">Monitor output</span>, siehe <a href="#sel">SEL &amp; Monitoring</a>.</li>
+    <li><b>STARTUP, WINDOW &amp; SYSTEM TRAY</b>:
+      <ul>
+        <li><span class="ui">Start Hydra Mixer when Windows starts</span>: startet direkt bei der Anmeldung mit hoher Priorität. Ist der ASIO-Treiber noch nicht bereit, versucht Hydra es 90 Sekunden lang erneut.</li>
+        <li><span class="ui">Show Hydra Mixer in the system tray</span>, <span class="ui">Close button hides to the tray</span> (Audio läuft weiter), <span class="ui">Minimise to the tray</span>, <span class="ui">Start hidden in the tray</span>.</li>
+        <li><span class="ui">Shut down Hydra Mixer</span>.</li>
+      </ul>
+    </li>
+  </ul>
+  <h3>Audio Engine</h3>
+  <p><span class="ui">Driver</span> (ASIO, Windows Audio …), <span class="ui">Audio device</span>, <span class="ui">Sample rate</span>, <span class="ui">Buffer size</span>, <span class="ui">ASIO Control Panel</span>, <span class="ui">Apply / Restart</span>. Das hier gewählte Gerät ist das <a href="#clock">Master-Gerät</a>.</p>
+  <h3>MIDI</h3>
+  <p>MIDI-Eingänge, Feedback-Ausgang, LED-Profil, „MIDI faders stop at 0 dB“. Siehe <a href="#midi">MIDI Learn</a> und <a href="#apc">APC mini</a>.</p>
+  <h3>Plugins</h3>
+  <p>VST3-Suchordner und Scan. Siehe <a href="#vst">VST3-Plugins</a>.</p>
+  <h3>Virtual Cables</h3>
+  <p>Zeigt erkannte virtuelle Kabel und bietet <span class="ui">Auto-assign cables</span>. Siehe <a href="#virtual">Virtuelle Geräte</a>.</p>
+  <h3>Backup &amp; Transfer</h3>
+  <p>Siehe <a href="#backup">nächster Abschnitt</a>.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="backup">
+  <h2><span class="num">28</span>Backup &amp; Transfer</h2>
+  <h3>Automatische Backups</h3>
+  <p>Hydra legt bei jedem Start und vor jedem Import eine Kopie deiner Einstellungen an (bis zu 40, doppelte werden übersprungen). In <span class="ui">Settings → Backup &amp; Transfer → Automatic Backups</span> wählst du eines aus und klickst <span class="ui">Restore</span>. <span class="ui">Open Folder</span> zeigt den Ordner.</p>
+  <h3>Export / Import</h3>
+  <p><span class="ui">Export Settings...</span> speichert alle Einstellungen in eine Datei, z. B. für einen anderen PC. <span class="ui">Import Settings...</span> lädt sie (die aktuellen werden vorher gesichert).</p>
+  <h3>Schutzmechanismen</h3>
+  <ul>
+    <li>Die Session-Datei wird atomar geschrieben, ein Absturz beim Speichern beschädigt sie nicht.</li>
+    <li>Eine unlesbare <code>session.xml</code> wird beiseite gelegt statt überschrieben.</li>
+    <li>Wurde die Datei von außen geändert, sichert Hydra sie vor dem nächsten Speichern.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="vmimport">
+  <h2><span class="num">29</span>Voicemeeter-Import</h2>
+  <p>Wenn du von Voicemeeter Potato kommst, kannst du deine Einstellungen übernehmen.</p>
+  <ol class="steps">
+    <li>In Voicemeeter: <i>Menu → Save Settings</i> speichert eine XML-Datei (oft in <code>Dokumente</code>).</li>
+    <li><b>Voicemeeter beenden</b>, damit der ASIO-Treiber frei ist.</li>
+    <li>In Hydra: <span class="ui">Settings → Backup &amp; Transfer → Import from Voicemeeter</span>. Hydra sucht in <code>Dokumente</code>, sonst <span class="ui">Browse...</span>. Dann <span class="ui">Import</span>.</li>
+  </ol>
+  <p>Übernommen werden: Geräte, ASIO-Kanalzuordnungen, Namen, Routing, EQ, Gate, Kompressor, Denoiser und die MIDI-Zuweisungen (bestehende Hydra-Zuweisungen bleiben, außer bei Konflikten). Deine aktuellen Hydra-Einstellungen werden ersetzt, vorher aber gesichert.</p>
+  <h3>Unterschiede zu Voicemeeter</h3>
+  <table>
+    <thead><tr><th>Voicemeeter</th><th>Hydra</th></tr></thead>
+    <tbody>
+      <tr><td>Virtual Inputs und B-Busse als Windows-Geräte</td><td>Werden zu „Hydra Virtual“-Platzhaltern (gelber Punkt). Hydra hat noch keinen eigenen Treiber, siehe <a href="#virtual">Virtuelle Geräte</a>.</td></tr>
+      <tr><td>Mono auf einem ASIO-Kanalpaar</td><td>Wird als einzelner Mono-Kanal importiert (kein −6-dB-Verlust bei leerem zweiten Eingang).</td></tr>
+      <tr><td>Macro Buttons, VBAN</td><td>Gibt es bewusst nicht. Für Schaltaufgaben: <a href="#hotkeys">Tastenkürzel</a> und <a href="#scenes">Szenen</a>.</td></tr>
+      <tr><td>Bus-Modi (Composite, Upmix …)</td><td>Nicht vorhanden.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================ -->
+<section id="virtual">
+  <h2><span class="num">30</span>Virtuelle Geräte (Hydra als Lautsprecher/Mikrofon)</h2>
+  <p>Voicemeeter installiert eigene Windows-Audiogeräte, die jede App als Lautsprecher oder Mikrofon wählen kann. <b>Hydra hat (noch) keinen solchen Treiber</b>: Ein Windows-Audiotreiber lädt mit Secure Boot nur mit einer Microsoft-Signatur über ein EV-Zertifikat, sonst nur im Testmodus, und der bricht Spiele mit Anti-Cheat. Daher gilt vorerst:</p>
+  <ul>
+    <li>Apps können „Hydra“ nicht als Wiedergabegerät wählen.</li>
+    <li>Discord, OBS oder Teams können einen B-Bus nicht direkt als Mikrofon wählen.</li>
+  </ul>
+  <h3>Lösungen</h3>
+  <div class="cards">
+    <div class="card"><h4>1. Application (eingebaut)</h4><p>Nimmt den Ton einer einzelnen App auf. Nichts zu installieren. App-Ausgabe im Windows-Lautstärkemixer auf ein ungenutztes Gerät stellen.</p></div>
+    <div class="card"><h4>2. Loopback (eingebaut)</h4><p>Nimmt alles auf, was Windows auf einem Wiedergabegerät abspielt. Etwas mehr Latenz.</p></div>
+    <div class="card"><h4>3. VB-CABLE (kostenlos)</h4><p><a href="https://vb-audio.com/Cable/">VB-CABLE</a> installieren. Rein: App → CABLE Input, Hydra-Input nimmt CABLE Output auf. Raus: B-Bus → CABLE Input, OBS/Discord nimmt CABLE Output.</p></div>
+    <div class="card"><h4>4. Virtual Audio Cable (kostenpflichtig)</h4><p><a href="https://vac.muzychenko.net/en/">VAC</a> bietet beliebig viele, frei benennbare Kabel. Wird automatisch erkannt.</p></div>
+    <div class="card"><h4>5. Voicemeeter-Geräte</h4><p>Ist Voicemeeter installiert, bleiben seine Wiedergabegeräte nutzbar: App spielt auf „Voicemeeter Input“, Hydra nimmt per Loopback auf. Voicemeeter selbst beenden.</p></div>
+  </div>
+  <p><span class="ui">Settings → Virtual Cables</span> listet alle erkannten Kabel. <span class="ui">Auto-assign cables</span> gibt jedem „Hydra Virtual“-Platzhalter (z. B. aus einem Voicemeeter-Import) das nächste freie Kabel.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="recipes">
+  <h2><span class="num">31</span>Rezepte</h2>
+
+  <h3>Stream-Mix mit eigener Musiklautstärke</h3>
+  <ol>
+    <li>Mikrofon und Musik auf A1 (Kopfhörer) und B1 routen.</li>
+    <li>B1 auf ein virtuelles Kabel ausgeben, in OBS das andere Ende als Audioquelle.</li>
+    <li>SEL an B1, Musik-Fader auf ca. −15 dB. SEL aus.</li>
+    <li>Optional: Limiter an B1 mit Ceiling −1 dB.</li>
+  </ol>
+
+  <h3>Mikrofon sauber für Calls</h3>
+  <ol>
+    <li>Denoiser an (Modus Low), Amount 100 %.</li>
+    <li>EQ: Low Cut bei 80 Hz, Bell +2 dB bei 3 kHz.</li>
+    <li>Gate an mit Voice Key, Threshold knapp über dem Grundrauschen.</li>
+    <li>Kompressor: Ratio 3:1, Auto Gain an.</li>
+    <li>Discord-Mix auf B2 → virtuelles Kabel → Discord-Mikrofon.</li>
+  </ol>
+
+  <h3>Push-to-Talk / Mute-Taste im Spiel</h3>
+  <ol>
+    <li>Rechtsklick auf MUTE des Mikrofons → Assign Keyboard Shortcut → z. B. <kbd>Ctrl</kbd>+<kbd>F12</kbd> oder die Daumentaste der Maus.</li>
+    <li>Für Push-to-Talk per MIDI: Taste lernen und in der MIDI Map den Modus <i>Momentary</i> wählen (mit Invert, damit Drücken = ungemutet).</li>
+  </ol>
+
+  <h3>Zwischen Setups umschalten</h3>
+  <ol>
+    <li>Mixer für „Gaming“ einstellen, im Scene Editor neue Szene, Save.</li>
+    <li>Für „Stream“ wiederholen.</li>
+    <li>Rechtsklick auf jede Szene → Tastenkürzel oder MIDI-Taste.</li>
+  </ol>
+
+  <h3>Bild und Ton im Stream synchron</h3>
+  <ol>
+    <li>Im Latency Finder die Latenz des Stream-Busses ablesen.</li>
+    <li>In Sync Delay beim Mikrofon-Input ein Manual Delay setzen, bis Lippen und Ton passen, oder Auto Sync in der Gruppe nutzen.</li>
+  </ol>
+
+  <h3>Eine Session aufnehmen</h3>
+  <ol>
+    <li>Alles, was auf die Aufnahme soll, auf B3 routen.</li>
+    <li>Recorder: Record Source B3, Format WAV 24, Aufnahme drücken.</li>
+    <li>Danach Anfang/Ende mit den Trim-Griffen setzen und Cut.</li>
+  </ol>
+</section>
+
+<!-- ============================================================ -->
+<section id="shortcuts">
+  <h2><span class="num">32</span>Maus &amp; Tastatur</h2>
+  <table>
+    <thead><tr><th>Wo</th><th>Eingabe</th><th>Wirkung</th></tr></thead>
+    <tbody>
+      <tr><td>Überall</td><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Undo / Redo</td></tr>
+      <tr><td>Regler</td><td>Doppelklick</td><td>Standardwert</td></tr>
+      <tr><td>Regler</td><td><kbd>Shift</kbd> + Ziehen / Mausrad</td><td>Feineinstellung</td></tr>
+      <tr><td>Regler</td><td>Klick auf Wert</td><td>Wert eintippen (<code>-6</code>, <code>2.5k</code>, <code>-inf</code>)</td></tr>
+      <tr><td>Regler / Schalter</td><td>Rechtsklick</td><td>MIDI Learn, Range, Tastenkürzel, Reset</td></tr>
+      <tr><td>Fader</td><td>Klick auf die Bahn</td><td>Fader gleitet dorthin</td></tr>
+      <tr><td>Strip</td><td>Klick</td><td>Im Inspector auswählen</td></tr>
+      <tr><td>Strip-Name</td><td>Doppelklick</td><td>Umbenennen</td></tr>
+      <tr><td>Strip</td><td>Rechtsklick</td><td>Rename, Remove, Change Order</td></tr>
+      <tr><td>Strip-Bereich</td><td>Mausrad</td><td>Seitwärts scrollen</td></tr>
+      <tr><td>Trenner Inputs/Outputs</td><td>Ziehen / Doppelklick</td><td>Platz verteilen / Standard</td></tr>
+      <tr><td>Change Order</td><td><kbd>Enter</kbd> / <kbd>Esc</kbd></td><td>Done / Discard</td></tr>
+      <tr><td>EQ-Kurve</td><td>Klick auf freie Stelle</td><td>Band hinzufügen</td></tr>
+      <tr><td>EQ-Punkt</td><td>Mausrad</td><td>Q ändern</td></tr>
+      <tr><td>EQ-Punkt</td><td>Doppelklick / Rechtsklick</td><td>Entfernen / Typ</td></tr>
+      <tr><td>Plugin-Karte</td><td>Doppelklick / Ziehen</td><td>Editor öffnen / Reihenfolge</td></tr>
+      <tr><td>Waveform</td><td>Klick / Ränder ziehen</td><td>Springen / Trim</td></tr>
+      <tr><td>Dialoge</td><td><kbd>Enter</kbd> / <kbd>Esc</kbd></td><td>Bestätigen / Abbrechen</td></tr>
+      <tr><td>Geräteauswahl</td><td>Doppelklick auf Kanal</td><td>Übernehmen und schließen</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================ -->
+<section id="troubleshoot">
+  <h2><span class="num">33</span>Fehlerbehebung</h2>
+
+  <h4>Gar kein Ton</h4>
+  <ul>
+    <li>Statustext in der Top-Bar prüfen: Steht dort, dass die Engine gestoppt ist, klicken und in Settings → Audio Engine ein Gerät wählen.</li>
+    <li>Ist der Input auf einen Bus geroutet, und hat der Bus ein Ausgabegerät?</li>
+    <li>Mute, Solo eines anderen Kanals, Fader auf −∞?</li>
+    <li>Läuft Voicemeeter oder eine DAW, die den ASIO-Treiber belegt? Beenden.</li>
+    <li>Liefert der Treiber ohne Fehlermeldung keinen Ton mehr: <span class="ui">Tools → Restart Audio Engine</span>.</li>
+  </ul>
+
+  <h4>Knackser und Aussetzer</h4>
+  <ul>
+    <li>Gelber Punkt am Geräte-Chip? Tooltip zeigt, wie viele Dropouts wann.</li>
+    <li>Am Master: Puffergröße erhöhen (z. B. von 64 auf 128 Samples).</li>
+    <li><a href="#dsp">DSP Load</a> öffnen: Liegt der Peak nahe 100 %, teure Plugins oder Denoiser reduzieren.</li>
+    <li>Windows-Energiesparplan auf „Höchstleistung“, Bluetooth-Geräte meiden.</li>
+  </ul>
+
+  <h4>Roter Punkt am Gerät</h4>
+  <p>Gerät ist offline: abgezogen, von einer anderen App exklusiv belegt oder der Treiber ist abgestürzt. Zweit-ASIO-Geräte öffnet Hydra automatisch neu. Sonst Gerät neu wählen oder Restart Audio Engine.</p>
+
+  <h4>Gelber Punkt „waiting for app“</h4>
+  <p>Die gewählte App läuft nicht oder gibt gerade keinen Ton aus. Hydra verbindet sich automatisch, sobald sie spielt.</p>
+
+  <h4>Gelber Punkt „Hydra Virtual“</h4>
+  <p>Platzhalter aus einem Voicemeeter-Import. Eine echte Quelle zuweisen oder Settings → Virtual Cables → Auto-assign cables.</p>
+
+  <h4>App nicht in der Liste „Application“</h4>
+  <p>Nur Apps, die gerade Ton ausgeben, erscheinen. Wiedergabe starten, dann Refresh.</p>
+
+  <h4>Ich höre eine App doppelt</h4>
+  <p>Bei Application-Capture spielt die App weiter auf ihr Windows-Gerät. Im Windows-Lautstärkemixer ihre Ausgabe auf ein Gerät stellen, das du nicht abhörst.</p>
+
+  <h4>Denoiser ohne Wirkung</h4>
+  <p>Die Engine läuft nicht mit 48 kHz. In Settings → Audio Engine die Sample rate auf 48000 stellen.</p>
+
+  <h4>Globales Tastenkürzel geht nicht im Spiel</h4>
+  <p>Kombination mit Ctrl oder Alt oder eine F-Taste verwenden. Meldet Hydra, dass sie von einer anderen App belegt ist, eine andere Kombination wählen.</p>
+
+  <h4>Einstellungen weg oder kaputt</h4>
+  <p>Settings → Backup &amp; Transfer → Automatic Backups → ein Backup wählen → Restore.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="files">
+  <h2><span class="num">34</span>Dateien &amp; Ordner</h2>
+  <table>
+    <thead><tr><th>Pfad</th><th>Inhalt</th></tr></thead>
+    <tbody>
+      <tr><td><code>%APPDATA%\HydraMixer\session.xml</code></td><td>Alle Einstellungen (wird automatisch gespeichert).</td></tr>
+      <tr><td><code>%APPDATA%\HydraMixer\backups\</code></td><td>Automatische Backups (max. 40).</td></tr>
+      <tr><td><code>%APPDATA%\HydraMixer\plugins.xml</code></td><td>Liste der gescannten VST3-Plugins.</td></tr>
+      <tr><td><code>%APPDATA%\HydraMixer\scan-crash.txt</code></td><td>Plugins, die beim Scan abgestürzt sind.</td></tr>
+      <tr><td><code>%APPDATA%\HydraMixer\hydra.log</code></td><td>Protokoll (Starts, Speicherungen, Gerätefehler). Bei Fehlerberichten anhängen.</td></tr>
+      <tr><td><code>Dokumente\Hydra Recordings\</code></td><td>Standardordner für Aufnahmen.</td></tr>
+      <tr><td><code>*.hydrascenes</code></td><td>Exportierte Szenen.</td></tr>
+    </tbody>
+  </table>
+  <p><code>%APPDATA%</code> in die Adresszeile des Explorers eingeben, um den Ordner zu öffnen.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="glossary">
+  <h2><span class="num">35</span>Glossar</h2>
+  <table>
+    <tbody>
+      <tr><td><b>ASIO</b></td><td>Treiberschnittstelle von Steinberg für Audio-Interfaces mit sehr geringer Latenz. Pro Treiber kann nur ein Programm gleichzeitig zugreifen.</td></tr>
+      <tr><td><b>WASAPI</b></td><td>Die Windows-Audioschnittstelle. Shared = mehrere Apps teilen das Gerät, Exclusive = eine App allein, Low Latency = geteilt mit kleinem Puffer.</td></tr>
+      <tr><td><b>Master-Gerät</b></td><td>Das Gerät, dessen Takt den ganzen Mixer antreibt.</td></tr>
+      <tr><td><b>Puffer / Buffer size</b></td><td>Anzahl Samples pro Verarbeitungsblock. 128 Samples bei 48 kHz ≈ 2,7 ms.</td></tr>
+      <tr><td><b>Latenz</b></td><td>Verzögerung zwischen Eingang und Ausgang.</td></tr>
+      <tr><td><b>Dropout / Xrun</b></td><td>Ein Block kam zu spät oder fehlte, hörbar als Knackser.</td></tr>
+      <tr><td><b>Drift</b></td><td>Zwei Geräte-Clocks laufen minimal unterschiedlich schnell. Hydra gleicht das per Resampling aus.</td></tr>
+      <tr><td><b>Loopback</b></td><td>Aufnahme dessen, was ein Wiedergabegerät abspielt.</td></tr>
+      <tr><td><b>Bus</b></td><td>Summe mehrerer Inputs mit eigener Verarbeitung und eigenem Ausgang.</td></tr>
+      <tr><td><b>Send</b></td><td>Pegel, mit dem ein Input auf einen bestimmten Bus geht.</td></tr>
+      <tr><td><b>Insert</b></td><td>Effekt direkt im Signalweg eines Kanals.</td></tr>
+      <tr><td><b>dBFS</b></td><td>Dezibel relativ zur digitalen Vollaussteuerung (0 dBFS = Maximum).</td></tr>
+      <tr><td><b>Q</b></td><td>Güte eines EQ-Bands: hoch = schmal, niedrig = breit.</td></tr>
+      <tr><td><b>RNNoise</b></td><td>Freie Rauschunterdrückung auf Basis eines neuronalen Netzes (Xiph.org).</td></tr>
+      <tr><td><b>VST3</b></td><td>Plugin-Format für Audioeffekte.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer>
+  Hydra Mixer · <a href="https://github.com/TicT4x/Hydra-Mixer">GitHub</a> · <a href="https://github.com/TicT4x/Hydra-Mixer/releases">Download</a> · <a href="https://github.com/TicT4x/Hydra-Mixer/issues">Fehler melden</a><br>
+  ASIO ist eine Marke der Steinberg Media Technologies GmbH. Voicemeeter, VB-CABLE und VB-Audio sind Marken von VB-Audio Software. Hydra Mixer steht in keiner Verbindung zu ihnen.
+</footer>
+</main>
+</div>
+
+<script>
+(function () {
+  const nav = document.getElementById('nav');
+  const links = [...nav.querySelectorAll('a')];
+  const sections = links.map(a => document.querySelector(a.getAttribute('href')));
+  const q = document.getElementById('q');
+  const nores = document.getElementById('nores');
+
+  // Theme toggle
+  const root = document.documentElement;
+  try { const t = localStorage.getItem('hydra-wiki-theme'); if (t) root.dataset.theme = t; } catch (e) {}
+  document.getElementById('themeBtn').onclick = () => {
+    const dark = root.dataset.theme ? root.dataset.theme === 'dark'
+                                    : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+    try { localStorage.setItem('hydra-wiki-theme', root.dataset.theme); } catch (e) {}
+  };
+
+  // Language switch: keep the current section, remember the choice
+  document.querySelectorAll('.lang a').forEach(a => a.addEventListener('click', e => {
+    try { localStorage.setItem('hydra-wiki-lang', a.dataset.lang); } catch (err) {}
+    if (!a.classList.contains('on')) { e.preventDefault(); location.href = a.getAttribute('href') + location.hash; }
+  }));
+
+  // Jump to the section after images have loaded (the screenshot shifts the layout)
+  window.addEventListener('load', () => {
+    const t = location.hash && document.getElementById(location.hash.slice(1));
+    if (t) t.scrollIntoView({ behavior: 'instant', block: 'start' });
+  });
+
+  // Mobile nav
+  document.getElementById('menuBtn').onclick = () => document.body.classList.toggle('navopen');
+  links.forEach(a => a.addEventListener('click', () => document.body.classList.remove('navopen')));
+
+  // Scroll spy
+  const spy = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (!e.isIntersecting) return;
+      links.forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#' + e.target.id));
+    });
+  }, { rootMargin: '-70px 0px -70% 0px' });
+  sections.forEach(s => s && spy.observe(s));
+
+  // Search: filter nav + dim sections, highlight matches
+  const plain = new Map(sections.map(s => [s, s.textContent.toLowerCase()]));
+  function clearMarks() {
+    document.querySelectorAll('main mark').forEach(m => m.replaceWith(m.textContent));
+    document.querySelectorAll('main section').forEach(s => s.normalize());
+  }
+  function mark(section, term) {
+    const walker = document.createTreeWalker(section, NodeFilter.SHOW_TEXT);
+    const hits = [];
+    while (walker.nextNode()) {
+      const n = walker.currentNode;
+      if (n.parentNode.closest('svg, script, style')) continue;
+      if (n.nodeValue.toLowerCase().includes(term)) hits.push(n);
+    }
+    hits.forEach(n => {
+      const frag = document.createDocumentFragment();
+      const low = n.nodeValue.toLowerCase();
+      let i = 0, j;
+      while ((j = low.indexOf(term, i)) !== -1) {
+        frag.append(n.nodeValue.slice(i, j));
+        const m = document.createElement('mark'); m.textContent = n.nodeValue.slice(j, j + term.length);
+        frag.append(m); i = j + term.length;
+      }
+      frag.append(n.nodeValue.slice(i));
+      n.replaceWith(frag);
+    });
+  }
+  let timer;
+  q.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(run, 120); });
+  function run() {
+    const term = q.value.trim().toLowerCase();
+    clearMarks();
+    let any = false, first = null;
+    links.forEach((a, i) => {
+      const s = sections[i];
+      const hit = !term || a.textContent.toLowerCase().includes(term) || plain.get(s).includes(term);
+      a.classList.toggle('hidden', !hit);
+      s.classList.toggle('dim', !!term && !hit);
+      if (hit && term) { any = true; first = first || s; if (term.length > 1) mark(s, term); }
+    });
+    nores.style.display = term && !any ? 'block' : 'none';
+    if (first) first.scrollIntoView({ block: 'start' });
+  }
+  q.addEventListener('keydown', e => { if (e.key === 'Escape') { q.value = ''; run(); q.blur(); } });
+  document.addEventListener('keydown', e => {
+    if (e.key === '/' && document.activeElement !== q) { e.preventDefault(); q.focus(); }
+  });
+})();
+</script>
+</body>
+</html>
