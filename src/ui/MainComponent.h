@@ -5,6 +5,7 @@
 #include "LatencyView.h"
 #include "DspView.h"
 #include "SyncDelayView.h"
+#include "RoomView.h"
 #include "DevicePicker.h"
 #include "SceneEditor.h"
 #include "state/UndoHistory.h"
@@ -158,6 +159,7 @@ public:
     void openLatencyFinder();
     void openDspView();
     void openSyncDelay();
+    void openRoomMeasurement();
     /** Device selection window of a channel (input source / bus output); one window, follows the last strip. */
     void openDevicePicker (int channel);
     void toggleLearnMode();
@@ -217,7 +219,7 @@ private:
     Inspector inspector;
     PanelHost panelHost;
     std::unique_ptr<SceneSidebar> sceneBar;   // Tools > Scene Editor
-    std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow, latencyWindow, dspWindow, syncWindow, deviceWindow;
+    std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow, latencyWindow, dspWindow, syncWindow, deviceWindow, roomWindow;
     int shownSelBus = -1;     // bus selected with SEL as shown by the input faders
     uint32_t shownLayout = 0; // engine channel layout the strips were built for
     float uiScale = 1.0f;

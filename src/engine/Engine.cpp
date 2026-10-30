@@ -1,5 +1,6 @@
 #include "Engine.h"
 
+#include <algorithm>
 #include <map>
 #include <numeric>
 
@@ -130,6 +131,7 @@ void Engine::createParams()
         s.mono       = &params.addToggle (p + "mono", n + "Mono");
         s.phase      = &params.addToggle (p + "phase", n + "Phase Invert");
         s.eq.create (params, p, n);
+        s.correction.on = &params.addToggle (p + "corr.on", n + "Correction On");
         s.gateOn       = &params.addToggle (p + "gate.on", n + "Gate On");
         s.gateThr      = &params.add (p + "gate.thr", n + "Gate Threshold", ParamType::Continuous, linRange (-80, 0, 0.1f), -50.0f, " dB");
         s.gateRange    = &params.add (p + "gate.range", n + "Gate Range", ParamType::Continuous, linRange (-80, 0, 0.1f), -80.0f, " dB");
@@ -174,6 +176,7 @@ void Engine::createParams()
         bus.mute     = &params.addToggle (p + "mute", n + "Mute");
         bus.mono     = &params.addToggle (p + "mono", n + "Mono");
         bus.eq.create (params, p, n);
+        bus.correction.on = &params.addToggle (p + "corr.on", n + "Correction On");
         bus.limOn    = &params.addToggle (p + "lim.on", n + "Limiter On", true);
         bus.limCeil  = &params.add (p + "lim.ceiling", n + "Limiter Ceiling", ParamType::Continuous, linRange (-30, 0, 0.1f), 0.0f, " dB");
         bus.fxBypass = &params.addToggle (p + "fx.bypass", n + "FX Bypass");
@@ -276,6 +279,7 @@ std::vector<Param*> Engine::removeInput (int i)
     s.name = "Input " + juce::String (i + 1);
     s.source = {};
     s.plugins.clear();
+    setCorrection (i, {});
     rebuildGraph();
     sendChangeMessage();
     return reset;
@@ -296,6 +300,7 @@ std::vector<Param*> Engine::removeBus (int b)
     bus.name = busCode (b);
     bus.output = {};
     bus.plugins.clear();
+    setCorrection (kMaxInputs + b, {});
     if (selOwner == b) selOwner = -1;
     rebuildGraph();
     sendChangeMessage();
@@ -392,11 +397,13 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
         std::array<juce::String, kMaxInputs> names;
         std::array<IoTarget, kMaxInputs> sources;
         std::array<std::vector<std::unique_ptr<PluginSlot>>, kMaxInputs> chains;
+        std::array<CorrectionProfile, kMaxInputs> corrections;
         for (int i : used)
         {
             names[(size_t) i] = inputs[(size_t) i].name;
             sources[(size_t) i] = inputs[(size_t) i].source;
             chains[(size_t) i] = inputs[(size_t) i].plugins.takeAll();
+            corrections[(size_t) i] = inputs[(size_t) i].correction.getProfile();
         }
         for (int i : used)
         {
@@ -404,6 +411,7 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
             to.name = names[(size_t) i];
             to.source = sources[(size_t) i];
             to.plugins.putAll (std::move (chains[(size_t) i]));
+            setCorrection (dest[(size_t) i], corrections[(size_t) i]);
         }
     }
     else
@@ -411,11 +419,13 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
         std::array<juce::String, kMaxBuses> names;
         std::array<IoTarget, kMaxBuses> outputs;
         std::array<std::vector<std::unique_ptr<PluginSlot>>, kMaxBuses> chains;
+        std::array<CorrectionProfile, kMaxBuses> corrections;
         for (int b : used)
         {
             names[(size_t) b] = buses[(size_t) b].name;
             outputs[(size_t) b] = buses[(size_t) b].output;
             chains[(size_t) b] = buses[(size_t) b].plugins.takeAll();
+            corrections[(size_t) b] = buses[(size_t) b].correction.getProfile();
         }
         for (int b : used)
         {
@@ -423,6 +433,7 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
             to.name = names[(size_t) b];
             to.output = outputs[(size_t) b];
             to.plugins.putAll (std::move (chains[(size_t) b]));
+            setCorrection (kMaxInputs + dest[(size_t) b], corrections[(size_t) b]);
         }
         // Choices that name a bus follow it.
         if (group == Group::virtBuses)
@@ -929,6 +940,64 @@ void Engine::publishGraph (std::unique_ptr<Graph> g)
     if (! running) graveyard.clear();
 }
 
+//==============================================================================
+void Engine::setCorrection (int selectIndex, CorrectionProfile profile)
+{
+    if (! juce::isPositiveAndBelow (selectIndex, kMaxInputs + kMaxBuses)) return;
+    correctionFor (selectIndex).setProfile (std::move (profile), sampleRate, callbackCount.load());
+}
+
+//==============================================================================
+void Engine::startMeasurement (std::unique_ptr<MeasureRun> run)
+{
+    finishMeasurement();
+    run->length = (int) juce::jmin (run->stimulus.size(), run->capture.size());
+    measureOwned = std::move (run);
+    measureLive.store (measureOwned.get(), std::memory_order_release);
+}
+
+void Engine::stopMeasurement()
+{
+    if (measureOwned != nullptr) measureOwned->stop.store (true);
+}
+
+std::vector<float> Engine::finishMeasurement()
+{
+    std::vector<float> rec;
+    if (measureOwned == nullptr) return rec;
+    measureLive.store (nullptr, std::memory_order_release);
+    // A finished run is no longer touched by the audio thread (it only reads pos / length).
+    if (measureOwned->finished() && ! measureOwned->stop.load())
+        rec = std::move (measureOwned->capture);
+    measureGraveyard.emplace_back (std::move (measureOwned), callbackCount.load() + 2);
+    if (! running) measureGraveyard.clear();
+    return rec;
+}
+
+void Engine::renderMeasurement (Bus& b, MeasureRun& run, int start, int count, int n) noexcept
+{
+    float* l = b.l.data();
+    float* r = b.r.data();
+    std::memset (l, 0, (size_t) n * sizeof (float));
+    std::memset (r, 0, (size_t) n * sizeof (float));
+    const float* src = run.stimulus.data() + start;
+    if (run.outChannels & 1) std::memcpy (l, src, (size_t) count * sizeof (float));
+    if (run.outChannels & 2) std::memcpy (r, src, (size_t) count * sizeof (float));
+    if (run.stop.load (std::memory_order_relaxed))   // stopped: fade out within this chunk
+    {
+        dsp::applyRamp (l, count, 1.0f, 0.0f);
+        dsp::applyRamp (r, count, 1.0f, 0.0f);
+    }
+    if (run.busEq)   // check a correction: the bus's EQ and Correction stay in
+    {
+        b.eq.process (l, r, n, sampleRate);
+        b.correction.process (l, r, n, sampleRate);
+    }
+    b.lastGain = 0.0f;   // afterwards the bus fades back in
+    b.meter.muted.store (false, std::memory_order_relaxed);
+    b.meter.push (dsp::peak (l, n), dsp::peak (r, n));
+}
+
 int Engine::getSelectedBus() const noexcept
 {
     for (int b = 0; b < kMaxBuses; ++b)
@@ -976,6 +1045,11 @@ void Engine::timerCallback()
     updateSyncDelays();
 
     const auto now = callbackCount.load();
+    for (auto& s : inputs) s.correction.update (sampleRate, now, running);
+    for (auto& b : buses)  b.correction.update (sampleRate, now, running);
+    measureGraveyard.erase (std::remove_if (measureGraveyard.begin(), measureGraveyard.end(),
+                                            [&] (const auto& r) { return now >= r.second || ! running; }),
+                            measureGraveyard.end());
     for (auto it = graveyard.begin(); it != graveyard.end();)
     {
         if (now >= it->second || ! running)
@@ -1016,6 +1090,7 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
     for (auto& s : inputs)
     {
         s.eq.prepare();
+        s.correction.reset();
         s.gate.prepare (sampleRate);
         s.comp.prepare (sampleRate);
         s.denoiser->prepare (sampleRate);
@@ -1029,6 +1104,7 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
     for (auto& b : buses)
     {
         b.eq.prepare();
+        b.correction.reset();
         b.limiter.prepare (sampleRate);
         b.delay.prepare (sampleRate);
         b.lastGain = 0;
@@ -1086,6 +1162,16 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
         a.store (a.load (std::memory_order_relaxed) + (uint64_t) juce::jmax ((juce::int64) 0, t), std::memory_order_relaxed);
     };
 
+    // Room measurement: the part of the sweep / recording that falls into this chunk.
+    MeasureRun* run = measureLive.load (std::memory_order_acquire);
+    int runStart = 0, runCount = 0;
+    if (run != nullptr)
+    {
+        runStart = run->pos.load (std::memory_order_relaxed);
+        runCount = juce::jlimit (0, n, run->length - runStart);
+        if (runCount == 0) run = nullptr;
+    }
+
     // 1. Pull asynchronous inputs (resampled + drift corrected to the master clock).
     for (auto& s : g.ins)
     {
@@ -1122,6 +1208,18 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
         {
             L = m.s->channel (m.ch);
             R = m.mono ? L : m.s->channel (m.chR);
+        }
+
+        if (run != nullptr && i == run->input)   // the raw source, before any processing of the strip
+        {
+            if (const float* src = run->inputChannel == 0 ? L : R)
+            {
+                std::memcpy (run->capture.data() + runStart, src, (size_t) runCount * sizeof (float));
+                const float pk = dsp::peak (src, runCount);
+                if (pk > run->inputPeak.load (std::memory_order_relaxed)) run->inputPeak.store (pk, std::memory_order_relaxed);
+            }
+            else
+                run->noInput.store (true, std::memory_order_relaxed);
         }
 
         if (L == nullptr || ! s.active->isOn())
@@ -1163,15 +1261,35 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
     if (monBusIndex >= 0) processBus (buses[(size_t) selBus], n, timed);
     for (int b = 0; b < kMaxBuses; ++b)
     {
-        if (monBusIndex >= 0 && b == selBus) continue;
         auto& bus = buses[(size_t) b];
         if (! bus.active->isOn()) continue; // removed bus: nothing is routed to it
+        if (run != nullptr && b == run->bus)
+        {
+            renderMeasurement (bus, *run, runStart, runCount, n);   // the sweep replaces the bus's signal
+            continue;
+        }
+        if (monBusIndex >= 0 && b == selBus) continue;
         if (b == monBusIndex)
         {
             std::memcpy (bus.l.data(), buses[(size_t) selBus].l.data(), (size_t) n * sizeof (float));
             std::memcpy (bus.r.data(), buses[(size_t) selBus].r.data(), (size_t) n * sizeof (float));
         }
         processBus (bus, n, timed);
+        if (run != nullptr && run->muteOthers)
+        {
+            // Silent while measuring: fades out in the first chunk, the fader fades back in afterwards.
+            if (runStart == 0)
+            {
+                dsp::applyRamp (bus.l.data(), n, 1.0f, 0.0f);
+                dsp::applyRamp (bus.r.data(), n, 1.0f, 0.0f);
+            }
+            else
+            {
+                std::memset (bus.l.data(), 0, (size_t) n * sizeof (float));
+                std::memset (bus.r.data(), 0, (size_t) n * sizeof (float));
+            }
+            bus.lastGain = 0.0f;
+        }
     }
 
     if (recorder.wantsRecord())
@@ -1224,6 +1342,9 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
         s->pushBlock (n);
         if (timed) addTicks (s->dspTicks, now() - t0);
     }
+
+    if (run != nullptr)
+        run->pos.store (run->stop.load (std::memory_order_relaxed) ? run->length : runStart + runCount, std::memory_order_release);
 }
 
 void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, int n, bool anySolo, bool monoSource, bool timed) noexcept
@@ -1255,6 +1376,9 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
     s.preMeter.push (dsp::peak (l, n), dsp::peak (r, n));
 
     lap (DspTimes::other);
+
+    s.correction.process (l, r, n, sampleRate);
+    lap (DspTimes::eq);
 
     // Denoiser first, so EQ / gate / compressor work on the cleaned signal.
     const bool dn = s.dnOn->isOn();
@@ -1361,6 +1485,9 @@ void Engine::processBus (Bus& b, int n, bool timed) noexcept
     if (! b.fxBypass->isOn())
         b.plugins.process (l, r, n, timed);
     lap (DspTimes::plugins);
+
+    b.correction.process (l, r, n, sampleRate);
+    lap (DspTimes::eq);
 
     if (b.mono->isOn())
     {

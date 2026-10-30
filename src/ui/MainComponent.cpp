@@ -495,6 +495,7 @@ MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys
     };
     ctx.addChannel = [this] (int group) { addChannel (group); };
     ctx.changeOrder = [this] { beginReorder(); };
+    ctx.openRoomMeasurement = [this] { openRoomMeasurement(); };
     // Async: the buttons that call these are destroyed when the strips are rebuilt.
     strips.onReorderDone = [this]
     {
@@ -582,6 +583,7 @@ MainComponent::~MainComponent()
     dspWindow.reset();
     syncWindow.reset();
     deviceWindow.reset();
+    roomWindow.reset();
 }
 
 void MainComponent::select (int index)
@@ -935,6 +937,7 @@ void MainComponent::showToolsMenu()
     m.addItem ("Latency Finder...", run (&MainComponent::openLatencyFinder));
     m.addItem ("Sync Delay...", run (&MainComponent::openSyncDelay));
     m.addItem ("DSP Load...", run (&MainComponent::openDspView));
+    m.addItem ("Room Measurement...", run (&MainComponent::openRoomMeasurement));
     m.addItem ("Recorder", [safe] { if (safe != nullptr) safe->select (kRecorderSelect); });
     m.addSeparator();
     m.addItem ("Restart Audio Engine", run (&MainComponent::restartAudioEngine));
@@ -996,6 +999,15 @@ void MainComponent::openSyncDelay()
     syncWindow->setResizeLimits (720, 360, 8000, 4000);
     syncWindow->setVisible (true);
     syncWindow->toFront (true);
+}
+
+void MainComponent::openRoomMeasurement()
+{
+    if (roomWindow == nullptr)
+        makeToolWindow (roomWindow, "Hydra Mixer - Room Measurement", new RoomView (ctx), 1320, 860, juce::DocumentWindow::allButtons);
+    roomWindow->setResizeLimits (1100, 720, 8000, 4000);
+    roomWindow->setVisible (true);
+    roomWindow->toFront (true);
 }
 
 void MainComponent::openDevicePicker (int channel)

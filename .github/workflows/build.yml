@@ -1,0 +1,47 @@
+name: Build (Windows)
+
+on:
+  push:
+    branches: [ main, "claude/**" ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure
+        run: cmake -S . -B build/Release -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build/Release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $app = "build/Release/HydraMixer_artefacts/Release"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "$app/Hydra Mixer.exe" dist/
+          Copy-Item LICENSE, README.md dist/
+
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: HydraMixer-win64-${{ github.sha }}
+          path: dist/
+
+      - name: Offline tests
+        shell: pwsh
+        run: |
+          & "build/Release/HydraTests_artefacts/Release/HydraTests.exe"
+          if ($LASTEXITCODE -ne 0) { throw "HydraTests failed ($LASTEXITCODE)" }

@@ -225,6 +225,7 @@ mark { background: color-mix(in srgb, var(--yellow) 40%, transparent); color: in
   <a href="#inspector">Inspector</a>
   <a href="#denoiser">Denoiser</a>
   <a href="#eq">Equalizer</a>
+  <a href="#correction">Correction</a>
   <a href="#gate">Gate &amp; Voice Key</a>
   <a href="#comp">Kompressor</a>
   <a href="#vst">VST3-Plugins</a>
@@ -236,6 +237,7 @@ mark { background: color-mix(in srgb, var(--yellow) 40%, transparent); color: in
   <a href="#latency">Latency Finder</a>
   <a href="#syncdelay">Sync Delay</a>
   <a href="#dsp">DSP Load</a>
+  <a href="#room">Raummessung</a>
   <a href="#undo">Undo / Redo</a>
   <div class="grp">Steuerung</div>
   <a href="#midi">MIDI Learn</a>
@@ -452,7 +454,7 @@ cd Hydra-Mixer
     <tbody>
       <tr><td>Logo &amp; Statustext</td><td>Zeigt Treiber und Master-Gerät. Klick öffnet <span class="ui">Settings → Audio Engine</span>. Ist die Engine gestoppt, steht das hier.</td></tr>
       <tr><td>Recorder-Mini</td><td>Aufnahme, Play/Pause, Stop. Wird es eng, wird daraus ein Kassetten-Symbol, das den Recorder öffnet.</td></tr>
-      <tr><td><span class="ui">Schraubenschlüssel</span> (Tools)</td><td>Menü mit <a href="#scenes">Scene Editor</a>, <a href="#midi">MIDI Learn Mode</a>, <a href="#midi">MIDI Map</a>, <a href="#latency">Latency Finder</a>, <a href="#syncdelay">Sync Delay</a>, <a href="#dsp">DSP Load</a>, <a href="#recorder">Recorder</a> und <a href="#troubleshoot">Restart Audio Engine</a>. Im Learn-Modus leuchtet der Schlüssel gelb.</td></tr>
+      <tr><td><span class="ui">Schraubenschlüssel</span> (Tools)</td><td>Menü mit <a href="#scenes">Scene Editor</a>, <a href="#midi">MIDI Learn Mode</a>, <a href="#midi">MIDI Map</a>, <a href="#latency">Latency Finder</a>, <a href="#syncdelay">Sync Delay</a>, <a href="#dsp">DSP Load</a>, <a href="#room">Room Measurement</a>, <a href="#recorder">Recorder</a> und <a href="#troubleshoot">Restart Audio Engine</a>. Im Learn-Modus leuchtet der Schlüssel gelb.</td></tr>
       <tr><td>DSP-Anzeige</td><td>Anteil der verfügbaren Rechenzeit pro Audioblock. Klick öffnet <a href="#dsp">DSP Load</a>.</td></tr>
       <tr><td><span class="ui">Zahnrad</span></td><td>Öffnet die <a href="#settings">Settings</a>.</td></tr>
       <tr><td><span class="ui">Power</span></td><td>Beendet Hydra Mixer (mit Bestätigung). Wichtig, wenn das Schließen-Kreuz nur in den Tray minimiert.</td></tr>
@@ -635,8 +637,22 @@ cd Hydra-Mixer
 </section>
 
 <!-- ============================================================ -->
+<section id="correction">
+  <h2><span class="num">13</span>Correction</h2>
+  <p>Raum-, Lautsprecher- oder Kopfhörerkorrektur in jedem Input und jedem Bus: bis zu 32 Filterbänder plus Preamp, ohne Latenz. Im Input sitzt sie direkt nach dem Gain (vor dem Denoiser), im Bus nach den Plugins. Die Sektion im <a href="#inspector">Inspector</a> zeigt Kurve, Name und Größe des Profils; <span class="ui">ON</span> schaltet sie (MIDI-lernbar, Undo, Szenen).</p>
+  <p>Klick auf die Kurve oder <span class="ui">&hellip;</span> öffnet das Menü:</p>
+  <ul>
+    <li><b>Measure room / speaker</b>: öffnet die <a href="#room">Raummessung</a>; deren Auto Correction füllt diese Stufe.</li>
+    <li><b>Import headphone profile (AutoEq / Equalizer APO)</b>: liest eine parametrische EQ-Datei, z. B. eine <i>ParametricEQ.txt</i> aus dem AutoEq-Projekt für deinen Kopfhörer (Preamp + Zeilen &bdquo;Filter: ON PK / LSC / HSC &hellip;&ldquo;).</li>
+    <li><b>Import room / speaker profile</b>: dasselbe Format, als Raum-/Lautsprecherkorrektur markiert.</li>
+    <li><b>Type</b>, <b>Export as Equalizer APO file</b>, <b>Clear</b>.</li>
+  </ul>
+  <p>Das Profil wird mit der Session gespeichert und wandert beim Umsortieren mit seinem Kanal.</p>
+</section>
+
+<!-- ============================================================ -->
 <section id="gate">
-  <h2><span class="num">13</span>Gate &amp; Voice Key</h2>
+  <h2><span class="num">14</span>Gate &amp; Voice Key</h2>
   <p>Ein Gate schaltet den Kanal leise, solange das Signal unter einer Schwelle liegt, z. B. damit das Mikrofon in Sprechpausen keine Hintergrundgeräusche überträgt.</p>
   <table>
     <thead><tr><th>Regler</th><th>Bedeutung</th></tr></thead>
@@ -655,7 +671,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="comp">
-  <h2><span class="num">14</span>Kompressor</h2>
+  <h2><span class="num">15</span>Kompressor</h2>
   <p>Der Kompressor gleicht Lautstärkeunterschiede aus: Laute Stellen werden abgesenkt, das Ganze wird gleichmäßiger. Eine Kennlinie zeigt die Wirkung samt aktueller Gain-Reduktion.</p>
   <table>
     <thead><tr><th>Regler</th><th>Bedeutung</th></tr></thead>
@@ -674,7 +690,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="vst">
-  <h2><span class="num">15</span>VST3-Plugins</h2>
+  <h2><span class="num">16</span>VST3-Plugins</h2>
   <p>Jeder Input und jeder Bus hat eine <b>VST3 Insert Chain</b>. Die Plugins laufen der Reihe nach, ohne zusätzliche Pufferung (ihre eigene Latenz zeigt der <a href="#latency">Latency Finder</a>).</p>
   <h3>Plugins einrichten</h3>
   <ol class="steps">
@@ -694,7 +710,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="buses">
-  <h2><span class="num">16</span>Busse &amp; Limiter</h2>
+  <h2><span class="num">17</span>Busse &amp; Limiter</h2>
   <p>Jeder Bus hat Fader, Mute, Mono, den 8-Band-<a href="#eq">EQ</a>, eine <a href="#vst">VST3-Kette</a>, einen <b>Limiter</b> und ein frei wählbares Ausgabegerät.</p>
   <h3>Limiter</h3>
   <p>Der Limiter am Ende des Busses verhindert, dass der Pegel über <span class="ui">CEILING</span> steigt, z. B. damit ein Stream nie übersteuert. Er arbeitet latenzfrei.</p>
@@ -704,7 +720,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="sel">
-  <h2><span class="num">17</span>SEL &amp; Monitoring</h2>
+  <h2><span class="num">18</span>SEL &amp; Monitoring</h2>
   <h3>SEL: eigener Mix pro Bus</h3>
   <p>Drückst du <b>SEL</b> an einem Bus, steuern die Input-Fader nicht mehr die Gesamtlautstärke, sondern nur noch den Pegel jedes Inputs <i>auf diesem Bus</i>. Nicht geroutete Inputs werden gedimmt. So baust du z. B. einen Stream-Mix, in dem die Musik leiser ist als in deinen Kopfhörern.</p>
   <ol class="steps">
@@ -719,7 +735,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="recorder">
-  <h2><span class="num">18</span>Recorder</h2>
+  <h2><span class="num">19</span>Recorder</h2>
   <p>Der Recorder nimmt einen B-Bus als WAV auf und spielt Audiodateien auf beliebige Busse. Öffnen über <span class="ui">Tools → Recorder</span> oder die Zeitanzeige in der Top-Bar. Er hat drei Bereiche:</p>
   <table>
     <thead><tr><th>Bereich</th><th>Inhalt</th></tr></thead>
@@ -752,7 +768,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="scenes">
-  <h2><span class="num">19</span>Szenen</h2>
+  <h2><span class="num">20</span>Szenen</h2>
   <p>Eine Szene ist ein Schnappschuss aller Mixer-Parameter (Fader, Mutes, Routing, Effekte, Sends …). Nicht enthalten sind Geräte, Kanalnamen, Plugins und welche Kanäle aktiv sind. Typische Szenen: „Gaming“, „Stream“, „Call“, „Musik“.</p>
   <p>Öffnen: <span class="ui">Tools → Scene Editor</span>. Die Szenen erscheinen als Leiste links im Hauptfenster.</p>
   <table>
@@ -773,7 +789,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="latency">
-  <h2><span class="num">20</span>Latency Finder</h2>
+  <h2><span class="num">21</span>Latency Finder</h2>
   <p><span class="ui">Tools → Latency Finder</span> zeigt, wie viel Verzögerung jeder Weg vom Input zum Output hat und woher sie kommt. Es ist die einzige Stelle in Hydra mit Latenzwerten.</p>
   <h3>Aufbau</h3>
   <ol>
@@ -794,7 +810,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="syncdelay">
-  <h2><span class="num">21</span>Sync Delay</h2>
+  <h2><span class="num">22</span>Sync Delay</h2>
   <p>Verschiedene Geräte haben unterschiedliche Latenz. Kommt z. B. die Kamera über einen langsameren Weg als das Mikrofon, oder laufen zwei Ausgänge auseinander, gleicht Sync Delay das aus.</p>
   <p>Öffnen: <span class="ui">Tools → Sync Delay</span>. Pro Gruppe (Inputs, Hardware Outputs, Virtual Outputs) siehst du jeden Kanal mit:</p>
   <table>
@@ -812,7 +828,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="dsp">
-  <h2><span class="num">22</span>DSP Load</h2>
+  <h2><span class="num">23</span>DSP Load</h2>
   <p>Klick auf die DSP-Anzeige in der Top-Bar (oder <span class="ui">Tools → DSP Load</span>) zeigt, was wie viel Rechenzeit kostet. Werte sind Anteile der verfügbaren Zeit pro Audioblock, gemittelt über 1 Sekunde, mit Peak.</p>
   <ul>
     <li><b>Gesamtlast</b> als Balken mit Peak-Marker.</li>
@@ -825,8 +841,40 @@ cd Hydra-Mixer
 </section>
 
 <!-- ============================================================ -->
+<section id="room">
+  <h2><span class="num">24</span>Raummessung</h2>
+  <p>Misst, wie deine Lautsprecher in deinem Raum klingen, findet die Resonanzen des Raums (dröhnende Basstöne, die nachklingen) und erstellt einen EQ, der sie glättet. Öffnen: <span class="ui">Tools &rarr; Room Measurement</span>.</p>
+  <h3>Setup</h3>
+  <ul>
+    <li><b>Microphone (input)</b>: der Input-Strip, dessen Quelle dein Messmikrofon ist, und dessen Kanal (links / rechts). Hydra nimmt das Signal direkt vom Gerät, <b>vor</b> Trim, Denoiser, EQ, Gate, Kompressor und Plugins.</li>
+    <li><b>Mic calibration</b>: der eigene Frequenzgang des Mikrofons, der aus dem Ergebnis herausgerechnet wird. Presets: <i>t.bone EM 700 (data sheet, from 500 Hz)</i> und <i>(full data sheet curve)</i>. <i>Import calibration file&hellip;</i> liest die Kalibrierdatei deines Mikrofons (REW / miniDSP UMIK / Dayton: ein Paar &bdquo;Frequenz dB&ldquo; pro Zeile); importierte Dateien liegen in <code>%APPDATA%\HydraMixer\Calibrations</code>. Rechtsklick auf eine gespeicherte Messung analysiert sie mit einer anderen Kalibrierung neu.</li>
+    <li><b>Speaker (output bus)</b>: der Bus, der auf den zu messenden Lautsprechern spielt, und ob der Sweep links, rechts oder auf beiden läuft. Während der Messung <b>ersetzt</b> der Sweep alles auf diesem Bus; EQ, Plugins, Fader und Limiter werden übersprungen.</li>
+    <li><b>Sweep / Sweeps / Level</b>: Länge des Sinus-Sweeps (2&ndash;10 s), wie viele Sweeps gemittelt werden, und ihr Pegel. Leise anfangen und den Pegel erhöhen, bis der Mic-Peak bei etwa &minus;20 bis &minus;6 dBFS liegt.</li>
+    <li><b>Mute all other outputs</b> (standardmäßig an): Musik oder Voice-Chat würden die Messung stören.</li>
+    <li><b>Through the output's EQ + Correction</b>: der Sweep läuft durch EQ und Correction des Busses. Damit prüfst du nach dem Anwenden einer Korrektur das Ergebnis.</li>
+  </ul>
+  <p>Stell das Mikrofon an den Hörplatz (Ohrhöhe, nach oben gerichtet), sorge für Ruhe und klicke <span class="ui">Start measurement</span>. Der Balken zeigt die Phase (Grundrauschen, Sweep n von m, Ausklingen) und den Mikrofonpegel.</p>
+  <h3>Ergebnisse</h3>
+  <table>
+    <thead><tr><th>Ansicht</th><th>Zeigt</th></tr></thead>
+    <tbody>
+      <tr><td>Response</td><td>Frequenzgang (Glättung 1/3 bis 1/24 Oktave), rote Markierungen an den Resonanzen und mit Auto EQ: EQ-Kurve, Ziel und Frequenzgang mit EQ. <span class="ui">Compare</span> blendet eine zweite Messung ein (z. B. vorher / nachher).</td></tr>
+      <tr><td>Waterfall 3D</td><td>Wasserfall (Cumulative Spectral Decay): das Spektrum 0&ndash;300 ms nach dem Direktschall, von hinten nach vorne. Grate, die weit nach vorne reichen, sind Frequenzen, die nachklingen (Raummoden). Ziehen zum Kippen, Doppelklick zum Zurücksetzen.</td></tr>
+      <tr><td>Decay (RT60)</td><td>Nachhallzeit pro Oktavband (T20, Early Decay EDT). 0,2&ndash;0,5 s ist typisch für kleine Räume und Studios.</td></tr>
+      <tr><td>Impulse</td><td>Energie über die Zeit: Direktschall, Reflexionen, Ausklingen ins Rauschen.</td></tr>
+    </tbody>
+  </table>
+  <p>Die Liste <b>Resonances</b> zeigt jede Spitze unter 400 Hz, die mehr als 3 dB aus ihrer Umgebung herausragt, mit Breite (Q) und wie lange sie nachklingt (Zeit, bis sie um 20 dB abgeklungen ist).</p>
+  <h3>Auto Correction</h3>
+  <p>Erstellt bis zu 24 Glockenfilter, die den Frequenzgang so nah an ein flaches Ziel bringen, wie es die Grenzen erlauben. <span class="ui">From / To</span>: der korrigierte Bereich (Raummoden liegen unter ca. 300&ndash;500 Hz; eine Nahfeldmessung eines Lautsprechers kann bis 20 kHz korrigiert werden). <span class="ui">Max cut / Max boost</span>: Senken sind meist Auslöschungen, die eine Anhebung nicht füllen kann, daher ist Anheben standardmäßig aus; mit Anhebungen sorgt ein Preamp dafür, dass nichts übersteuert. <span class="ui">Type</span>: Raum, Lautsprecher oder Kopfhörer. <span class="ui">Apply to &hellip; Correction</span> legt die Bänder in die <a href="#correction">Correction</a> des gewählten Kanals (meist der gemessene Bus) und schaltet sie ein. <span class="ui">Export&hellip;</span> speichert sie als Equalizer-APO-Datei.</p>
+  <h3>Bibliothek &amp; Export</h3>
+  <p>Jede Messung wird in <code>%APPDATA%\HydraMixer\Measurements</code> gespeichert und links aufgelistet (Doppelklick zum Umbenennen). <span class="ui">Export</span>: Messdatei (.hydrameasure, wieder importierbar), Frequenzgang als Text (REW), Impulsantwort (WAV), Wasserfall (CSV), Chart als Bild (PNG).</p>
+  <div class="note"><b>Tipp</b> Messen, Korrektur auf den Bus anwenden, dann mit <span class="ui">Through the output's EQ + Correction</span> erneut messen und beide in der Response-Ansicht vergleichen.</div>
+</section>
+
+<!-- ============================================================ -->
 <section id="undo">
-  <h2><span class="num">23</span>Undo / Redo</h2>
+  <h2><span class="num">25</span>Undo / Redo</h2>
   <p><kbd>Ctrl</kbd>+<kbd>Z</kbd> macht die letzte Änderung rückgängig, <kbd>Ctrl</kbd>+<kbd>Y</kbd> (oder <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>) stellt sie wieder her. Das gilt im Hauptfenster und in allen Werkzeugfenstern. Ein Hinweis zeigt, was rückgängig gemacht wurde.</p>
   <ul>
     <li>Erfasst werden alle gespeicherten Parameter in <b>einer</b> Historie: Fader, Routing, EQ, Gate usw. Bis zu 200 Schritte.</li>
@@ -837,7 +885,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="midi">
-  <h2><span class="num">24</span>MIDI Learn</h2>
+  <h2><span class="num">26</span>MIDI Learn</h2>
   <p>Jeder Regler und Schalter in Hydra lässt sich mit einem MIDI-Controller steuern.</p>
   <h3>Einrichten</h3>
   <ol class="steps">
@@ -866,7 +914,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="apc">
-  <h2><span class="num">25</span>APC mini &amp; LED-Feedback</h2>
+  <h2><span class="num">27</span>APC mini &amp; LED-Feedback</h2>
   <p>Für Controller mit Pad-Raster (z. B. <b>Akai APC mini</b>) färbt Hydra die Pads nach Zustand ein:</p>
   <table>
     <thead><tr><th>Pad</th><th>Farbe (APC mini)</th></tr></thead>
@@ -883,7 +931,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="hotkeys">
-  <h2><span class="num">26</span>Tastenkürzel</h2>
+  <h2><span class="num">28</span>Tastenkürzel</h2>
   <p>Jeder Schalter (Mute, Solo, Routing, SEL, Szenen, Recorder …) lässt sich auf eine Taste oder Maustaste legen.</p>
   <ol class="steps">
     <li>Rechtsklick auf den Schalter → <span class="ui">Assign Keyboard Shortcut...</span></li>
@@ -902,7 +950,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="settings">
-  <h2><span class="num">27</span>Settings</h2>
+  <h2><span class="num">29</span>Settings</h2>
   <p>Öffnen über das Zahnrad in der Top-Bar.</p>
   <h3>General</h3>
   <ul>
@@ -930,7 +978,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="backup">
-  <h2><span class="num">28</span>Backup &amp; Transfer</h2>
+  <h2><span class="num">30</span>Backup &amp; Transfer</h2>
   <h3>Automatische Backups</h3>
   <p>Hydra legt bei jedem Start und vor jedem Import eine Kopie deiner Einstellungen an (bis zu 40, doppelte werden übersprungen). In <span class="ui">Settings → Backup &amp; Transfer → Automatic Backups</span> wählst du eines aus und klickst <span class="ui">Restore</span>. <span class="ui">Open Folder</span> zeigt den Ordner.</p>
   <h3>Export / Import</h3>
@@ -945,7 +993,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="vmimport">
-  <h2><span class="num">29</span>Voicemeeter-Import</h2>
+  <h2><span class="num">31</span>Voicemeeter-Import</h2>
   <p>Wenn du von Voicemeeter Potato kommst, kannst du deine Einstellungen übernehmen.</p>
   <ol class="steps">
     <li>In Voicemeeter: <i>Menu → Save Settings</i> speichert eine XML-Datei (oft in <code>Dokumente</code>).</li>
@@ -967,7 +1015,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="virtual">
-  <h2><span class="num">30</span>Virtuelle Geräte (Hydra als Lautsprecher/Mikrofon)</h2>
+  <h2><span class="num">32</span>Virtuelle Geräte (Hydra als Lautsprecher/Mikrofon)</h2>
   <p>Voicemeeter installiert eigene Windows-Audiogeräte, die jede App als Lautsprecher oder Mikrofon wählen kann. <b>Hydra hat (noch) keinen solchen Treiber</b>: Ein Windows-Audiotreiber lädt mit Secure Boot nur mit einer Microsoft-Signatur über ein EV-Zertifikat, sonst nur im Testmodus, und der bricht Spiele mit Anti-Cheat. Daher gilt vorerst:</p>
   <ul>
     <li>Apps können „Hydra“ nicht als Wiedergabegerät wählen.</li>
@@ -986,7 +1034,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="recipes">
-  <h2><span class="num">31</span>Rezepte</h2>
+  <h2><span class="num">33</span>Rezepte</h2>
 
   <h3>Stream-Mix mit eigener Musiklautstärke</h3>
   <ol>
@@ -1034,7 +1082,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="shortcuts">
-  <h2><span class="num">32</span>Maus &amp; Tastatur</h2>
+  <h2><span class="num">34</span>Maus &amp; Tastatur</h2>
   <table>
     <thead><tr><th>Wo</th><th>Eingabe</th><th>Wirkung</th></tr></thead>
     <tbody>
@@ -1063,7 +1111,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="troubleshoot">
-  <h2><span class="num">33</span>Fehlerbehebung</h2>
+  <h2><span class="num">35</span>Fehlerbehebung</h2>
 
   <h4>Gar kein Ton</h4>
   <ul>
@@ -1109,7 +1157,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="files">
-  <h2><span class="num">34</span>Dateien &amp; Ordner</h2>
+  <h2><span class="num">36</span>Dateien &amp; Ordner</h2>
   <table>
     <thead><tr><th>Pfad</th><th>Inhalt</th></tr></thead>
     <tbody>
@@ -1127,7 +1175,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="glossary">
-  <h2><span class="num">35</span>Glossar</h2>
+  <h2><span class="num">37</span>Glossar</h2>
   <table>
     <tbody>
       <tr><td><b>ASIO</b></td><td>Treiberschnittstelle von Steinberg für Audio-Interfaces mit sehr geringer Latenz. Pro Treiber kann nur ein Programm gleichzeitig zugreifen.</td></tr>
