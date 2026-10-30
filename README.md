@@ -82,6 +82,13 @@ Gain → **Denoiser** → **8-band EQ** → **Gate** → **Compressor** → **VS
   stage (device, clock sync buffer, denoiser, plugins, sync delay) as a matrix and as a chart.
 - **DSP Load**: CPU load per channel and per stage (denoiser, EQ, gate, compressor, plugins, limiter),
   plus resampling and recorder.
+- **Room Measurement**: pick a microphone (an input) and a speaker (a bus), Hydra plays a sine sweep and records
+  the raw signal (no effects of the channels involved). Shows the frequency response, a **3D waterfall**
+  (which frequencies keep ringing), the reverberation time per octave (T20 / EDT), the impulse response and a
+  list of the room's resonances. **Auto EQ** designs up to 8 bell bands that flatten the response (range,
+  limits and smoothing adjustable) and **applies them to any channel's EQ** with one click (Ctrl+Z undoes it).
+  Measurements are kept in a library and can be exported (measurement file, frequency response for REW,
+  impulse response WAV, waterfall CSV, chart PNG, EQ in Equalizer APO format).
 - **Restart Audio Engine** for drivers that silently stop delivering audio.
 
 ### App

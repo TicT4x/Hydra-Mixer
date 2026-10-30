@@ -239,6 +239,7 @@ mark { background: color-mix(in srgb, var(--yellow) 40%, transparent); color: in
   <a href="#latency">Latency Finder</a>
   <a href="#syncdelay">Sync Delay</a>
   <a href="#dsp">DSP Load</a>
+  <a href="#room">Room Measurement</a>
   <a href="#undo">Undo / redo</a>
   <div class="grp">Control</div>
   <a href="#midi">MIDI Learn</a>
@@ -455,7 +456,7 @@ cd Hydra-Mixer
     <tbody>
       <tr><td>Logo &amp; status text</td><td>Shows driver and master device. A click opens <span class="ui">Settings → Audio Engine</span>. If the engine is stopped, it says so here.</td></tr>
       <tr><td>Mini recorder</td><td>Record, play/pause, stop. When space gets tight it turns into a cassette icon that opens the recorder.</td></tr>
-      <tr><td><span class="ui">Wrench</span> (Tools)</td><td>Menu with <a href="#scenes">Scene Editor</a>, <a href="#midi">MIDI Learn Mode</a>, <a href="#midi">MIDI Map</a>, <a href="#latency">Latency Finder</a>, <a href="#syncdelay">Sync Delay</a>, <a href="#dsp">DSP Load</a>, <a href="#recorder">Recorder</a> and <a href="#troubleshoot">Restart Audio Engine</a>. In learn mode the wrench turns yellow.</td></tr>
+      <tr><td><span class="ui">Wrench</span> (Tools)</td><td>Menu with <a href="#scenes">Scene Editor</a>, <a href="#midi">MIDI Learn Mode</a>, <a href="#midi">MIDI Map</a>, <a href="#latency">Latency Finder</a>, <a href="#syncdelay">Sync Delay</a>, <a href="#dsp">DSP Load</a>, <a href="#room">Room Measurement</a>, <a href="#recorder">Recorder</a> and <a href="#troubleshoot">Restart Audio Engine</a>. In learn mode the wrench turns yellow.</td></tr>
       <tr><td>DSP meter</td><td>Share of the available processing time per audio block. A click opens <a href="#dsp">DSP Load</a>.</td></tr>
       <tr><td><span class="ui">Gear</span></td><td>Opens the <a href="#settings">Settings</a>.</td></tr>
       <tr><td><span class="ui">Power</span></td><td>Shuts down Hydra Mixer (with confirmation). Important when the close button only hides to the tray.</td></tr>
@@ -828,8 +829,39 @@ cd Hydra-Mixer
 </section>
 
 <!-- ============================================================ -->
+<section id="room">
+  <h2><span class="num">23</span>Room Measurement</h2>
+  <p>Measures how your speakers sound in your room, finds the room's resonances (boomy bass notes that keep ringing) and designs an EQ that flattens them. Open: <span class="ui">Tools &rarr; Room Measurement</span>.</p>
+  <h3>Setup</h3>
+  <ul>
+    <li><b>Microphone (input)</b>: the input strip whose source is your measurement microphone, plus its channel (left / right). Hydra takes the signal straight from the device, <b>before</b> trim, denoiser, EQ, gate, compressor and plugins.</li>
+    <li><b>Speaker (output bus)</b>: the bus that plays on the speakers to measure, and whether the sweep plays on left, right or both. While measuring, the sweep <b>replaces</b> everything on this bus; its EQ, plugins, fader and limiter are skipped.</li>
+    <li><b>Sweep / Sweeps / Level</b>: length of the sine sweep (2&ndash;10 s), how many sweeps are averaged, and their level. Start low and raise the level until the mic peak is around &minus;20 to &minus;6 dBFS.</li>
+    <li><b>Mute all other outputs</b> (on by default): music or voice chat would disturb the measurement.</li>
+    <li><b>Through the output's EQ</b>: the sweep passes the bus's EQ. Use it after applying a correction to check the result.</li>
+  </ul>
+  <p>Put the microphone at the listening position (ear height, pointing up), keep the room quiet and click <span class="ui">Start measurement</span>. The bar shows the phase (background noise, sweep n of m, decay) and the microphone level.</p>
+  <h3>Results</h3>
+  <table>
+    <thead><tr><th>View</th><th>Shows</th></tr></thead>
+    <tbody>
+      <tr><td>Response</td><td>Frequency response (smoothing 1/3 to 1/24 octave), red markers on the resonances, and with Auto EQ: the EQ curve, the target and the response with the EQ. <span class="ui">Compare</span> overlays a second measurement (e.g. before / after).</td></tr>
+      <tr><td>Waterfall 3D</td><td>Cumulative spectral decay: the spectrum 0&ndash;300 ms after the direct sound, back to front. Ridges that reach far to the front are frequencies that keep ringing (room modes). Drag to tilt, double click to reset.</td></tr>
+      <tr><td>Decay (RT60)</td><td>Reverberation time per octave band (T20, early decay EDT). 0.2&ndash;0.5 s is typical for small rooms and studios.</td></tr>
+      <tr><td>Impulse</td><td>Energy over time: direct sound, reflections, decay into the noise.</td></tr>
+    </tbody>
+  </table>
+  <p>The <b>Resonances</b> list shows every peak below 400 Hz that stands out of its surroundings by more than 3 dB, with its width (Q) and how long it rings (time until it has decayed by 20 dB).</p>
+  <h3>Auto EQ</h3>
+  <p>Designs up to 8 bell bands that bring the response as close to a flat target as the limits allow. <span class="ui">From / To</span>: the corrected range (room modes live below ~300&ndash;500 Hz). <span class="ui">Max cut / Max boost</span>: dips are usually cancellations that a boost cannot fill, so boosting is off by default. <span class="ui">Apply EQ to &hellip;</span> replaces the 8 bands of the chosen channel's EQ (usually the measured bus) and switches it on; <span class="ui">Ctrl+Z</span> undoes it. <span class="ui">Export EQ</span> saves the bands in Equalizer APO format.</p>
+  <h3>Library &amp; export</h3>
+  <p>Every measurement is saved in <code>%APPDATA%\HydraMixer\Measurements</code> and listed on the left (double click to rename). <span class="ui">Export</span>: measurement file (.hydrameasure, can be imported again), frequency response as text (REW), impulse response (WAV), waterfall (CSV), chart as image (PNG).</p>
+  <div class="note"><b>Tip</b> Measure, apply the EQ to the bus, then measure again with <span class="ui">Through the output's EQ</span> and compare both in the Response view.</div>
+</section>
+
+<!-- ============================================================ -->
 <section id="undo">
-  <h2><span class="num">23</span>Undo / redo</h2>
+  <h2><span class="num">24</span>Undo / redo</h2>
   <p><kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes the last change, <kbd>Ctrl</kbd>+<kbd>Y</kbd> (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>) redoes it. This works in the main window and in all tool windows. A notice shows what was undone.</p>
   <ul>
     <li>All saved parameters are tracked in <b>one</b> history: faders, routing, EQ, gate and so on. Up to 200 steps.</li>
@@ -840,7 +872,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="midi">
-  <h2><span class="num">24</span>MIDI Learn</h2>
+  <h2><span class="num">25</span>MIDI Learn</h2>
   <p>Every control and switch in Hydra can be operated with a MIDI controller.</p>
   <h3>Setup</h3>
   <ol class="steps">
@@ -869,7 +901,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="apc">
-  <h2><span class="num">25</span>APC mini &amp; LED feedback</h2>
+  <h2><span class="num">26</span>APC mini &amp; LED feedback</h2>
   <p>For controllers with a pad grid (e.g. <b>Akai APC mini</b>), Hydra colours the pads by state:</p>
   <table>
     <thead><tr><th>Pad</th><th>Colour (APC mini)</th></tr></thead>
@@ -886,7 +918,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="hotkeys">
-  <h2><span class="num">26</span>Keyboard shortcuts</h2>
+  <h2><span class="num">27</span>Keyboard shortcuts</h2>
   <p>Every switch (mute, solo, routing, SEL, scenes, recorder …) can be put on a key or mouse button.</p>
   <ol class="steps">
     <li>Right-click the switch → <span class="ui">Assign Keyboard Shortcut...</span></li>
@@ -905,7 +937,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="settings">
-  <h2><span class="num">27</span>Settings</h2>
+  <h2><span class="num">28</span>Settings</h2>
   <p>Open them with the gear in the top bar.</p>
   <h3>General</h3>
   <ul>
@@ -933,7 +965,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="backup">
-  <h2><span class="num">28</span>Backup &amp; Transfer</h2>
+  <h2><span class="num">29</span>Backup &amp; Transfer</h2>
   <h3>Automatic backups</h3>
   <p>Hydra keeps a copy of your settings at every start and before every import (up to 40, duplicates are skipped). In <span class="ui">Settings → Backup &amp; Transfer → Automatic Backups</span> pick one and click <span class="ui">Restore</span>. <span class="ui">Open Folder</span> shows the folder.</p>
   <h3>Export / import</h3>
@@ -948,7 +980,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="vmimport">
-  <h2><span class="num">29</span>Voicemeeter import</h2>
+  <h2><span class="num">30</span>Voicemeeter import</h2>
   <p>If you are coming from Voicemeeter Potato, you can take over your settings.</p>
   <ol class="steps">
     <li>In Voicemeeter: <i>Menu → Save Settings</i> saves an XML file (often in <code>Documents</code>).</li>
@@ -970,7 +1002,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="virtual">
-  <h2><span class="num">30</span>Virtual devices (Hydra as speaker/microphone)</h2>
+  <h2><span class="num">31</span>Virtual devices (Hydra as speaker/microphone)</h2>
   <p>Voicemeeter installs its own Windows audio devices that any app can choose as speaker or microphone. <b>Hydra doesn't have such a driver (yet)</b>: a Windows audio driver only loads with Secure Boot on if it is signed through Microsoft with an EV certificate; otherwise it needs test mode, which breaks games with anti-cheat. So for now:</p>
   <ul>
     <li>Apps can't select “Hydra” as their playback device.</li>
@@ -989,7 +1021,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="recipes">
-  <h2><span class="num">31</span>Recipes</h2>
+  <h2><span class="num">32</span>Recipes</h2>
 
   <h3>Stream mix with its own music volume</h3>
   <ol>
@@ -1037,7 +1069,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="shortcuts">
-  <h2><span class="num">32</span>Mouse &amp; keyboard</h2>
+  <h2><span class="num">33</span>Mouse &amp; keyboard</h2>
   <table>
     <thead><tr><th>Where</th><th>Input</th><th>Effect</th></tr></thead>
     <tbody>
@@ -1066,7 +1098,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="troubleshoot">
-  <h2><span class="num">33</span>Troubleshooting</h2>
+  <h2><span class="num">34</span>Troubleshooting</h2>
 
   <h4>No sound at all</h4>
   <ul>
@@ -1112,7 +1144,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="files">
-  <h2><span class="num">34</span>Files &amp; folders</h2>
+  <h2><span class="num">35</span>Files &amp; folders</h2>
   <table>
     <thead><tr><th>Path</th><th>Contents</th></tr></thead>
     <tbody>
@@ -1130,7 +1162,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="glossary">
-  <h2><span class="num">35</span>Glossary</h2>
+  <h2><span class="num">36</span>Glossary</h2>
   <table>
     <tbody>
       <tr><td><b>ASIO</b></td><td>Steinberg's driver interface for audio interfaces with very low latency. Only one program can use a driver at a time.</td></tr>
