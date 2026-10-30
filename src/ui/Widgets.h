@@ -61,6 +61,9 @@ struct UiContext
     /** Adds a channel: 0 = input, 1 = hardware output (A), 2 = virtual output (B). */
     std::function<void (int)> addChannel;
 
+    /** Opens Tools > Room Measurement. */
+    std::function<void()> openRoomMeasurement;
+
     /** Enters Change Order mode (drag the strips into a new order). */
     std::function<void()> changeOrder;
 

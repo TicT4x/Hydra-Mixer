@@ -77,6 +77,22 @@ struct Resonance
     double ringMs = 0.0;     // time until this frequency has decayed by 20 dB (from the waterfall)
 };
 
+/** Microphone calibration: the microphone's own response, taken out of every measurement made with it. */
+struct Calibration
+{
+    std::string name;
+    std::vector<std::pair<double, double>> points;   // (Hz, dB), ascending
+
+    bool empty() const noexcept { return points.empty(); }
+    /** The microphone's level at f in dB: interpolated on a log frequency axis, held beyond the first / last
+        point, limited to +-20 dB (no calibration should turn a measurement upside down). */
+    double at (double f) const;
+    /** Reads a calibration file: one "frequency dB [phase]" pair per line (REW, miniDSP UMIK, Dayton,
+        .txt / .cal / .frd), separated by spaces, tabs, commas or semicolons; other lines (headers,
+        "Sens Factor", comments) are skipped. Returns false (with error) if fewer than 3 points were found. */
+    static bool parse (const std::string& text, Calibration& out, std::string& error);
+};
+
 struct AnalysisOptions
 {
     double windowMs = 500.0;      // impulse response length used for the frequency response
@@ -85,6 +101,7 @@ struct AnalysisOptions
     double waterfallWindowMs = 300.0;
     double resonanceMinHz = 20.0, resonanceMaxHz = 400.0;
     double resonanceThresholdDb = 3.0;
+    Calibration calibration;      // taken out of the response and the waterfall
 };
 
 struct Analysis
@@ -126,8 +143,9 @@ struct EqBand
 
 struct AutoEqSettings
 {
+    static constexpr int kMaxBands = 24;
     double lowHz = 25.0, highHz = 500.0;   // range that is corrected
-    int maxBands = 8;
+    int maxBands = 8;          // up to kMaxBands
     double maxBoostDb = 0.0;   // boosting dips (often cancellations that no EQ can fill) is limited to this
     double maxCutDb = 15.0;
     double smoothing = 12.0;   // response smoothing for the fit (1/n octave)
@@ -138,6 +156,7 @@ struct AutoEqSettings
 struct AutoEqResult
 {
     std::vector<EqBand> bands;        // sorted by frequency
+    double preampDb = 0.0;            // -(highest boost of the EQ curve): keeps boosts from clipping
     std::vector<double> eqDb;         // EQ curve on the analysis grid
     std::vector<double> correctedDb;  // smoothed response + EQ (relative to the reference level)
     std::vector<double> smoothedDb;   // smoothed response used for the fit (relative)

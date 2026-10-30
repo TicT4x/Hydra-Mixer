@@ -13,7 +13,8 @@ struct RoomMeasurement
     juce::Time created;
     juce::String microphone, output;   // what was measured (descriptions at measuring time)
     room::SweepSpec spec;
-    bool throughEq = false;            // the sweep passed the output's EQ (a check of a correction)
+    bool throughEq = false;            // the sweep passed the output's EQ and Correction (a check of a correction)
+    room::Calibration calibration;     // microphone calibration taken out of the results (empty = none)
     room::ImpulseResponse ir;
     juce::File file;                   // library file (empty until saved)
 
@@ -42,7 +43,18 @@ bool exportResponse (const RoomMeasurement& m, const juce::File& file, double sm
 bool exportImpulse (const RoomMeasurement& m, const juce::File& file);
 /** Waterfall as CSV: one row per frequency, one column per slice (ms). */
 bool exportWaterfall (const RoomMeasurement& m, const juce::File& file);
-/** EQ bands as text: Equalizer APO filter lines plus a readable list. */
-bool exportEq (const std::vector<room::EqBand>& bands, const juce::String& title, const juce::File& file);
+
+/** Analysis options for m (its microphone calibration). */
+room::AnalysisOptions analysisOptions (const RoomMeasurement& m);
 } // namespace measurements
+
+/** Microphone calibrations: the built-in presets plus files imported into %APPDATA%/HydraMixer/Calibrations. */
+namespace calibrations
+{
+juce::File folder();
+/** Presets first, then the imported files (name = file name without extension). */
+std::vector<room::Calibration> all();
+/** Reads a calibration file and copies it into the folder. Returns the calibration, or an empty one with error set. */
+room::Calibration import (const juce::File& file, juce::String& error);
+} // namespace calibrations
 } // namespace hydra

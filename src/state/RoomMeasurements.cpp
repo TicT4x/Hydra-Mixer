@@ -1,4 +1,5 @@
 #include "RoomMeasurements.h"
+#include "core/MicCalibrations.h"
 
 namespace hydra::measurements
 {
@@ -60,6 +61,15 @@ bool save (const RoomMeasurement& m, const juce::File& file)
     o->setProperty ("microphone", m.microphone);
     o->setProperty ("output", m.output);
     o->setProperty ("throughEq", m.throughEq);
+    if (! m.calibration.empty())
+    {
+        auto* cal = new juce::DynamicObject();
+        cal->setProperty ("name", juce::String (m.calibration.name));
+        juce::Array<juce::var> pts;
+        for (auto& [f, db] : m.calibration.points) pts.add (juce::Array<juce::var> { f, db });
+        cal->setProperty ("points", pts);
+        o->setProperty ("calibration", juce::var (cal));
+    }
 
     auto* sw = new juce::DynamicObject();
     sw->setProperty ("sampleRate", m.spec.sampleRate);
@@ -111,6 +121,13 @@ std::unique_ptr<RoomMeasurement> load (const juce::File& file, juce::String& err
     m->microphone = v["microphone"].toString();
     m->output = v["output"].toString();
     m->throughEq = (bool) v["throughEq"];
+    if (const auto cal = v["calibration"]; cal.isObject())
+    {
+        m->calibration.name = cal["name"].toString().toStdString();
+        if (auto* pts = cal["points"].getArray())
+            for (auto& p : *pts)
+                if (p.isArray() && p.size() >= 2) m->calibration.points.emplace_back ((double) p[0], (double) p[1]);
+    }
 
     const auto sw = v["sweep"];
     m->spec.sampleRate = (double) sw.getProperty ("sampleRate", 48000.0);
@@ -192,14 +209,57 @@ bool exportWaterfall (const RoomMeasurement& m, const juce::File& file)
     return file.replaceWithText (t);
 }
 
-bool exportEq (const std::vector<room::EqBand>& bands, const juce::String& title, const juce::File& file)
+room::AnalysisOptions analysisOptions (const RoomMeasurement& m)
 {
-    juce::String t;
-    t << "# " << title << "\n"
-      << "# Hydra Mixer room correction. The lines below can be pasted into Equalizer APO (config.txt).\n";
-    for (auto& b : bands)
-        t << "Filter: ON PK Fc " << juce::String (b.freq, 1) << " Hz Gain " << juce::String (b.gainDb, 1)
-          << " dB Q " << juce::String (b.q, 2) << "\n";
-    return file.replaceWithText (t);
+    room::AnalysisOptions o;
+    o.calibration = m.calibration;
+    return o;
 }
+
 } // namespace hydra::measurements
+
+//==============================================================================
+namespace hydra::calibrations
+{
+juce::File folder()
+{
+    auto d = appDataDir().getChildFile ("Calibrations");
+    d.createDirectory();
+    return d;
+}
+
+std::vector<room::Calibration> all()
+{
+    auto list = room::builtInCalibrations();
+    auto files = folder().findChildFiles (juce::File::findFiles, false, "*.txt;*.cal;*.frd;*.csv");
+    files.sort();
+    for (const auto& f : files)
+    {
+        room::Calibration c;
+        std::string err;
+        if (! room::Calibration::parse (f.loadFileAsString().toStdString(), c, err)) continue;
+        c.name = f.getFileNameWithoutExtension().toStdString();
+        list.push_back (std::move (c));
+    }
+    return list;
+}
+
+room::Calibration import (const juce::File& file, juce::String& error)
+{
+    room::Calibration c;
+    std::string err;
+    if (! room::Calibration::parse (file.loadFileAsString().toStdString(), c, err))
+    {
+        error = juce::String (err);
+        return {};
+    }
+    const auto dest = folder().getChildFile (file.getFileName());
+    if (dest != file && ! file.copyFileTo (dest))
+    {
+        error = "cannot copy it to " + folder().getFullPathName();
+        return {};
+    }
+    c.name = dest.getFileNameWithoutExtension().toStdString();
+    return c;
+}
+} // namespace hydra::calibrations

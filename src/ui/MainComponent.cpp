@@ -495,6 +495,7 @@ MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys
     };
     ctx.addChannel = [this] (int group) { addChannel (group); };
     ctx.changeOrder = [this] { beginReorder(); };
+    ctx.openRoomMeasurement = [this] { openRoomMeasurement(); };
     // Async: the buttons that call these are destroyed when the strips are rebuilt.
     strips.onReorderDone = [this]
     {

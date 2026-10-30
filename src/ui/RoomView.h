@@ -14,8 +14,9 @@ namespace hydra
     - Waterfall: 3D cumulative spectral decay (drag to tilt), shows which frequencies keep ringing,
     - Decay: reverberation time per octave band (T20 / EDT),
     - Impulse: energy time curve (direct sound, reflections, decay into the noise).
-    Below: the resonance list and the automatic EQ (range, bands, limits), applied to any channel's EQ
-    with one click (one undo step).
+    Below: the resonance list and the automatic correction (range, up to 24 bands, limits, preamp), applied
+    to any channel's Correction stage with one click (or exported as an Equalizer APO file).
+    A microphone calibration (presets or imported files) is taken out of every result.
 
     Measuring is raw: the sweep replaces the output bus's signal and chain, the microphone is taken from
     the input's source before any processing (see MeasureRun). */
@@ -37,6 +38,7 @@ private:
     void paintListBoxItem (int row, juce::Graphics&, int w, int h, bool selected) override;
     void selectedRowsChanged (int row) override;
     void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override { startRename (row); }
+    void listBoxItemClicked (int row, const juce::MouseEvent&) override;
     void deleteKeyPressed (int) override { deleteSelected(); }
 
     void refreshChannelBoxes();
@@ -47,6 +49,11 @@ private:
     void updateEq();
     void updateApplyButton();
     void applyEq();
+    CorrectionProfile profileFromEq() const;
+    void refreshCalibrations (const juce::String& select);
+    void importCalibration();
+    const room::Calibration* selectedCalibration() const;
+    void useCalibration (RoomMeasurement* m, const room::Calibration& cal);
     void setMode (Mode);
     void updateModeControls();
     void showExportMenu();
@@ -67,8 +74,11 @@ private:
     UiContext& ctx;
 
     // Setup
-    juce::ComboBox micBox, micChannelBox, busBox, speakerBox, lengthBox, repeatsBox, levelBox;
-    juce::ToggleButton muteOthers { "Mute all other outputs" }, throughEq { "Through the output's EQ (check a correction)" };
+    juce::ComboBox micBox, micChannelBox, calBox, busBox, speakerBox, lengthBox, repeatsBox, levelBox;
+    juce::ToggleButton muteOthers { "Mute all other outputs" }, throughEq { "Through the output's EQ + Correction (check)" };
+    std::vector<room::Calibration> calList;   // calBox item id k + 2 = calList[k]
+    int shownCal = 1;
+    room::Calibration runCal;
     juce::TextButton startButton { "Start measurement" };
     juce::String status;
     juce::Colour statusColour = theme::textDim;
@@ -100,9 +110,11 @@ private:
     juce::Rectangle<int> infoArea;
 
     // Resonances + Auto EQ
-    juce::ComboBox eqLowBox, eqHighBox, eqBandsBox, eqCutBox, eqBoostBox, eqSmoothBox, targetBox;
-    juce::TextButton applyButton { "Apply EQ" }, exportEqButton { "Export EQ..." };
+    juce::ComboBox eqLowBox, eqHighBox, eqBandsBox, eqCutBox, eqBoostBox, eqSmoothBox, kindBox, targetBox;
+    juce::TextButton applyButton { "Apply Correction" }, exportEqButton { "Export..." };
     room::AutoEqResult eq;
+    int eqGeneration = 0;     // the design runs in the background; only the newest result is taken
+    bool eqBusy = false;
     juce::Rectangle<int> resonanceArea, eqArea, bandsArea;
     std::vector<std::pair<juce::Component*, juce::String>> captions;   // label drawn above each control
 
