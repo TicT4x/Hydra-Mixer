@@ -30,6 +30,7 @@ bool Session::save (const juce::File& f) const
         e->setAttribute ("name", s.name);
         e->addChildElement (s.source.toXml ("SOURCE").release());
         e->addChildElement (s.plugins.toXml().release());
+        if (! s.correction.getProfile().isEmpty()) e->addChildElement (s.correction.getProfile().toXml().release());
     }
     for (int b = 0; b < kMaxBuses; ++b)
     {
@@ -39,6 +40,7 @@ bool Session::save (const juce::File& f) const
         e->setAttribute ("name", bus.name);
         e->addChildElement (bus.output.toXml ("OUTPUT").release());
         e->addChildElement (bus.plugins.toXml().release());
+        if (! bus.correction.getProfile().isEmpty()) e->addChildElement (bus.correction.getProfile().toXml().release());
     }
 
     auto* app = root.createNewChildElement ("APP");
@@ -138,6 +140,7 @@ bool Session::load (const juce::File& f)
         auto& s = engine.inputs[(size_t) i];
         s.name = e->getStringAttribute ("name", s.name);
         s.source = IoTarget::fromXml (e->getChildByName ("SOURCE"));
+        engine.setCorrection (i, CorrectionProfile::fromXml (e->getChildByName ("CORRECTION")));
     }
     for (auto* e : root->getChildWithTagNameIterator ("BUS"))
     {
@@ -146,6 +149,7 @@ bool Session::load (const juce::File& f)
         auto& bus = engine.buses[(size_t) b];
         bus.name = e->getStringAttribute ("name", bus.name);
         bus.output = IoTarget::fromXml (e->getChildByName ("OUTPUT"));
+        engine.setCorrection (kMaxInputs + b, CorrectionProfile::fromXml (e->getChildByName ("CORRECTION")));
     }
 
     if (auto* m = root->getChildByName ("MASTER"))

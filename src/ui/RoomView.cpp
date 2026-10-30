@@ -1,4 +1,5 @@
 #include "RoomView.h"
+#include "core/ParamEq.h"
 
 namespace hydra
 {
@@ -9,6 +10,7 @@ const std::vector<double> kLengths   { 2.0, 5.0, 10.0 };
 const std::vector<double> kRepeats   { 1.0, 2.0, 4.0 };
 const std::vector<double> kLevels    { -30.0, -24.0, -18.0, -15.0, -12.0, -9.0, -6.0 };
 const std::vector<double> kEqLow     { 20.0, 25.0, 30.0, 40.0, 60.0 };
+const std::vector<double> kBands     { 4.0, 8.0, 12.0, 16.0, 20.0, 24.0 };
 const std::vector<double> kEqHigh    { 200.0, 300.0, 500.0, 1000.0, 2000.0, 5000.0, 20000.0 };
 const std::vector<double> kCuts      { 6.0, 9.0, 12.0, 15.0, 18.0 };
 const std::vector<double> kBoosts    { 0.0, 3.0, 6.0 };
@@ -16,6 +18,7 @@ const std::vector<double> kSmoothing { 3.0, 6.0, 12.0, 24.0, 0.0 };   // 1/n oct
 const std::vector<double> kWfRanges  { 300.0, 500.0, 1000.0, 5000.0, 20000.0 };
 const std::vector<double> kSpans     { 50.0, 100.0, 300.0, 1000.0 };
 
+constexpr int kImportCalId = 1000;
 constexpr int kPad = 14, kCaptionH = 16, kRowH = 28, kGap = 8, kTitleH = 26;
 
 double valueOf (const juce::ComboBox& box, const std::vector<double>& values, double fallback)
@@ -215,8 +218,8 @@ private:
             g.fillPath (dashed);
             stroke (curve (a.freqs, eq.eqDb, fLo, fHi, fx, fy), theme::warn, 1.5f);
             stroke (curve (a.freqs, eq.correctedDb, fLo, fHi, fx, fy), theme::good, 1.7f);
-            legend.push_back ({ "EQ", theme::warn });
-            legend.push_back ({ "With EQ", theme::good });
+            legend.push_back ({ "Correction", theme::warn });
+            legend.push_back ({ "With correction", theme::good });
             legend.push_back ({ "Target", theme::text.withAlpha (0.6f) });
         }
 
@@ -243,7 +246,7 @@ private:
             g.drawVerticalLine (juce::roundToInt (hover.x), plot.getY(), plot.getBottom());
             juce::String t = hz (f) + "   " + juce::String (room::valueAt (a.freqs, smoothed, f), 1) + " dB";
             if (! eq.bands.empty())
-                t << "   EQ " << juce::String (room::valueAt (a.freqs, eq.eqDb, f), 1) << " dB";
+                t << "   correction " << juce::String (room::valueAt (a.freqs, eq.eqDb, f), 1) << " dB";
             g.setFont (theme::font (12.0f));
             const float w = (float) juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), t) + 16.0f;
             auto box = juce::Rectangle<float> (hover.x + 10.0f, plot.getY() + 6.0f, w, 20.0f);
@@ -464,6 +467,7 @@ RoomView::RoomView (UiContext& c) : ctx (c)
     // Setup
     combo (micBox, "Microphone (input)");
     combo (micChannelBox, "Channel");
+    combo (calBox, "Mic calibration");
     combo (busBox, "Speaker (output bus)");
     combo (speakerBox, "Plays on");
     combo (lengthBox, "Sweep");
@@ -477,6 +481,14 @@ RoomView::RoomView (UiContext& c) : ctx (c)
     micBox.setTooltip ("The input strip whose source is the measurement microphone. Its signal is taken straight from the "
                        "device, before trim, denoiser, EQ, gate, compressor and plugins.");
     micChannelBox.setTooltip ("Which channel of the input's source carries the microphone.");
+    calBox.setTooltip ("The microphone's own frequency response, taken out of the measurement. Choose a preset or import "
+                       "the calibration file of your microphone (REW / miniDSP / Dayton format: \"frequency dB\" per line).");
+    calBox.onChange = [this]
+    {
+        if (calBox.getSelectedId() == kImportCalId) importCalibration();
+        else shownCal = calBox.getSelectedId();
+    };
+    refreshCalibrations ({});
     busBox.setTooltip ("The bus that plays the sweep. During the measurement the sweep replaces everything on this bus, "
                        "and its EQ, plugins, fader and limiter are skipped.");
     speakerBox.setTooltip ("Measure one speaker at a time for the most precise result, or both together for the sum you hear.");
@@ -489,8 +501,8 @@ RoomView::RoomView (UiContext& c) : ctx (c)
     addAndMakeVisible (throughEq);
     muteOthers.setToggleState (true, juce::dontSendNotification);
     muteOthers.setTooltip ("Every other output is silent while measuring (music or voice chat would disturb the measurement).");
-    throughEq.setTooltip ("The sweep passes the output bus's EQ: measure again after applying a correction to see the result. "
-                          "Plugins, fader and limiter are still skipped.");
+    throughEq.setTooltip ("The sweep passes the output bus's EQ and Correction: measure again after applying a correction to see "
+                          "the result. Plugins, fader and limiter are still skipped.");
     addAndMakeVisible (startButton);
     startButton.onClick = [this] { startOrStop(); };
 
@@ -541,10 +553,14 @@ RoomView::RoomView (UiContext& c) : ctx (c)
     combo (eqCutBox, "Max cut");
     combo (eqBoostBox, "Max boost");
     combo (eqSmoothBox, "Smoothing");
+    combo (kindBox, "Type");
     combo (targetBox, "Apply to");
     fill (eqLowBox, { "20 Hz", "25 Hz", "30 Hz", "40 Hz", "60 Hz" }, 1);
     fill (eqHighBox, { "200 Hz", "300 Hz", "500 Hz", "1 kHz", "2 kHz", "5 kHz", "20 kHz" }, 2);
-    fill (eqBandsBox, { "1", "2", "3", "4", "5", "6", "7", "8" }, 7);
+    fill (eqBandsBox, { "4", "8", "12", "16", "20", "24" }, 3);
+    fill (kindBox, CorrectionProfile::kindNames(), 0);
+    kindBox.setTooltip ("What the correction is for (shown in the channel's Correction section).");
+    eqBandsBox.setTooltip ("Most bands the correction may use. More bands follow the response more closely.");
     fill (eqCutBox, { "-6 dB", "-9 dB", "-12 dB", "-15 dB", "-18 dB" }, 3);
     fill (eqBoostBox, { "None", "+3 dB", "+6 dB" }, 0);
     fill (eqSmoothBox, { "1/3 oct", "1/6 oct", "1/12 oct", "1/24 oct" }, 2);
@@ -554,7 +570,7 @@ RoomView::RoomView (UiContext& c) : ctx (c)
     eqBoostBox.setTooltip ("Dips are often cancellations that no boost can fill (it only costs headroom). Keep boosting off "
                            "or small.");
     eqSmoothBox.setTooltip ("How detailed the response is that the EQ follows. 1/12 octave suits room modes.");
-    targetBox.setTooltip ("Channel whose EQ gets the bands (its 8 bands are replaced). Usually the bus you measured.");
+    targetBox.setTooltip ("Channel whose Correction gets the bands (replaces its profile). Usually the bus you measured.");
     for (auto* b : { &eqLowBox, &eqHighBox, &eqBandsBox, &eqCutBox, &eqBoostBox, &eqSmoothBox })
         b->onChange = [this] { updateEq(); };
     targetBox.onChange = [this] { targetChosen = true; updateApplyButton(); };
@@ -564,11 +580,10 @@ RoomView::RoomView (UiContext& c) : ctx (c)
     exportEqButton.onClick = [this]
     {
         if (eq.bands.empty()) return;
-        auto bands = eq.bands;
-        const auto title = current() != nullptr ? "Room correction for " + current()->name : juce::String ("Room correction");
-        exportTo ("Export EQ", "*.txt", [bands, title] (const juce::File& f) { return measurements::exportEq (bands, title, f.withFileExtension (".txt")); });
+        const auto profile = profileFromEq();
+        exportTo ("Export correction", "*.txt", [profile] (const juce::File& f) { return f.withFileExtension (".txt").replaceWithText (profile.toApo()); });
     };
-    exportEqButton.setTooltip ("Saves the bands as text (Equalizer APO format, works for other EQs too).");
+    exportEqButton.setTooltip ("Saves the correction as an Equalizer APO parametric EQ file (also read by most other EQs).");
 
     library = measurements::loadLibrary();
     list.updateContent();
@@ -692,12 +707,13 @@ void RoomView::startOrStop()
     runMic = inputTitle (e, input) + (micChannelBox.getSelectedId() == 2 ? " (R)" : "");
     runOut = busTitle (e, bus) + (speakers == 2 ? " (L)" : speakers == 3 ? " (R)" : "");
     runThroughEq = run->busEq;
+    runCal = selectedCalibration() != nullptr ? *selectedCalibration() : room::Calibration();
     stopTicks = 0;
     micHold = 0.0f;
     e.startMeasurement (std::move (run));
 
     startButton.setButtonText ("Stop");
-    for (auto* b : std::initializer_list<juce::Component*> { &micBox, &micChannelBox, &busBox, &speakerBox, &lengthBox, &repeatsBox, &levelBox, &muteOthers, &throughEq })
+    for (auto* b : std::initializer_list<juce::Component*> { &micBox, &micChannelBox, &calBox, &busBox, &speakerBox, &lengthBox, &repeatsBox, &levelBox, &muteOthers, &throughEq })
         b->setEnabled (false);
     status = "Measuring... keep the room quiet.";
     statusColour = theme::text;
@@ -735,7 +751,7 @@ void RoomView::timerCallback()
     const bool stopped = run->stop.load(), noInput = run->noInput.load();
     auto capture = e.finishMeasurement();
     startButton.setButtonText ("Start measurement");
-    for (auto* b : std::initializer_list<juce::Component*> { &micBox, &micChannelBox, &busBox, &speakerBox, &lengthBox, &repeatsBox, &levelBox, &muteOthers, &throughEq })
+    for (auto* b : std::initializer_list<juce::Component*> { &micBox, &micChannelBox, &calBox, &busBox, &speakerBox, &lengthBox, &repeatsBox, &levelBox, &muteOthers, &throughEq })
         b->setEnabled (true);
     micLevel = 0.0f;
 
@@ -759,11 +775,12 @@ void RoomView::measurementFinished (std::vector<float> capture, room::SweepSpec 
     status = "Analysing...";
     statusColour = theme::text;
     juce::Component::SafePointer<RoomView> safe (this);
-    juce::Thread::launch ([safe, capture = std::move (capture), spec, mic, out, eqOn]
+    juce::Thread::launch ([safe, capture = std::move (capture), spec, mic, out, eqOn, cal = runCal]
     {
         auto m = std::make_shared<RoomMeasurement>();
+        m->calibration = cal;
         m->ir = room::deconvolve (capture, spec);
-        m->analysis = room::analyse (m->ir, {}, spec.startHz, spec.endHz);
+        m->analysis = room::analyse (m->ir, measurements::analysisOptions (*m), spec.startHz, spec.endHz);
         m->analysed = true;
         m->spec = spec;
         m->microphone = mic;
@@ -838,9 +855,9 @@ void RoomView::analyseIfNeeded (RoomMeasurement* m)
     if (m == nullptr || m->analysed || std::find (analysing.begin(), analysing.end(), m) != analysing.end()) return;
     analysing.push_back (m);
     juce::Component::SafePointer<RoomView> safe (this);
-    juce::Thread::launch ([safe, m, ir = m->ir, spec = m->spec]
+    juce::Thread::launch ([safe, m, ir = m->ir, spec = m->spec, opts = measurements::analysisOptions (*m)]
     {
-        auto a = std::make_shared<room::Analysis> (room::analyse (ir, {}, spec.startHz, spec.endHz));
+        auto a = std::make_shared<room::Analysis> (room::analyse (ir, opts, spec.startHz, spec.endHz));
         juce::MessageManager::callAsync ([safe, m, a]
         {
             if (safe == nullptr) return;
@@ -861,74 +878,158 @@ void RoomView::analyseIfNeeded (RoomMeasurement* m)
 void RoomView::updateEq()
 {
     auto* m = current();
+    const int generation = ++eqGeneration;
     eq = {};
+    eqBusy = false;
     if (m != nullptr && m->analysed)
     {
         room::AutoEqSettings s;
         s.lowHz = valueOf (eqLowBox, kEqLow, 25.0);
         s.highHz = valueOf (eqHighBox, kEqHigh, 500.0);
-        s.maxBands = eqBandsBox.getSelectedId() > 0 ? eqBandsBox.getSelectedId() : 8;
+        s.maxBands = (int) valueOf (eqBandsBox, kBands, 16.0);
         s.maxCutDb = valueOf (eqCutBox, kCuts, 15.0);
         s.maxBoostDb = valueOf (eqBoostBox, kBoosts, 0.0);
         s.smoothing = valueOf (eqSmoothBox, kSmoothing, 12.0);
         s.sampleRate = ctx.engine.getSampleRate() > 0.0 ? ctx.engine.getSampleRate() : m->ir.sampleRate;
-        eq = room::designEq (m->analysis, s);
+        eqBusy = true;
+        juce::Component::SafePointer<RoomView> safe (this);
+        juce::Thread::launch ([safe, generation, s, a = m->analysis]
+        {
+            auto result = std::make_shared<room::AutoEqResult> (room::designEq (a, s));
+            juce::MessageManager::callAsync ([safe, generation, result]
+            {
+                if (safe == nullptr || generation != safe->eqGeneration) return;   // settings changed meanwhile
+                safe->eq = std::move (*result);
+                safe->eqBusy = false;
+                safe->updateApplyButton();
+                safe->chart->repaint();
+            });
+        });
     }
     updateApplyButton();
+    chart->repaint();
 }
 
 void RoomView::updateApplyButton()
 {
     auto* m = current();
     const int target = targetChannel();
-    applyButton.setButtonText (target >= 0 ? "Apply EQ to " + channelCode (target) : juce::String ("Apply EQ"));
+    applyButton.setButtonText (target >= 0 ? "Apply to " + channelCode (target) + " Correction" : juce::String ("Apply Correction"));
     applyButton.setEnabled (! eq.bands.empty() && target >= 0 && m != nullptr && ! m->throughEq);
     exportEqButton.setEnabled (! eq.bands.empty());
     applyButton.setTooltip (m != nullptr && m->throughEq
-                                ? "This measurement already includes the output's EQ. Design a correction from a measurement without it."
-                                : "Replaces the 8 bands of the chosen channel's EQ with these bands and switches its EQ on. Ctrl+Z undoes it.");
+                                ? "This measurement already includes the output's EQ / Correction. Design a correction from a measurement without it."
+                                : "Replaces the chosen channel's Correction profile with these bands and switches its Correction on.");
     repaint();
+}
+
+CorrectionProfile RoomView::profileFromEq() const
+{
+    CorrectionProfile p;
+    p.kind = (CorrectionProfile::Kind) juce::jlimit (0, 3, kindBox.getSelectedId() - 1);
+    p.name = current() != nullptr ? current()->name : juce::String ("Room correction");
+    p.preampDb = (float) eq.preampDb;
+    for (auto& b : eq.bands)
+        p.bands.push_back ({ ParamEq::Bell, (float) b.freq, (float) b.gainDb, (float) b.q });
+    return p;
 }
 
 void RoomView::applyEq()
 {
     const int target = targetChannel();
-    auto* peq = ctx.eqFor (target);
-    if (peq == nullptr || eq.bands.empty()) return;
-    const auto bands = eq.bands;
+    if (target < 0 || eq.bands.empty()) return;
+    const auto profile = profileFromEq();
     const auto name = channelTitle (ctx.engine, target);
+    const auto& old = ctx.engine.correctionFor (target).getProfile();
+    juce::String text;
+    text << juce::String ((int) profile.bands.size()) << " bands";
+    if (profile.preampDb < 0.0f) text << " and a preamp of " << juce::String (profile.preampDb, 1) << " dB (headroom for the boosts)";
+    text << " go into the Correction of " << name << ", and its Correction is switched on.";
+    if (! old.isEmpty()) text << "\n\nIts current profile (" << old.name << ", " << old.describe() << ") is replaced.";
+    text << "\n\nTip: measure again with \"Through the output's EQ + Correction\" to check the result.";
     juce::Component::SafePointer<RoomView> safe (this);
-    dialog::confirm (this, dialog::Kind::question, "Apply EQ to " + name + "?",
-                     juce::String ((int) bands.size()) + " bands replace the current EQ bands of " + name
-                         + ". Ctrl+Z undoes it.\n\nTip: measure again with \"Through the output's EQ\" to check the result.",
-                     "Apply", [safe, peq, bands, name]
+    dialog::confirm (this, dialog::Kind::question, "Apply correction to " + name + "?", text, "Apply", [safe, target, profile, name]
     {
-        auto& e = *peq;
-        for (int k = 0; k < ParamEq::kBands; ++k)
-        {
-            if (k < (int) bands.size())
-            {
-                const auto& b = bands[(size_t) k];
-                e.type[(size_t) k]->set ((float) ParamEq::Bell);
-                e.freq[(size_t) k]->set ((float) b.freq);
-                e.gain[(size_t) k]->set ((float) b.gainDb);
-                e.q[(size_t) k]->set ((float) b.q);
-                e.bandOn[(size_t) k]->set (1.0f);
-            }
-            else
-            {
-                e.bandOn[(size_t) k]->set (0.0f);
-                e.gain[(size_t) k]->set (0.0f);
-            }
-        }
-        e.on->set (1.0f);
-        if (safe != nullptr)
-        {
-            safe->status = "EQ applied to " + name + ".";
-            safe->statusColour = theme::good;
-            safe->repaint();
-        }
+        if (safe == nullptr) return;
+        safe->ctx.engine.setCorrection (target, profile);
+        safe->ctx.engine.correctionFor (target).on->set (1.0f);
+        safe->status = "Correction applied to " + name + ".";
+        safe->statusColour = theme::good;
+        safe->repaint();
     });
+}
+
+//==============================================================================
+void RoomView::refreshCalibrations (const juce::String& select)
+{
+    const auto previous = calBox.getText();
+    calList = calibrations::all();
+    calBox.clear (juce::dontSendNotification);
+    calBox.addItem ("None (flat microphone)", 1);
+    for (size_t k = 0; k < calList.size(); ++k) calBox.addItem (juce::String (calList[k].name), (int) k + 2);
+    calBox.addSeparator();
+    calBox.addItem ("Import calibration file...", kImportCalId);
+    int id = 1;
+    for (size_t k = 0; k < calList.size(); ++k)
+        if (juce::String (calList[k].name) == (select.isNotEmpty() ? select : previous)) id = (int) k + 2;
+    calBox.setSelectedId (id, juce::dontSendNotification);
+    shownCal = id;
+}
+
+const room::Calibration* RoomView::selectedCalibration() const
+{
+    const int k = calBox.getSelectedId() - 2;
+    return juce::isPositiveAndBelow (k, (int) calList.size()) ? &calList[(size_t) k] : nullptr;
+}
+
+void RoomView::importCalibration()
+{
+    calBox.setSelectedId (shownCal, juce::dontSendNotification);
+    chooser = std::make_unique<juce::FileChooser> ("Import microphone calibration", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
+                                                   "*.txt;*.cal;*.frd;*.csv");
+    juce::Component::SafePointer<RoomView> safe (this);
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [safe] (const juce::FileChooser& fc)
+    {
+        const auto f = fc.getResult();
+        if (safe == nullptr || ! f.existsAsFile()) return;
+        juce::String err;
+        const auto cal = calibrations::import (f, err);
+        if (cal.empty())
+            return dialog::message (safe.getComponent(), dialog::Kind::warning, "Cannot import", f.getFileName() + ": " + err);
+        safe->refreshCalibrations (juce::String (cal.name));
+        safe->status = "Calibration \"" + juce::String (cal.name) + "\" imported (" + juce::String ((int) cal.points.size()) + " points).";
+        safe->statusColour = theme::good;
+        safe->repaint();
+    });
+}
+
+void RoomView::useCalibration (RoomMeasurement* m, const room::Calibration& cal)
+{
+    if (m == nullptr) return;
+    m->calibration = cal;
+    m->analysed = false;
+    measurements::save (*m, m->file);
+    analyseIfNeeded (m);
+    repaint();
+}
+
+void RoomView::listBoxItemClicked (int row, const juce::MouseEvent& e)
+{
+    if (! e.mods.isPopupMenu() || ! juce::isPositiveAndBelow (row, (int) library.size())) return;
+    if (row != currentIndex) select (row);
+    auto* m = library[(size_t) row].get();
+    juce::Component::SafePointer<RoomView> safe (this);
+    juce::PopupMenu menu;
+    menu.addItem ("Rename", [safe, row] { if (safe != nullptr) safe->startRename (row); });
+    juce::PopupMenu cal;
+    cal.addItem ("None (flat microphone)", true, m->calibration.empty(), [safe, m] { if (safe != nullptr) safe->useCalibration (m, {}); });
+    for (auto& c : calList)
+        cal.addItem (juce::String (c.name), true, c.name == m->calibration.name && ! m->calibration.empty(),
+                     [safe, m, c] { if (safe != nullptr) safe->useCalibration (m, c); });
+    menu.addSubMenu ("Mic calibration", cal);
+    menu.addSeparator();
+    menu.addItem ("Delete", [safe] { if (safe != nullptr) safe->deleteSelected(); });
+    menu.showMenuAsync (juce::PopupMenu::Options().withMousePosition());
 }
 
 //==============================================================================
@@ -1144,7 +1245,8 @@ void RoomView::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool 
     g.setFont (theme::font (11.5f));
     juce::String info = m.created.formatted ("%Y-%m-%d %H:%M") + "   " + juce::String (m.spec.sampleRate / 1000.0, 1) + " kHz, "
                         + juce::String (juce::roundToInt (m.spec.seconds)) + " s x " + juce::String (m.spec.repeats);
-    if (m.throughEq) info << "   with EQ";
+    if (m.throughEq) info << "   through EQ";
+    if (! m.calibration.empty()) info << "   cal";
     g.drawText (info, r, juce::Justification::centredLeft, true);
 }
 
@@ -1163,7 +1265,7 @@ void RoomView::paint (juce::Graphics& g)
     card (setupArea, "Setup");
     card (libraryArea, "Measurements");
     card (resonanceArea, "Resonances");
-    card (eqArea, "Auto EQ");
+    card (eqArea, "Auto Correction");
 
     g.setFont (theme::font (11.5f));
     g.setColour (theme::textDim);
@@ -1224,7 +1326,8 @@ void RoomView::paint (juce::Graphics& g)
         juce::String t = m->name + "   |   " + m->created.formatted ("%Y-%m-%d %H:%M");
         if (m->analysed)
             t << "   |   latency " << juce::String (m->ir.latencyMs, 1) << " ms   |   mic peak " << juce::String (m->ir.capturePeakDb, 1)
-              << " dBFS   |   noise " << juce::String (juce::roundToInt (m->ir.noiseFloorDb)) << " dBFS   |   S/N " << juce::String (juce::roundToInt (m->ir.irSnrDb)) << " dB";
+              << " dBFS   |   noise " << juce::String (juce::roundToInt (m->ir.noiseFloorDb)) << " dBFS   |   S/N " << juce::String (juce::roundToInt (m->ir.irSnrDb)) << " dB"
+              << "   |   mic cal: " << (m->calibration.empty() ? juce::String ("none") : juce::String (m->calibration.name));
         const auto warn = quality (*m);
         g.setFont (theme::font (12.0f));
         g.setColour (warn.isNotEmpty() ? theme::warn : theme::textDim);
@@ -1281,7 +1384,12 @@ void RoomView::paint (juce::Graphics& g)
         if (m == nullptr || ! m->analysed)
         {
             g.setColour (theme::textDim);
-            g.drawText ("Measure first: the EQ is designed from the selected measurement.", r.removeFromTop (20), juce::Justification::centredLeft);
+            g.drawText ("Measure first: the correction is designed from the selected measurement.", r.removeFromTop (20), juce::Justification::centredLeft);
+        }
+        else if (eqBusy)
+        {
+            g.setColour (theme::textDim);
+            g.drawText ("Designing the correction...", r.removeFromTop (20), juce::Justification::centredLeft);
         }
         else if (eq.bands.empty())
         {
@@ -1291,27 +1399,37 @@ void RoomView::paint (juce::Graphics& g)
         else
         {
             g.setColour (theme::text);
-            g.drawText (juce::String ((int) eq.bands.size()) + " bands.  Highest peak +" + juce::String (eq.peakBeforeDb, 1) + " dB  ->  +"
+            g.drawText (juce::String ((int) eq.bands.size()) + " bands" + (eq.preampDb < 0.0 ? ", preamp " + juce::String (eq.preampDb, 1) + " dB" : juce::String())
+                            + ".  Highest peak +" + juce::String (eq.peakBeforeDb, 1) + " dB  ->  +"
                             + juce::String (eq.peakAfterDb, 1) + " dB,  deviation " + juce::String (eq.rmsBeforeDb, 1) + "  ->  "
                             + juce::String (eq.rmsAfterDb, 1) + " dB rms",
-                        r.removeFromTop (20), juce::Justification::centredLeft);
+                        r.removeFromTop (20), juce::Justification::centredLeft, true);
             if (m->throughEq)
             {
                 g.setColour (theme::warn);
-                g.drawText ("Measured through the output's EQ: use it to check the correction (compare with the measurement before).",
+                g.drawText ("Measured through the output's EQ / Correction: use it to check the correction (compare with the one before).",
                             r.removeFromTop (18), juce::Justification::centredLeft, true);
             }
             r.removeFromTop (6);
-            const int perRow = juce::jlimit (1, 4, r.getWidth() / 175), cw = r.getWidth() / perRow;
+            const int perRow = juce::jlimit (1, 6, r.getWidth() / 170), cw = r.getWidth() / perRow;
+            const int rows = juce::jmax (1, (r.getHeight() + 4) / 24);
+            const size_t shown = juce::jmin (eq.bands.size(), (size_t) (perRow * rows - (eq.bands.size() > (size_t) (perRow * rows) ? 1 : 0)));
             for (size_t k = 0; k < eq.bands.size(); ++k)
             {
+                auto cell = juce::Rectangle<int> (r.getX() + (int) (k % perRow) * cw, r.getY() + (int) (k / perRow) * 24, cw - 6, 20);
+                if (k == shown)
+                {
+                    g.setColour (theme::textDim);
+                    g.setFont (theme::font (12.0f));
+                    g.drawText ("+ " + juce::String ((int) (eq.bands.size() - shown)) + " more", cell, juce::Justification::centredLeft);
+                    break;
+                }
                 const auto& b = eq.bands[k];
-                auto cell = juce::Rectangle<int> (r.getX() + (int) (k % perRow) * cw, r.getY() + (int) (k / perRow) * 26, cw - 8, 22);
-                g.setColour (theme::bandColour ((int) k).withAlpha (0.15f));
+                g.setColour (theme::bandColour ((int) k % 8).withAlpha (0.15f));
                 g.fillRoundedRectangle (cell.toFloat(), 5.0f);
-                g.setColour (theme::bandColour ((int) k));
+                g.setColour (theme::bandColour ((int) k % 8));
                 g.setFont (theme::font (12.0f, true));
-                g.drawText (juce::String ((int) k + 1), cell.removeFromLeft (20), juce::Justification::centred);
+                g.drawText (juce::String ((int) k + 1), cell.removeFromLeft (22), juce::Justification::centred);
                 g.setColour (theme::text);
                 g.setFont (theme::font (12.0f));
                 g.drawText (hz (b.freq) + "  " + juce::String (b.gainDb, 1) + " dB  Q " + juce::String (b.q, 1), cell, juce::Justification::centredLeft, true);
@@ -1335,7 +1453,7 @@ void RoomView::resized()
     };
 
     // Setup
-    setupArea = left.removeFromTop (juce::jmin (left.getHeight() - 200, 500));
+    setupArea = left.removeFromTop (juce::jmin (left.getHeight() - 180, 540));
     left.removeFromTop (12);
     libraryArea = left;
     {
@@ -1344,6 +1462,7 @@ void RoomView::resized()
         micChannelBox.setBounds (row.removeFromRight (80));
         row.removeFromRight (kGap);
         micBox.setBounds (row);
+        calBox.setBounds (rowWithCaption (s));
         row = rowWithCaption (s);
         speakerBox.setBounds (row.removeFromRight (110));
         row.removeFromRight (kGap);
@@ -1409,11 +1528,13 @@ void RoomView::resized()
             row.removeFromLeft (kGap);
         }
         row = rowWithCaption (e);
-        targetBox.setBounds (row.removeFromLeft (juce::jmin (260, row.getWidth() / 3)));
+        kindBox.setBounds (row.removeFromLeft (w));
         row.removeFromLeft (kGap);
-        applyButton.setBounds (row.removeFromLeft (180));
+        targetBox.setBounds (row.removeFromLeft (juce::jmin (220, row.getWidth() / 3)));
         row.removeFromLeft (kGap);
-        exportEqButton.setBounds (row.removeFromLeft (120));
+        applyButton.setBounds (row.removeFromLeft (200));
+        row.removeFromLeft (kGap);
+        exportEqButton.setBounds (row.removeFromLeft (90));
         bandsArea = e;
     }
 }

@@ -126,6 +126,40 @@ int runRoomAnalysisTest()
     check (eq.rmsAfterDb < eq.rmsBeforeDb, "EQ reduces the deviation from the target");
     check (eq.peakAfterDb < 3.0 && eq.peakAfterDb < eq.peakBeforeDb * 0.4, "EQ brings the peaks down to the target");
 
+    {   // More bands: closer to the target.
+        AutoEqSettings many = es;
+        many.maxBands = 16;
+        const auto eq16 = designEq (a, many);
+        std::printf ("      16 bands: %d used, highest peak +%.1f dB, preamp %.1f dB\n", (int) eq16.bands.size(), eq16.peakAfterDb, eq16.preampDb);
+        check (eq16.bands.size() <= 16 && eq16.peakAfterDb <= eq.peakAfterDb + 0.3, "16 bands fit at least as well as 8");
+        AutoEqSettings boost = many;
+        boost.maxBoostDb = 6.0;
+        const auto eqB = designEq (a, boost);
+        double top = 0.0;
+        for (double v : eqB.eqDb) top = std::max (top, v);
+        std::printf ("      with boosts: highest %.2f dB, preamp %.2f dB\n", top, eqB.preampDb);
+        check (top <= 6.5 && std::abs (eqB.preampDb + top) < 1.0e-9, "boosts stay within the limit, preamp = -(highest boost)");
+    }
+
+    {   // Microphone calibration: parsing, interpolation, and taking the microphone's response out.
+        Calibration cal;
+        std::string err;
+        const std::string file = "\"Sens Factor =-1.2dB, SERNO: 1234\"\n* comment\n20\t-2.0\n1000, 0\n10000;6.0;12.5\n";
+        check (Calibration::parse (file, cal, err) && cal.points.size() == 3, "calibration file parsed (headers skipped, separators)");
+        check (std::abs (cal.at (10.0) + 2.0) < 1e-9 && std::abs (cal.at (20000.0) - 6.0) < 1e-9, "held beyond the ends");
+        check (std::abs (cal.at (std::sqrt (1000.0 * 10000.0)) - 3.0) < 1e-6, "interpolated on a log frequency axis");
+        Calibration wild;
+        wild.points = { { 20.0, -40.0 }, { 100.0, -40.0 }, { 200.0, 0.0 } };
+        check (wild.at (50.0) == -20.0, "limited to -20 dB");
+
+        AnalysisOptions withCal;
+        withCal.calibration = cal;   // a microphone with +6 dB at 10 kHz
+        const auto c = analyse (ir, withCal, spec.startHz, spec.endHz);
+        const double d10k = valueAt (a.freqs, a.magDb, 10000.0) - valueAt (c.freqs, c.magDb, 10000.0);
+        const double d1k = valueAt (a.freqs, a.magDb, 1000.0) - valueAt (c.freqs, c.magDb, 1000.0);
+        check (std::abs (d10k - 6.0) < 0.01 && std::abs (d1k) < 0.01, "the calibration is taken out of the response");
+    }
+
     {   // The EQ curve matches the RBJ bell of the mixer's EQ: +6 dB at the centre, 0 dB far away.
         EqBand b; b.freq = 1000.0; b.gainDb = 6.0; b.q = 2.0;
         check (std::abs (bandMagnitudeDb (b, 1000.0, sr) - 6.0) < 0.01 && std::abs (bandMagnitudeDb (b, 50.0, sr)) < 0.05,

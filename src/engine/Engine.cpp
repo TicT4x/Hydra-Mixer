@@ -131,6 +131,7 @@ void Engine::createParams()
         s.mono       = &params.addToggle (p + "mono", n + "Mono");
         s.phase      = &params.addToggle (p + "phase", n + "Phase Invert");
         s.eq.create (params, p, n);
+        s.correction.on = &params.addToggle (p + "corr.on", n + "Correction On");
         s.gateOn       = &params.addToggle (p + "gate.on", n + "Gate On");
         s.gateThr      = &params.add (p + "gate.thr", n + "Gate Threshold", ParamType::Continuous, linRange (-80, 0, 0.1f), -50.0f, " dB");
         s.gateRange    = &params.add (p + "gate.range", n + "Gate Range", ParamType::Continuous, linRange (-80, 0, 0.1f), -80.0f, " dB");
@@ -175,6 +176,7 @@ void Engine::createParams()
         bus.mute     = &params.addToggle (p + "mute", n + "Mute");
         bus.mono     = &params.addToggle (p + "mono", n + "Mono");
         bus.eq.create (params, p, n);
+        bus.correction.on = &params.addToggle (p + "corr.on", n + "Correction On");
         bus.limOn    = &params.addToggle (p + "lim.on", n + "Limiter On", true);
         bus.limCeil  = &params.add (p + "lim.ceiling", n + "Limiter Ceiling", ParamType::Continuous, linRange (-30, 0, 0.1f), 0.0f, " dB");
         bus.fxBypass = &params.addToggle (p + "fx.bypass", n + "FX Bypass");
@@ -277,6 +279,7 @@ std::vector<Param*> Engine::removeInput (int i)
     s.name = "Input " + juce::String (i + 1);
     s.source = {};
     s.plugins.clear();
+    setCorrection (i, {});
     rebuildGraph();
     sendChangeMessage();
     return reset;
@@ -297,6 +300,7 @@ std::vector<Param*> Engine::removeBus (int b)
     bus.name = busCode (b);
     bus.output = {};
     bus.plugins.clear();
+    setCorrection (kMaxInputs + b, {});
     if (selOwner == b) selOwner = -1;
     rebuildGraph();
     sendChangeMessage();
@@ -393,11 +397,13 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
         std::array<juce::String, kMaxInputs> names;
         std::array<IoTarget, kMaxInputs> sources;
         std::array<std::vector<std::unique_ptr<PluginSlot>>, kMaxInputs> chains;
+        std::array<CorrectionProfile, kMaxInputs> corrections;
         for (int i : used)
         {
             names[(size_t) i] = inputs[(size_t) i].name;
             sources[(size_t) i] = inputs[(size_t) i].source;
             chains[(size_t) i] = inputs[(size_t) i].plugins.takeAll();
+            corrections[(size_t) i] = inputs[(size_t) i].correction.getProfile();
         }
         for (int i : used)
         {
@@ -405,6 +411,7 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
             to.name = names[(size_t) i];
             to.source = sources[(size_t) i];
             to.plugins.putAll (std::move (chains[(size_t) i]));
+            setCorrection (dest[(size_t) i], corrections[(size_t) i]);
         }
     }
     else
@@ -412,11 +419,13 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
         std::array<juce::String, kMaxBuses> names;
         std::array<IoTarget, kMaxBuses> outputs;
         std::array<std::vector<std::unique_ptr<PluginSlot>>, kMaxBuses> chains;
+        std::array<CorrectionProfile, kMaxBuses> corrections;
         for (int b : used)
         {
             names[(size_t) b] = buses[(size_t) b].name;
             outputs[(size_t) b] = buses[(size_t) b].output;
             chains[(size_t) b] = buses[(size_t) b].plugins.takeAll();
+            corrections[(size_t) b] = buses[(size_t) b].correction.getProfile();
         }
         for (int b : used)
         {
@@ -424,6 +433,7 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
             to.name = names[(size_t) b];
             to.output = outputs[(size_t) b];
             to.plugins.putAll (std::move (chains[(size_t) b]));
+            setCorrection (kMaxInputs + dest[(size_t) b], corrections[(size_t) b]);
         }
         // Choices that name a bus follow it.
         if (group == Group::virtBuses)
@@ -931,6 +941,13 @@ void Engine::publishGraph (std::unique_ptr<Graph> g)
 }
 
 //==============================================================================
+void Engine::setCorrection (int selectIndex, CorrectionProfile profile)
+{
+    if (! juce::isPositiveAndBelow (selectIndex, kMaxInputs + kMaxBuses)) return;
+    correctionFor (selectIndex).setProfile (std::move (profile), sampleRate, callbackCount.load());
+}
+
+//==============================================================================
 void Engine::startMeasurement (std::unique_ptr<MeasureRun> run)
 {
     finishMeasurement();
@@ -971,7 +988,11 @@ void Engine::renderMeasurement (Bus& b, MeasureRun& run, int start, int count, i
         dsp::applyRamp (l, count, 1.0f, 0.0f);
         dsp::applyRamp (r, count, 1.0f, 0.0f);
     }
-    if (run.busEq) b.eq.process (l, r, n, sampleRate);
+    if (run.busEq)   // check a correction: the bus's EQ and Correction stay in
+    {
+        b.eq.process (l, r, n, sampleRate);
+        b.correction.process (l, r, n, sampleRate);
+    }
     b.lastGain = 0.0f;   // afterwards the bus fades back in
     b.meter.muted.store (false, std::memory_order_relaxed);
     b.meter.push (dsp::peak (l, n), dsp::peak (r, n));
@@ -1024,6 +1045,8 @@ void Engine::timerCallback()
     updateSyncDelays();
 
     const auto now = callbackCount.load();
+    for (auto& s : inputs) s.correction.update (sampleRate, now, running);
+    for (auto& b : buses)  b.correction.update (sampleRate, now, running);
     measureGraveyard.erase (std::remove_if (measureGraveyard.begin(), measureGraveyard.end(),
                                             [&] (const auto& r) { return now >= r.second || ! running; }),
                             measureGraveyard.end());
@@ -1067,6 +1090,7 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
     for (auto& s : inputs)
     {
         s.eq.prepare();
+        s.correction.reset();
         s.gate.prepare (sampleRate);
         s.comp.prepare (sampleRate);
         s.denoiser->prepare (sampleRate);
@@ -1080,6 +1104,7 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
     for (auto& b : buses)
     {
         b.eq.prepare();
+        b.correction.reset();
         b.limiter.prepare (sampleRate);
         b.delay.prepare (sampleRate);
         b.lastGain = 0;
@@ -1352,6 +1377,9 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
 
     lap (DspTimes::other);
 
+    s.correction.process (l, r, n, sampleRate);
+    lap (DspTimes::eq);
+
     // Denoiser first, so EQ / gate / compressor work on the cleaned signal.
     const bool dn = s.dnOn->isOn();
     if (dn)
@@ -1457,6 +1485,9 @@ void Engine::processBus (Bus& b, int n, bool timed) noexcept
     if (! b.fxBypass->isOn())
         b.plugins.process (l, r, n, timed);
     lap (DspTimes::plugins);
+
+    b.correction.process (l, r, n, sampleRate);
+    lap (DspTimes::eq);
 
     if (b.mono->isOn())
     {

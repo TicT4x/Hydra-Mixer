@@ -42,13 +42,16 @@ Hydra is built around three priorities, in this order: **latency, CPU efficiency
   for each type. Status dots on every device chip (offline, dropouts, waiting for app).
 
 ### Input strip
-Gain → **Denoiser** → **8-band EQ** → **Gate** → **Compressor** → **VST3 chain** → Sync Delay → Mono → Fader / Pan
+Gain → **Correction** → **Denoiser** → **8-band EQ** → **Gate** → **Compressor** → **VST3 chain** → Sync Delay → Mono → Fader / Pan
 → routing to every A and B bus. Plus phase, solo, mute.
 
 - **Denoiser** (RNNoise) in every input, with four latency modes: Ultra Low 0 ms, Low 10 ms, Aligned 20 ms,
   Native HQ 30 ms. Dry/wet mix is latency-aligned. Around 1.8 % of a core per stereo channel.
 - **EQ** for inputs and buses: 8 bands, Bell, Notch, Band Pass, Low/High Cut, Low/High Shelf. Interactive curve
   (click to add a band, drag to move), and a large EQ window with a live spectrum analyzer.
+- **Correction** (room / speaker / headphone) for inputs and buses: up to 32 zero-latency filter bands plus a
+  preamp against clipping. Made by the Room Measurement, or imported from Equalizer APO / **AutoEq** parametric EQ
+  files (e.g. a headphone profile); exportable in the same format.
 - **Gate** with threshold, range, attack, hold, release, sidechain band pass and a **Voice Key**: it only opens
   when the level is above the threshold *and* RNNoise detects speech.
 - **Compressor** with input, threshold, ratio, knee, attack, release, makeup, auto gain and a transfer curve
@@ -57,7 +60,7 @@ Gain → **Denoiser** → **8-band EQ** → **Gate** → **Compressor** → **VS
   (a crashing plugin is remembered and skipped).
 
 ### Buses
-- Fader, mute, mono, 8-band EQ, limiter, VST3 chain, any output device.
+- Fader, mute, mono, 8-band EQ, Correction, limiter, VST3 chain, any output device.
 - **SEL** per bus: the input faders then control the send level of each input into this bus
   (e.g. a separate stream mix). With **monitoring**, the selected bus replaces what you hear on a hardware bus.
 - **Sync Delay**: delays the channels of a group to the slowest one, so that devices with different latency
@@ -85,10 +88,11 @@ Gain → **Denoiser** → **8-band EQ** → **Gate** → **Compressor** → **VS
 - **Room Measurement**: pick a microphone (an input) and a speaker (a bus), Hydra plays a sine sweep and records
   the raw signal (no effects of the channels involved). Shows the frequency response, a **3D waterfall**
   (which frequencies keep ringing), the reverberation time per octave (T20 / EDT), the impulse response and a
-  list of the room's resonances. **Auto EQ** designs up to 8 bell bands that flatten the response (range,
-  limits and smoothing adjustable) and **applies them to any channel's EQ** with one click (Ctrl+Z undoes it).
-  Measurements are kept in a library and can be exported (measurement file, frequency response for REW,
-  impulse response WAV, waterfall CSV, chart PNG, EQ in Equalizer APO format).
+  list of the room's resonances. **Microphone calibration**: presets (t.bone EM 700 from its data sheet) or the
+  calibration file of your microphone (REW / miniDSP / Dayton format). **Auto Correction** designs up to 24 bell
+  bands that flatten the response (range, limits and smoothing adjustable) and puts them into **any channel's
+  Correction** with one click. Measurements are kept in a library and can be exported (measurement file,
+  frequency response for REW, impulse response WAV, waterfall CSV, chart PNG, correction as Equalizer APO file).
 - **Restart Audio Engine** for drivers that silently stop delivering audio.
 
 ### App

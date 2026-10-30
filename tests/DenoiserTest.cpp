@@ -64,6 +64,7 @@ int runUndoTest();
 int runSceneTest();
 int runSyncDelayTest();
 int runRoomAnalysisTest();
+int runCorrectionTest();
 
 int main()
 {
@@ -79,6 +80,7 @@ int main()
     fails += runSceneTest();
     fails += runSyncDelayTest();
     fails += runRoomAnalysisTest();
+    fails += runCorrectionTest();
 
     const auto noisy = voice (true, 0.03f, 1);
     const auto clean = voice (false, 0.0f, 2);

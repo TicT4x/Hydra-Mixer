@@ -5,6 +5,7 @@
 #include <cmath>
 #include <complex>
 #include <numeric>
+#include <sstream>
 
 namespace hydra::room
 {
@@ -231,6 +232,51 @@ ImpulseResponse deconvolve (const std::vector<float>& capture, const SweepSpec& 
 }
 
 //==============================================================================
+double Calibration::at (double f) const
+{
+    if (points.empty()) return 0.0;
+    double v;
+    if (f <= points.front().first)     v = points.front().second;
+    else if (f >= points.back().first) v = points.back().second;
+    else
+    {
+        const auto it = std::upper_bound (points.begin(), points.end(), f, [] (double x, const auto& p) { return x < p.first; });
+        const auto& b = *it;
+        const auto& a = *(it - 1);
+        const double t = std::log (f / a.first) / std::log (b.first / a.first);
+        v = a.second + (b.second - a.second) * t;
+    }
+    return std::clamp (v, -20.0, 20.0);
+}
+
+bool Calibration::parse (const std::string& text, Calibration& out, std::string& error)
+{
+    std::vector<std::pair<double, double>> pts;
+    std::istringstream lines (text);
+    std::string line;
+    while (std::getline (lines, line))
+    {
+        for (auto& ch : line)
+            if (ch == ',' || ch == ';' || ch == '\t') ch = ' ';
+        std::istringstream in (line);
+        double f = 0.0, db = 0.0;
+        std::string rest;
+        if (! (in >> f >> db)) continue;              // header, comment, "Sens Factor = ..."
+        if (! std::isfinite (f) || ! std::isfinite (db) || f < 1.0 || f > 100000.0) continue;
+        pts.emplace_back (f, db);
+    }
+    std::sort (pts.begin(), pts.end());
+    pts.erase (std::unique (pts.begin(), pts.end(), [] (const auto& a, const auto& b) { return a.first == b.first; }), pts.end());
+    if (pts.size() < 3)
+    {
+        error = "no \"frequency dB\" lines found";
+        return false;
+    }
+    out.points = std::move (pts);
+    return true;
+}
+
+//==============================================================================
 std::vector<double> logGrid()
 {
     std::vector<double> g;
@@ -298,7 +344,7 @@ Analysis analyse (const ImpulseResponse& ir, const AnalysisOptions& o, double sw
         }
         const auto p = gridPower (x, std::max (65536, nextPow2 ((int) x.size()) * 2), sr, a.freqs);
         a.magDb.resize (p.size());
-        for (size_t i = 0; i < p.size(); ++i) a.magDb[i] = toDb (p[i]);
+        for (size_t i = 0; i < p.size(); ++i) a.magDb[i] = toDb (p[i]) - o.calibration.at (a.freqs[i]);
 
         const auto third = smooth (a.magDb, 3.0);
         const double lo = std::max (40.0, a.sweepStartHz * 1.5), hi = std::min (12000.0, a.sweepEndHz / 1.5);
@@ -330,7 +376,7 @@ Analysis analyse (const ImpulseResponse& ir, const AnalysisOptions& o, double sw
             }
             auto p = gridPower (x, fftSize, sr, a.freqs);
             std::vector<double> db (p.size());
-            for (size_t i = 0; i < p.size(); ++i) db[i] = toDb (p[i]);
+            for (size_t i = 0; i < p.size(); ++i) db[i] = toDb (p[i]) - o.calibration.at (a.freqs[i]);
             db = smooth (db, 24.0);
             if (sIdx == 0)
                 for (size_t i = 0; i < db.size(); ++i)
@@ -546,6 +592,10 @@ AutoEqResult designEq (const Analysis& a, const AutoEqSettings& s)
         c.resize (m);
         for (size_t j = 0; j < m; ++j) c[j] = bandMagnitudeDb (b, f[(size_t) idx[j]], sr);
     };
+    // What the bands are fitted to: the response, or (while a new band is fitted alone) the response with
+    // the bands found so far.
+    std::vector<double> shifted (R);
+    const std::vector<double>* fitting = &R;
     // Cost: squared deviation from the target inside the range (peaks count more than dips, which a cut
     // cannot fill), plus whatever the EQ changes outside the range.
     auto score = [&] (const std::vector<double>& total)
@@ -553,11 +603,18 @@ AutoEqResult designEq (const Analysis& a, const AutoEqSettings& s)
         double sIn = 0.0, sOut = 0.0;
         for (size_t j = 0; j < nIn; ++j)
         {
-            const double e = R[(size_t) idx[j]] + total[j] - T;
+            const double e = (*fitting)[(size_t) idx[j]] + total[j] - T;
             sIn += e > 0.0 ? e * e : 0.5 * e * e;
         }
         for (size_t j = nIn; j < m; ++j) sOut += total[j] * total[j];
-        return sIn / (double) nIn + (m > nIn ? sOut / (double) (m - nIn) : 0.0);
+        // Overlapping bands must not add up beyond the limits either.
+        double sLimit = 0.0;
+        for (size_t j = 0; j < m; ++j)
+        {
+            const double over = std::max (total[j] - std::max (0.0, s.maxBoostDb), -s.maxCutDb - total[j]);
+            if (over > 0.0) sLimit += over * over;
+        }
+        return sIn / (double) nIn + (m > nIn ? sOut / (double) (m - nIn) : 0.0) + 20.0 * sLimit / (double) m;
     };
     auto clampBand = [&] (EqBand& b)
     {
@@ -612,9 +669,9 @@ AutoEqResult designEq (const Analysis& a, const AutoEqSettings& s)
         }
     };
 
-    for (int k = 0; k < std::clamp (s.maxBands, 0, 8); ++k)
+    for (int k = 0; k < std::clamp (s.maxBands, 0, AutoEqSettings::kMaxBands); ++k)
     {
-        curve (bands, eq, in);
+        curve (bands, eq, idx);
         // Worst deviation: peaks above the target (dips only if boosting is allowed, and weighted less).
         int at = -1;
         double worst = 0.0;
@@ -637,10 +694,16 @@ AutoEqResult designEq (const Analysis& a, const AutoEqSettings& s)
         b.gainDb = -e0;
         b.q = bw > 0.0 ? f[(size_t) at] / bw : 8.0;
         clampBand (b);
-        bands.push_back (b);
-        optimise (bands, 60);
+        // Fit the new band alone against what the others already do, then (now and then) all together.
+        std::vector<EqBand> one { b };
+        for (int i : idx) shifted[(size_t) i] = R[(size_t) i] + eq[(size_t) i];
+        fitting = &shifted;
+        optimise (one, 60);
+        fitting = &R;
+        bands.push_back (one.front());
+        if (bands.size() % 4 == 0) optimise (bands, 30);
     }
-    optimise (bands, 200);
+    optimise (bands, 150);
     bands.erase (std::remove_if (bands.begin(), bands.end(), [] (const EqBand& b) { return std::abs (b.gainDb) < 0.3; }), bands.end());
     std::sort (bands.begin(), bands.end(), [] (const EqBand& x, const EqBand& y) { return x.freq < y.freq; });
     for (auto& b : bands)   // the EQ's parameter resolution
@@ -654,6 +717,8 @@ AutoEqResult designEq (const Analysis& a, const AutoEqSettings& s)
     std::vector<int> all ((size_t) n);
     std::iota (all.begin(), all.end(), 0);
     curve (bands, res.eqDb, all);
+    const double top = *std::max_element (res.eqDb.begin(), res.eqDb.end());
+    res.preampDb = top > 0.0 ? -top : 0.0;
     double before = 0.0, after = 0.0;
     for (int i = 0; i < n; ++i) res.correctedDb[(size_t) i] = R[(size_t) i] + res.eqDb[(size_t) i];
     for (int i : in)

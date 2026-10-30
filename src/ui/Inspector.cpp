@@ -553,12 +553,173 @@ private:
 };
 
 //==============================================================================
+/** Correction stage (room / speaker / headphone): ON, the profile's curve, name and size. The "..." menu
+    (or a click on the curve) opens the room measurement, imports / exports Equalizer APO and AutoEq
+    files, sets the type or clears the profile. */
+class CorrectionSection final : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
+{
+public:
+    CorrectionSection (UiContext& c, int channel, juce::Colour col)
+        : ctx (c), index (channel), corr (c.engine.correctionFor (channel)), colour (col),
+          section ("Correction", col), onToggle (c, *corr.on, "ON", col)
+    {
+        addAndMakeVisible (section);
+        section.addAndMakeVisible (onToggle);
+        section.enableGear ([this] { showMenu(); });
+        section.gear.setTooltip ("Load, import, export or clear the correction profile");
+        onToggle.setTooltip ("Room / speaker / headphone correction on or off (zero latency)");
+        section.setInterceptsMouseClicks (false, true);
+        setTooltip ("Room / speaker / headphone correction. Click for the menu: measure with Tools > Room Measurement, "
+                    "or import an Equalizer APO / AutoEq parametric EQ file.");
+        startTimerHz (5);
+    }
+
+    void resized() override
+    {
+        section.setBounds (getLocalBounds());
+        onToggle.setBounds (section.headerSlot());
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (e.mouseWasClicked() && section.content().contains (e.getPosition())) showMenu();
+    }
+
+    void paintOverChildren (juce::Graphics& g) override
+    {
+        auto r = section.content();
+        const auto& p = corr.getProfile();
+        auto text = r.removeFromBottom (30);
+        g.setFont (theme::font (11.5f, true));
+        g.setColour (p.isEmpty() ? theme::textFaint : theme::text);
+        g.drawText (p.isEmpty() ? juce::String ("No profile") : p.name, text.removeFromTop (15), juce::Justification::centredLeft, true);
+        g.setFont (theme::font (10.5f));
+        g.setColour (theme::textDim);
+        g.drawText (p.isEmpty() ? juce::String ("Click to measure or import") : p.describe(), text, juce::Justification::centredLeft, true);
+
+        auto plot = r.reduced (0, 2).toFloat();
+        g.setColour (theme::bg.withAlpha (0.6f));
+        g.fillRoundedRectangle (plot, 5.0f);
+        if (p.isEmpty()) return;
+        double range = 12.0;
+        std::vector<double> db;
+        for (int i = 0; i <= 120; ++i)
+        {
+            db.push_back (p.magnitudeDb (20.0 * std::pow (1000.0, i / 120.0)));
+            range = juce::jmax (range, std::abs (db.back()) * 1.1);
+        }
+        range = juce::jmin (range, 30.0);
+        auto fy = [&] (double v) { return plot.getCentreY() - (float) (juce::jlimit (-range, range, v) / range) * plot.getHeight() * 0.45f; };
+        g.setColour (theme::outline);
+        g.drawHorizontalLine (juce::roundToInt (plot.getCentreY()), plot.getX() + 4.0f, plot.getRight() - 4.0f);
+        juce::Path path;
+        for (int i = 0; i <= 120; ++i)
+        {
+            const float x = plot.getX() + 4.0f + (plot.getWidth() - 8.0f) * (float) i / 120.0f;
+            if (i == 0) path.startNewSubPath (x, fy (db[0]));
+            else        path.lineTo (x, fy (db[(size_t) i]));
+        }
+        g.setColour (colour.withAlpha (corr.on->isOn() ? 1.0f : 0.35f));
+        g.strokePath (path, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setColour (theme::textFaint);
+        g.setFont (theme::font (9.5f));
+        g.drawText ("+-" + juce::String (juce::roundToInt (range)) + " dB", plot.reduced (5.0f, 2.0f), juce::Justification::topRight);
+    }
+
+private:
+    void timerCallback() override
+    {
+        const auto v = corr.getVersion() * 2u + (corr.on->isOn() ? 1u : 0u);
+        if (v != shown) { shown = v; repaint(); }
+    }
+
+    void importApo (CorrectionProfile::Kind kind)
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Import Equalizer APO / AutoEq parametric EQ",
+                                                       juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.txt");
+        juce::Component::SafePointer<CorrectionSection> safe (this);
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [safe, kind] (const juce::FileChooser& fc)
+        {
+            const auto f = fc.getResult();
+            if (safe == nullptr || ! f.existsAsFile()) return;
+            CorrectionProfile p;
+            p.kind = kind;
+            p.name = f.getFileNameWithoutExtension().replace ("ParametricEQ", "").replaceCharacters ("_", " ").trim();
+            if (p.name.isEmpty()) p.name = f.getFileNameWithoutExtension();
+            juce::String err;
+            if (! CorrectionProfile::fromApo (f.loadFileAsString(), p, err))
+                return dialog::message (safe.getComponent(), dialog::Kind::warning, "Cannot import", f.getFileName() + ": " + err);
+            safe->ctx.engine.setCorrection (safe->index, p);
+            safe->corr.on->set (1.0f);
+            if (err.isNotEmpty())
+                dialog::message (safe.getComponent(), dialog::Kind::info, "Imported with notes", err);
+        });
+    }
+
+    void exportApo()
+    {
+        const auto p = corr.getProfile();
+        chooser = std::make_unique<juce::FileChooser> ("Export correction", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                                                           .getChildFile (juce::File::createLegalFileName (p.name.isEmpty() ? juce::String ("Correction") : p.name) + ".txt"), "*.txt");
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [p] (const juce::FileChooser& fc)
+        {
+            if (fc.getResult() != juce::File()) fc.getResult().withFileExtension (".txt").replaceWithText (p.toApo());
+        });
+    }
+
+    void showMenu()
+    {
+        const auto& p = corr.getProfile();
+        juce::Component::SafePointer<CorrectionSection> safe (this);
+        juce::PopupMenu m;
+        m.addSectionHeader (p.isEmpty() ? juce::String ("Correction") : p.name);
+        m.addItem ("Measure room / speaker (Room Measurement)...", [safe] { if (safe != nullptr && safe->ctx.openRoomMeasurement) safe->ctx.openRoomMeasurement(); });
+        m.addItem ("Import headphone profile (AutoEq / Equalizer APO)...", [safe] { if (safe != nullptr) safe->importApo (CorrectionProfile::Kind::headphone); });
+        m.addItem ("Import room / speaker profile (Equalizer APO)...", [safe] { if (safe != nullptr) safe->importApo (CorrectionProfile::Kind::room); });
+        m.addSeparator();
+        juce::PopupMenu type;
+        const auto names = CorrectionProfile::kindNames();
+        for (int k = 0; k < names.size(); ++k)
+            type.addItem (names[k], ! p.isEmpty(), (int) p.kind == k, [safe, k]
+            {
+                if (safe == nullptr) return;
+                auto q = safe->corr.getProfile();
+                q.kind = (CorrectionProfile::Kind) k;
+                safe->ctx.engine.setCorrection (safe->index, q);
+            });
+        m.addSubMenu ("Type", type, ! p.isEmpty());
+        m.addItem ("Export as Equalizer APO file...", ! p.isEmpty(), false, [safe] { if (safe != nullptr) safe->exportApo(); });
+        m.addItem ("Clear", ! p.isEmpty(), false, [safe]
+        {
+            if (safe == nullptr) return;
+            dialog::confirm (safe.getComponent(), dialog::Kind::danger, "Clear correction?",
+                             "The profile \"" + safe->corr.getProfile().name + "\" is removed from this channel.", "Clear", [safe]
+            {
+                if (safe == nullptr) return;
+                safe->corr.on->set (0.0f);
+                safe->ctx.engine.setCorrection (safe->index, {});
+            });
+        });
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&section.gear).withMinimumWidth (260));
+    }
+
+    UiContext& ctx;
+    int index;
+    Correction& corr;
+    juce::Colour colour;
+    Section section;
+    Toggle onToggle;
+    uint32_t shown = ~0u;
+    std::unique_ptr<juce::FileChooser> chooser;
+};
+
+//==============================================================================
 class InputDetail final : public juce::Component
 {
 public:
     InputDetail (UiContext& c, int i, std::function<void()> scan)
         : ctx (c), strip (c.engine.inputs[(size_t) i]),
-          eqSec (c, strip.eq, theme::accentIn, i),
+          eqSec (c, strip.eq, theme::accentIn, i), corrSec (c, i, theme::accentIn),
           gateSec ("Gate", theme::accentIn), dnSec ("Denoiser", theme::good),
           compSec ("Compressor", theme::accentIn),
           fxSec ("VST3 Insert Chain", theme::accentIn),
@@ -574,7 +735,7 @@ public:
         chain.onScanRequested = std::move (scan);
         chain.onChainChanged = [this] { resized(); };
         addAndMakeVisible (rack);
-        for (juce::Component* s : std::initializer_list<juce::Component*> { &eqSec, &gateSec, &dnSec, &compSec, &fxSec }) rack.content().addAndMakeVisible (s);
+        for (juce::Component* s : std::initializer_list<juce::Component*> { &corrSec, &eqSec, &gateSec, &dnSec, &compSec, &fxSec }) rack.content().addAndMakeVisible (s);
         rack.content().over = [this] (juce::Graphics& g) { paintMode (g); };
         for (juce::Component* k : std::initializer_list<juce::Component*> { &gateOn, &gateThr, &gateState }) gateSec.addAndMakeVisible (k);
         for (juce::Component* k : std::initializer_list<juce::Component*> { &dnOn, &dnAmount }) dnSec.addAndMakeVisible (k);
@@ -594,7 +755,7 @@ public:
     void resized() override
     {
         rack.setBounds (getLocalBounds());
-        rack.layout ({ &eqSec, &gateSec, &dnSec, &compSec, &fxSec }, { 520, 150, 140, 200, 0 }, chain.getIdealWidth() + 24);
+        rack.layout ({ &corrSec, &eqSec, &gateSec, &dnSec, &compSec, &fxSec }, { 210, 520, 150, 140, 200, 0 }, chain.getIdealWidth() + 24);
 
         gateOn.setBounds (gateSec.headerSlot());
         auto gc = gateSec.content();
@@ -637,6 +798,7 @@ private:
     InputStrip& strip;
     EffectRack rack;
     EqSection eqSec;
+    CorrectionSection corrSec;
     Section gateSec, dnSec, compSec, fxSec;
     Toggle gateOn;
     Knob gateThr;
@@ -658,7 +820,7 @@ class BusDetail final : public juce::Component
 public:
     BusDetail (UiContext& c, int b, std::function<void()> scan)
         : bus (c.engine.buses[(size_t) b]), colour (theme::busColour (b)),
-          eqSec (c, bus.eq, colour, kMaxInputs + b), limSec ("Limiter", colour),
+          eqSec (c, bus.eq, colour, kMaxInputs + b), corrSec (c, kMaxInputs + b, colour), limSec ("Limiter", colour),
           fxSec ("VST3 Insert Chain", colour),
           limOn (c, *bus.limOn, "ON", colour), ceiling (c, *bus.limCeil, "CEILING", colour),
           bypass (c, *bus.fxBypass, "BYPASS", theme::mute),
@@ -667,7 +829,7 @@ public:
         chain.onScanRequested = std::move (scan);
         chain.onChainChanged = [this] { resized(); };
         addAndMakeVisible (rack);
-        for (juce::Component* s : std::initializer_list<juce::Component*> { &eqSec, &limSec, &fxSec }) rack.content().addAndMakeVisible (s);
+        for (juce::Component* s : std::initializer_list<juce::Component*> { &eqSec, &corrSec, &limSec, &fxSec }) rack.content().addAndMakeVisible (s);
         limSec.addAndMakeVisible (limOn);
         limSec.addAndMakeVisible (ceiling);
         fxSec.addAndMakeVisible (bypass);
@@ -678,7 +840,7 @@ public:
     void resized() override
     {
         rack.setBounds (getLocalBounds());
-        rack.layout ({ &eqSec, &limSec, &fxSec }, { 560, 120, 0 }, chain.getIdealWidth() + 24);
+        rack.layout ({ &eqSec, &corrSec, &limSec, &fxSec }, { 560, 210, 120, 0 }, chain.getIdealWidth() + 24);
 
         limOn.setBounds (limSec.headerSlot());
         ceiling.setBounds (limSec.content().withSizeKeepingCentre (76, 70));
@@ -691,6 +853,7 @@ private:
     juce::Colour colour;
     EffectRack rack;
     EqSection eqSec;
+    CorrectionSection corrSec;
     Section limSec, fxSec;
     Toggle limOn;
     Knob ceiling;
