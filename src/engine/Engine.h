@@ -6,6 +6,7 @@
 #include "IoStreams.h"
 #include "PluginChain.h"
 #include "Recorder.h"
+#include "RoomMeasure.h"
 
 #include <map>
 
@@ -287,6 +288,18 @@ public:
 
     void prepareChains();
 
+    //--------------------------------------------------------------------------
+    // Room measurement (Tools > Room Measurement), see MeasureRun. Message thread.
+    /** Hands a prepared run to the audio thread (a running one is dropped). */
+    void startMeasurement (std::unique_ptr<MeasureRun> run);
+    /** The current run (playing or finished), or nullptr. */
+    MeasureRun* getMeasurement() const noexcept { return measureOwned.get(); }
+    /** Fades the sweep out and ends the run early (it then counts as finished, see finishMeasurement). */
+    void stopMeasurement();
+    /** Ends the run: returns its recording if it played to the end (empty if it was stopped or the engine
+        never ran it). The run itself is freed once the audio thread has let go of it. */
+    std::vector<float> finishMeasurement();
+
 private:
     struct Graph
     {
@@ -316,6 +329,7 @@ private:
     void processBus (Bus& b, int n, bool timed) noexcept;
     void updateDropoutLogs();
     void updateSyncDelays();
+    void renderMeasurement (Bus& b, MeasureRun& run, int start, int count, int n) noexcept;   // audio thread
     int delaySamples (int channel) const noexcept;   // audio thread
 
     // Message thread: dropouts per stream as (time in ms, count), pruned after kDropoutWindowSeconds.
@@ -341,6 +355,10 @@ private:
     int selOwner = -1;     // SEL exclusivity (message thread)
     std::vector<float> playL, playR;
     std::array<float, kMaxBuses> lastPlayRoute {};
+
+    std::unique_ptr<MeasureRun> measureOwned;     // message thread; the audio thread reads 'measureLive'
+    std::atomic<MeasureRun*> measureLive { nullptr };
+    std::vector<std::pair<std::unique_ptr<MeasureRun>, uint64_t>> measureGraveyard;
 
     std::atomic<float> cpuLoad { 0 };
     double ticksToSeconds = 1.0;
