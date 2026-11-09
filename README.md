@@ -42,16 +42,13 @@ Hydra is built around three priorities, in this order: **latency, CPU efficiency
   for each type. Status dots on every device chip (offline, dropouts, waiting for app).
 
 ### Input strip
-Gain → **Correction** → **Denoiser** → **8-band EQ** → **Gate** → **Compressor** → **VST3 chain** → Sync Delay → Mono → Fader / Pan
+Gain → **Denoiser** → **8-band EQ** → **Gate** → **Compressor** → **VST3 chain** → Sync Delay → Mono → Fader / Pan
 → routing to every A and B bus. Plus phase, solo, mute.
 
 - **Denoiser** (RNNoise) in every input, with four latency modes: Ultra Low 0 ms, Low 10 ms, Aligned 20 ms,
   Native HQ 30 ms. Dry/wet mix is latency-aligned. Around 1.8 % of a core per stereo channel.
 - **EQ** for inputs and buses: 8 bands, Bell, Notch, Band Pass, Low/High Cut, Low/High Shelf. Interactive curve
   (click to add a band, drag to move), and a large EQ window with a live spectrum analyzer.
-- **Correction** (room / speaker / headphone) for inputs and buses: up to 32 zero-latency filter bands plus a
-  preamp against clipping. Made by the Room Measurement, or imported from Equalizer APO / **AutoEq** parametric EQ
-  files (e.g. a headphone profile); exportable in the same format.
 - **Gate** with threshold, range, attack, hold, release, sidechain band pass and a **Voice Key**: it only opens
   when the level is above the threshold *and* RNNoise detects speech.
 - **Compressor** with input, threshold, ratio, knee, attack, release, makeup, auto gain and a transfer curve
@@ -60,7 +57,13 @@ Gain → **Correction** → **Denoiser** → **8-band EQ** → **Gate** → **Co
   (a crashing plugin is remembered and skipped).
 
 ### Buses
-- Fader, mute, mono, 8-band EQ, Correction, limiter, VST3 chain, any output device.
+- Fader, mute, mono, 8-band EQ, limiter, VST3 chain, any output device.
+- **Correction** (room + speaker / headphone) on hardware outputs, first in the chain (before the EQ): up to 32
+  zero-latency filter bands plus a level (preamp). The expand button opens the **Room Correction** window: the
+  output's correction (curve, bands, level, clipping warning) and its measurement in one place. Left and right
+  speaker can be corrected **separately** (each stands at another place in the room). Made by the room
+  measurement, or imported from Equalizer APO / **AutoEq** parametric EQ files (e.g. a headphone profile, also
+  with `Channel: L` / `Channel: R` sections); exportable in the same format.
 - **SEL** per bus: the input faders then control the send level of each input into this bus
   (e.g. a separate stream mix). With **monitoring**, the selected bus replaces what you hear on a hardware bus.
 - **Sync Delay**: delays the channels of a group to the slowest one, so that devices with different latency
@@ -85,13 +88,21 @@ Gain → **Correction** → **Denoiser** → **8-band EQ** → **Gate** → **Co
   stage (device, clock sync buffer, denoiser, plugins, sync delay) as a matrix and as a chart.
 - **DSP Load**: CPU load per channel and per stage (denoiser, EQ, gate, compressor, plugins, limiter),
   plus resampling and recorder.
-- **Room Measurement**: pick a microphone (an input) and a speaker (a bus), Hydra plays a sine sweep and records
-  the raw signal (no effects of the channels involved). Shows the frequency response, a **3D waterfall**
-  (which frequencies keep ringing), the reverberation time per octave (T20 / EDT), the impulse response and a
-  list of the room's resonances. **Microphone calibration**: presets (t.bone EM 700 from its data sheet) or the
-  calibration file of your microphone (REW / miniDSP / Dayton format). **Auto Correction** designs up to 24 bell
-  bands that flatten the response (range, limits and smoothing adjustable) and puts them into **any channel's
-  Correction** with one click. Measurements are kept in a library and can be exported (measurement file,
+- **Room Correction** (measure page): pick a microphone and a speaker (a channel, or any device that is on no
+  channel), Hydra plays a sine sweep (optionally after a countdown) and records the raw signal (no effects of the
+  channels involved). A **level check** first plays pink noise bursts and shows the expected level against the
+  ideal (green) range and the background noise, to set speaker volume and mic gain. **Multi-point measurement**
+  (3–9 microphone positions around the listening position, averaged): room modes stay, dips of a single spot
+  average out, so the correction fits the listening area instead of one point. Shows the
+  frequency response, a **3D waterfall** (which frequencies keep ringing; range and length freely adjustable),
+  the reverberation time per octave (T20 / EDT), the impulse response and a list of the room's resonances.
+  **Microphone calibration**: presets (t.bone EM 700 from its data sheet) or the calibration file of your
+  microphone (REW / miniDSP / Dayton format). **Auto Correction** designs up to 24 bell bands that flatten the
+  response (range, bands, continuous smoothing / strength / max boost sliders; level: keep loudness or keep
+  headroom). Bands keep a distance of their own width from each other, so they spread over the range instead of
+  piling up on one deep bass dip. One click puts them into the **hardware output's Correction** (a measurement of
+  only the left or right speaker goes into that channel only). Measurements are
+  kept in a library and can be exported (measurement file,
   frequency response for REW, impulse response WAV, waterfall CSV, chart PNG, correction as Equalizer APO file).
 - **Restart Audio Engine** for drivers that silently stop delivering audio.
 

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hydra's "speakers" icon (ui/ChannelIcons.cpp). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:strokeColor="#ffffffff" android:strokeWidth="1.9" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M8,2.5 H16 A2.5,2.5 0 0 1 18.5,5 V19 A2.5,2.5 0 0 1 16,21.5 H8 A2.5,2.5 0 0 1 5.5,19 V5 A2.5,2.5 0 0 1 8,2.5 Z M7.8,15 A4.2,4.2 0 1 0 16.2,15 A4.2,4.2 0 1 0 7.8,15 Z" />
+    <path android:fillColor="#ffffffff" android:pathData="M10.3,7 A1.7,1.7 0 1 0 13.7,7 A1.7,1.7 0 1 0 10.3,7 Z" />
+</vector>

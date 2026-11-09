@@ -107,8 +107,20 @@ juce::Array<juce::File> VoicemeeterImport::findCandidates()
     juce::Array<juce::File> files;
     auto docs = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
     for (auto& f : docs.findChildFiles (juce::File::findFiles, false, "*.xml"))
-        if (f.getSize() < 4 * 1024 * 1024 && f.loadFileAsString().contains ("VBAudioVoicemeeterSettings"))
+    {
+        // Documents is often in OneDrive: a file that is only in the cloud would be downloaded just to look
+        // at it (this froze the settings window). Such files are skipped; the root tag is in the first bytes.
+        const auto attr = GetFileAttributesW (f.getFullPathName().toWideCharPointer());
+        if (attr == INVALID_FILE_ATTRIBUTES || (attr & (FILE_ATTRIBUTE_OFFLINE | 0x00400000 /* RECALL_ON_DATA_ACCESS */ | 0x00040000 /* RECALL_ON_OPEN */)) != 0)
+            continue;
+        if (f.getSize() >= 4 * 1024 * 1024) continue;
+        juce::FileInputStream in (f);
+        if (! in.openedOk()) continue;
+        juce::MemoryBlock head;
+        in.readIntoMemoryBlock (head, 4096);
+        if (head.toString().contains ("VBAudioVoicemeeterSettings"))
             files.add (f);
+    }
     std::sort (files.begin(), files.end(), [] (const juce::File& a, const juce::File& b)
                { return a.getLastModificationTime() > b.getLastModificationTime(); });
     return files;
@@ -146,7 +158,7 @@ VoicemeeterImport::Result VoicemeeterImport::run (const juce::File& file, Engine
     for (int b = 0; b < kMaxBuses; ++b)
         if (! eng.buses[(size_t) b].active->isOn())
         {
-            eng.buses[(size_t) b].name = busCode (b);
+            eng.buses[(size_t) b].name = busLabel (b);
             eng.buses[(size_t) b].output = {};
             eng.buses[(size_t) b].plugins.clear();
         }
@@ -315,7 +327,7 @@ VoicemeeterImport::Result VoicemeeterImport::run (const juce::File& file, Engine
         const bool hw = b <= kVmHwBuses;
         const auto label = hw ? params->getChildElementAllSubText ("LabelBus" + juce::String (b), {})
                               : params->getChildElementAllSubText ("LabelVirtualBus" + juce::String (b - kVmHwBuses), {});
-        bus.name = label.isNotEmpty() ? label : busCode (hb);
+        bus.name = label.isNotEmpty() ? label : busLabel (hb);
 
         if (const auto* e = findIndexed (*params, "Bus", b, "mute"))
         {
@@ -345,7 +357,7 @@ VoicemeeterImport::Result VoicemeeterImport::run (const juce::File& file, Engine
             out.virtualIndex = b - 1 - kVmHwBuses;
         }
         bus.output = out;
-        rep.add (busCode (hb) + (bus.name != busCode (hb) ? " \"" + bus.name + "\"" : juce::String()) + ": "
+        rep.add (busLabel (hb) + (bus.name != busLabel (hb) ? " \"" + bus.name + "\"" : juce::String()) + ": "
                  + (out.kind == IoTarget::Kind::Master && b > 1 ? "ASIO out " + juce::String (out.channel + 1) + "/" + juce::String (out.channel + 2)
                                                               : out.describe()));
     }

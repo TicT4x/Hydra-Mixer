@@ -5,9 +5,10 @@
 #include "LatencyView.h"
 #include "DspView.h"
 #include "SyncDelayView.h"
-#include "RoomView.h"
+#include "CorrectionView.h"
 #include "DevicePicker.h"
 #include "SceneEditor.h"
+#include "SidePanel.h"
 #include "state/UndoHistory.h"
 
 namespace hydra
@@ -30,8 +31,8 @@ private:
 };
 
 /** Flat icon button for the top bar: tools (wrench), recorder (cassette), settings gear, power (shutdown)
-    and the window controls. The window controls do not act on clicks themselves: Windows reports them
-    as native caption buttons (see TopBar::windowControlAt), and the window receives minimise / maximise / close. */
+    and the window controls. Minimise and close are ordinary buttons. Maximise is a native caption button for
+    Windows (Snap Layouts on hover, see TopBar::windowControlAt): Windows reports its clicks to the window. */
 class IconButton final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
@@ -43,6 +44,8 @@ public:
     /** Highlight (learn mode for the tools, recording / playing for the cassette); transparent = none. */
     juce::Colour lit { juce::Colours::transparentBlack };
     void setLit (juce::Colour c) { if (c != lit) { lit = c; repaint(); } }
+    /** Mouse over a native caption button: Windows reports that by hit-testing, not as a mouse event. */
+    void setNativeHover (bool h) { if (h != nativeHover) { nativeHover = h; repaint(); } }
 
     void paint (juce::Graphics&) override;
     void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
@@ -57,7 +60,7 @@ public:
     bool isWindowControl() const noexcept { return kind == Kind::minimise || kind == Kind::maximise || kind == Kind::close; }
 
 private:
-    bool hover = false, down = false;
+    bool hover = false, down = false, nativeHover = false;
 };
 
 /** DSP load meter in the top bar (bar + percentage); click opens the DSP Load window. */
@@ -66,7 +69,7 @@ class DspMeter final : public juce::Component, public juce::SettableTooltipClien
 public:
     DspMeter();
     std::function<void()> onClick;
-    void setLoad (float load);
+    void setLoad (float average, float peak);
     void paint (juce::Graphics&) override;
     void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
     void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
@@ -114,33 +117,37 @@ public:
     StatusLink statusLink;
 
 private:
+    /** Clears the maximise button's hover once the mouse has left it (runs only while it is hovered). */
+    struct NativeHoverWatch final : juce::Timer
+    {
+        explicit NativeHoverWatch (IconButton& b) : button (b) {}
+        void timerCallback() override
+        {
+            if (button.getScreenBounds().contains (juce::Desktop::getMousePosition())) return;
+            button.setNativeHover (false);
+            stopTimer();
+        }
+        IconButton& button;
+    };
+    mutable NativeHoverWatch maximiseHover { maximiseBtn };
+
+    void layoutBar();
+    void glideFrame (double t);
+
     UiContext& ctx;
     RecorderMini recorder;
+    juce::Component recorderSlot;   // clips recorder / cassette while the one turns into the other
     juce::Rectangle<int> statusArea, logoArea, midiArea;
-    bool compactLogo = false;
+    // Narrow windows: recorder -> cassette, logo -> icon. 1 = full, 0 = small; glides to the target, runs only while it moves.
+    float recorderShown = -1.0f, logoShown = -1.0f, recorderTarget = 1.0f, logoTarget = 1.0f;
+    double lastGlideFrame = 0.0;
+    juce::VBlankAttachment glideVBlank { this, [this] (double t) { glideFrame (t); } };
     juce::String status;
-    float cpu = 0, cpuSmooth = 0;
+    Engine::LoadMeter cpuMeter;
+    float peakSmooth = 0;
     int cpuTick = 0;
     uint32_t lastActivity = 0;
     float midiGlow = 0;
-};
-
-/** Floating container for advanced sub-panels (gate / denoiser / compressor settings). */
-class PanelHost final : public juce::Component
-{
-public:
-    PanelHost();
-    void show (std::unique_ptr<juce::Component> content, const juce::String& title, juce::Colour colour);
-    void close();
-    bool isOpen() const noexcept { return content != nullptr; }
-    void paint (juce::Graphics&) override;
-    void resized() override;
-
-private:
-    std::unique_ptr<juce::Component> content;
-    juce::String title;
-    juce::Colour colour;
-    Chip closeButton { "X", theme::text };
 };
 
 class MainComponent final : public juce::Component, private juce::Timer, private juce::ChangeListener
@@ -155,11 +162,15 @@ public:
     bool keyPressed (const juce::KeyPress&) override;
 
     void openSettings (int tab = 0);
+    /** Lays the strips out again (e.g. "Fill window" was switched). */
+    void stripLayoutChanged();
     void openMidiMap();
     void openLatencyFinder();
     void openDspView();
     void openSyncDelay();
-    void openRoomMeasurement();
+    void openCableManager();
+    /** Room measurement window; outputSelect = a hardware output to preset as speaker and target (-1 = none). */
+    void openRoomMeasurement (int outputSelect = -1);
     /** Device selection window of a channel (input source / bus output); one window, follows the last strip. */
     void openDevicePicker (int channel);
     void toggleLearnMode();
@@ -168,13 +179,19 @@ public:
     /** Closes and reopens the master device and every other device (same settings), e.g. after a driver
         stopped delivering audio without reporting an error. */
     void restartAudioEngine();
-    void openEqWindow (int selectIndex, bool bringToFront = true);
+    void openEqWindow (int selectIndex, bool bringToFront = true, int instance = 0);
+    /** Room Correction window (correction + measurement of the hardware outputs, one window that follows the selected
+        hardware output). selectIndex: the output to show (-1 = keep / choose one); measure: open the measurement page. */
+    void openCorrectionWindow (int selectIndex, bool measure = false);
+    CorrectionView* correctionView() const;
     void refreshAll();
     /** Interface zoom (1 = 100 %): everything in the main window is drawn larger / smaller;
         the strips scroll horizontally when they no longer fit. */
     void setUiScale (float scale);
     /** Rebuilds strips and inspector after the text size changed (labels keep their font otherwise). */
     void fontScaleChanged();
+    /** The palette changed (theme::apply): rebuilds the strips and inspector, repaints all windows. */
+    void themeChanged();
     /** For the window's native hit-testing (point in this component's coordinates). */
     WindowControlKind windowControlAt (juce::Point<float> p) const;
 
@@ -189,7 +206,14 @@ private:
     void rebuildStrips();
     void scrollToChannel (int selectIndex);
     void addChannel (int group);
-    void removeChannel (int selectIndex);
+    void removeChannel (int selectIndex);              // asks first
+    void removeChannelNow (int selectIndex);
+    /** Removes a channel without asking, rebuilding or a message (removeChannelNow, Change Order trash can). */
+    void removeChannelCore (int sel);
+    int reorderRemoved = 0;   // channels deleted in Change Order, for the message after applying
+    void cutChannel (int selectIndex);
+    void duplicateChannel (int selectIndex);
+    void pasteNewChannel (int group);
     void beginReorder();
     /** Done in Change Order mode: asks what the MIDI assignments / shortcuts of moved channels should do
         (only if there are any), then applies the shown order. */
@@ -200,6 +224,12 @@ private:
 public:
     /** Window content width (pixels) at which all channels fit side by side (see StripArea::idealWidth). */
     int idealWidth() const;
+    /** Window content size (pixels) the channels need: Settings > Display "Window always as large as needed". */
+    juce::Point<int> fittingSize() const;
+    /** While the window glides to a new size: lay out directly (no own animations). */
+    void setInstantLayout (bool b) { ctx.instantLayout = b; }
+    /** The channels were added / removed / rebuilt: the window may take its fitting size. */
+    std::function<void()> onChannelsChanged;
 private:
     int logicalWidth() const  { return juce::roundToInt ((float) getWidth() / uiScale); }
     int logicalHeight() const { return juce::roundToInt ((float) getHeight() / uiScale); }
@@ -217,9 +247,13 @@ private:
     TopBar top;
     StripArea strips;
     Inspector inspector;
-    PanelHost panelHost;
     std::unique_ptr<SceneSidebar> sceneBar;   // Tools > Scene Editor
-    std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow, latencyWindow, dspWindow, syncWindow, deviceWindow, roomWindow;
+    std::unique_ptr<SidePanel> sidePanel;     // Settings > Display > Side panel, only while there is room (resized)
+    /** Settings of an effect ("..." in its header: gate / denoiser / compressor) in their own window. */
+    void openPanelWindow (std::unique_ptr<juce::Component> content, const juce::String& title);
+    void closePanelWindow();
+
+    std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow, latencyWindow, dspWindow, syncWindow, deviceWindow, corrWindow, panelWindow, cableWindow;
     int shownSelBus = -1;     // bus selected with SEL as shown by the input faders
     uint32_t shownLayout = 0; // engine channel layout the strips were built for
     float uiScale = 1.0f;
@@ -228,7 +262,7 @@ private:
     double lastMeterFrame = 0;
     Param* hotkeyTarget = nullptr;   // waiting for a key press to assign
     // Tooltips of every window (main and tool windows); without one JUCE shows none at all.
-    juce::TooltipWindow tooltips { nullptr, 600 };
+    theme::TooltipWindow tooltips;
     // Meters follow the display refresh (capped at ~60 Hz) instead of a coarse timer.
     juce::VBlankAttachment vblank { this, [this] (double t) { meterFrame (t); } };
 };

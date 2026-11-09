@@ -17,7 +17,7 @@ void addPlugins (const Engine& e, std::vector<LatencyView::Node>& nodes, const P
     if (bypassAll.isOn()) return;
     int k = 0;
     for (int i = 0; i < chain.size(); ++i)
-        if (auto* s = chain.getSlot (i); s != nullptr && ! s->bypassed)
+        if (auto* s = chain.getSlot (i); s != nullptr && s->isPlugin() && ! s->bypassed)
             nodes.push_back ({ s->instance->getName(), "VST3 plugin", samplesToMs (e, s->instance->getLatencySamples()),
                                kPlugin.interpolatedWith (theme::solo, 0.3f * (float) (k++ % 3)), sel,
                                "VST3 plugin: the latency it reports itself (look-ahead, linear phase, ...).\n"
@@ -42,7 +42,7 @@ juce::String titled (const juce::String& code, const juce::String& name)
     return name.isEmpty() || name == code ? code : code + "  " + name;
 }
 juce::String inputTitle (const Engine& e, int i) { return titled ("IN " + juce::String (i + 1), e.inputs[(size_t) i].name); }
-juce::String busTitle (const Engine& e, int b)   { return titled (busCode (b), e.buses[(size_t) b].name); }
+juce::String busTitle (const Engine& e, int b)   { return titled (busLabel (b), e.buses[(size_t) b].name); }
 juce::String channelTitle (const Engine& e, int ch) { return ch < kMaxInputs ? inputTitle (e, ch) : busTitle (e, ch - kMaxInputs); }
 
 /** Sync Delay stage of a channel (input index or Engine::busChannel), if it has one. */
@@ -86,6 +86,27 @@ juce::String explainIoLatency (const Engine& e, const IoTarget& t, bool input)
           << "\n   Buffer:  " << ms (l.bufferMs) << "  (" << l.bufferFrames << " samples at " << (int) l.deviceRate << " Hz)"
           << "\n   Driver / converters:  " << ms (l.driverMs) << "  (" << frames (l.driverMs) << ", as the driver reports it)"
           << "\nSmaller buffer = less latency (Settings > Audio Engine), but more CPU and a higher risk of dropouts.";
+    }
+    else if (t.kind == IoTarget::Kind::Network)
+    {
+        s << "\n" << l.transport << ".";
+        if (input)
+            s << "\nAudio from Hydra on another computer: its clock is bound to the master by a resampler with drift control."
+              << "\n   Packets (+ codec):  " << ms (l.driverMs) << "  (the sender cuts its audio into packets of this length)"
+              << "\n   Network buffer:  " << ms (l.clockSyncMs) << "  (covers the network's jitter and the two clocks; moves a little)"
+              << "\nPlus the network itself (local network: well under 1 ms, internet: the ping time / 2)."
+              << "\nUncompressed (PCM) in the local network is the fastest; Opus adds a few ms.";
+        else
+            s << "\nSent to Hydra on another computer: here only the packet length counts, "
+              << ms (l.driverMs) << ". The receiving Hydra adds its network buffer.";
+    }
+    else if (l.steeredClock)
+    {
+        s << "\nVirtual Audio Cable, connected directly (" << l.transport << "):"
+          << "\nHydra reads / writes the cable's driver buffer itself, past Windows, and steers the cable's clock to the"
+          << "\nmaster, so nothing is resampled."
+          << "\n   Cable period:  " << ms (l.driverMs) << "  (" << l.bufferFrames << " samples; Cable Manager > Timing)"
+          << "\n   Sync buffer:  " << ms (l.clockSyncMs) << "  (keeps the cable and the master from running dry; moves a little)";
     }
     else
     {
@@ -144,7 +165,7 @@ public:
             const bool sel = buses[c] == selBus;
             g.setColour (theme::busColour (buses[c]).withAlpha (sel ? 1.0f : 0.75f));
             g.setFont (theme::font (12.5f, true));
-            g.drawFittedText (titled (busCode (buses[c]), ctx.engine.buses[(size_t) buses[c]].name), r.reduced (4, 0),
+            g.drawFittedText (titled (busLabel (buses[c]), ctx.engine.buses[(size_t) buses[c]].name), r.reduced (4, 0),
                               juce::Justification::centred, 1, 0.7f);
         }
         if (inputs.empty())
@@ -178,7 +199,7 @@ public:
         if (row >= 0 && col >= 0)
         {
             const auto& cell = cells[(size_t) row][(size_t) col];
-            const auto bus = busCode (buses[(size_t) col]);
+            const auto bus = busLabel (buses[(size_t) col]);
             if (! cell.routed) tip = inTitles[(size_t) row] + " is not routed to " + bus;
             else tip = inTitles[(size_t) row] + "  ->  " + bus + ":  " + label (cell.ms) + "\nclick: show this path below";
         }
@@ -588,7 +609,7 @@ double LatencyView::inputSideMs (int i) const
     const auto& s = e.inputs[(size_t) i];
     std::vector<Node> nodes;
     addPlugins (e, nodes, s.plugins, *s.fxBypass, i);
-    return it->second + (s.dnOn->isOn() ? samplesToMs (e, s.dspLatency.load()) : 0.0) + sum (nodes) + e.getChannelDelayMs (i);
+    return it->second + (s.denoiserActive() ? samplesToMs (e, s.dspLatency.load()) : 0.0) + sum (nodes) + e.getChannelDelayMs (i);
 }
 
 double LatencyView::busSideMs (int b) const
@@ -635,7 +656,7 @@ LatencyView::Flow LatencyView::build (int b) const
         const auto it = inDevMs.find (i);
         lane.nodes.push_back ({ "Input device", s.source.describe(), it != inDevMs.end() ? it->second : -1.0, kDeviceIn, i,
                                 explainIoLatency (e, s.source, true) });
-        if (s.dnOn->isOn())
+        if (s.denoiserActive())
         {
             const int mode = juce::roundToInt (s.dnMode->get());
             lane.nodes.push_back ({ "Denoiser", "RNNoise, " + s.dnMode->choices[mode] + " mode",
@@ -650,8 +671,8 @@ LatencyView::Flow LatencyView::build (int b) const
         f.lanes.push_back (std::move (lane));
     }
 
-    if (! f.hasOutput)          f.problem = busCode (b) + " has no output device - choose one in the mixer.";
-    else if (f.lanes.empty())   f.problem = "No input is routed to " + busCode (b) + ".";
+    if (! f.hasOutput)          f.problem = busLabel (b) + " has no output device - choose one in the mixer.";
+    else if (f.lanes.empty())   f.problem = "No input is routed to " + busLabel (b) + ".";
     return f;
 }
 

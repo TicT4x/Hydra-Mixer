@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hydra's logo (ui/Theme.cpp drawLogo): three rounded bars, the middle one taller, cyan -> violet. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="36dp" android:height="34dp"
+    android:viewportWidth="36" android:viewportHeight="34">
+    <path android:pathData="M0,15.9 A5,5 0 0 1 10,15.9 V29 A5,5 0 0 1 0,29 Z M13,5 A5,5 0 0 1 23,5 V29 A5,5 0 0 1 13,29 Z M26,15.9 A5,5 0 0 1 36,15.9 V29 A5,5 0 0 1 26,29 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="36" android:endY="0"
+                android:startColor="#35d0f4" android:endColor="#8d6cff" />
+        </aapt:attr>
+    </path>
+</vector>

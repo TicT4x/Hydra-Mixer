@@ -1,4 +1,7 @@
 #include "MainComponent.h"
+#include "CableManager.h"
+#include "state/VacCables.h"
+#include "state/ChannelClipboard.h"
 #include "state/Session.h"
 
 namespace hydra
@@ -12,7 +15,7 @@ RecorderMini::RecorderMini (UiContext& c)
     addAndMakeVisible (rec);
     addAndMakeVisible (play);
     addAndMakeVisible (stop);
-    rec.setTooltip ("Record the selected B bus (details: click the time)");
+    rec.setTooltip ("Record the selected V bus (details: click the time)");
     play.setTooltip ("Play / pause the loaded file or the last recording");
     stop.setTooltip ("Stop recording / playback and go back to the start");
     setTooltip ("Recorder - click to show it below");
@@ -40,7 +43,7 @@ void RecorderMini::update()
     juce::String t;
     const double secs = recording ? r.getRecordSeconds() : playing ? r.getPlaySeconds() : 0.0;
     const int whole = (int) secs;
-    t << (recording ? busCode (r.getRecordSourceBus()) + "  " : playing ? juce::String ("PLAY  ") : juce::String ("REC  "))
+    t << (recording ? busLabel (r.getRecordSourceBus()) + "  " : playing ? juce::String ("PLAY  ") : juce::String ("REC  "))
       << juce::String (whole / 60).paddedLeft ('0', 2) << ":" << juce::String (whole % 60).paddedLeft ('0', 2);
     if (t != shown || (recording || playing) != shownActive)
     {
@@ -77,6 +80,7 @@ void IconButton::paint (juce::Graphics& g)
     {
         auto* window = findParentComponentOfClass<juce::DocumentWindow>();
         const bool isClose = kind == Kind::close;
+        const bool hover = this->hover || nativeHover;
         if (hover || down)
         {
             g.setColour (isClose ? theme::mute.withAlpha (down ? 0.7f : 0.9f) : theme::raised.brighter (down ? 0.15f : 0.0f));
@@ -99,7 +103,7 @@ void IconButton::paint (juce::Graphics& g)
         {
             // restore: two overlapping frames
             g.drawRoundedRectangle (c.x - s + 2.0f, c.y - s, s * 2.0f - 2.0f, s * 2.0f - 2.0f, 1.5f, 1.1f);
-            g.setColour (hover || down ? theme::raised.brighter (down ? 0.15f : 0.0f) : theme::panel);
+            g.setColour (hover || down ? theme::raised.brighter (down ? 0.15f : 0.0f) : theme::deep() ? theme::bg : theme::panel);
             g.fillRoundedRectangle (c.x - s - 0.5f, c.y - s + 1.5f, s * 2.0f - 1.0f, s * 2.0f - 1.0f, 1.5f);
             g.setColour (glyph);
             g.drawRoundedRectangle (c.x - s, c.y - s + 2.0f, s * 2.0f - 2.0f, s * 2.0f - 2.0f, 1.5f, 1.1f);
@@ -184,11 +188,13 @@ void IconButton::paint (juce::Graphics& g)
 DspMeter::DspMeter()
 {
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
-    setTooltip ("DSP load of the audio engine (share of each audio block's time). Click: what uses it, per channel and plugin");
+    setLoad (0.0f, 0.0f);
 }
 
-void DspMeter::setLoad (float l)
+void DspMeter::setLoad (float l, float peak)
 {
+    setTooltip ("DSP load\nAverage share of real time the audio engine needs (like a DAW's CPU meter). Slowest single block: "
+                + juce::String (juce::roundToInt (peak * 100.0f)) + " %. Click: what uses it, per channel and plugin");
     if (std::abs (l - load) <= 0.002f) return;
     load = l;
     repaint();
@@ -250,8 +256,10 @@ void StatusLink::paint (juce::Graphics& g)
 //==============================================================================
 TopBar::TopBar (UiContext& c) : ctx (c), recorder (c)
 {
-    addAndMakeVisible (recorder);
-    addChildComponent (cassette);
+    addAndMakeVisible (recorderSlot);
+    recorderSlot.setInterceptsMouseClicks (false, true);
+    recorderSlot.addAndMakeVisible (recorder);
+    recorderSlot.addChildComponent (cassette);
     addAndMakeVisible (dsp);
     addAndMakeVisible (statusLink);
     for (auto* b : { &tools, &settings, &power, &minimiseBtn, &maximiseBtn, &closeBtn })
@@ -278,9 +286,13 @@ auto TopBar::windowControlAt (juce::Point<float> p) const -> WindowControlKind
     if (! maximised && (p.y < 5.0f || p.x > (float) getWidth() - 5.0f))
         return WindowControlKind::client;
 
-    if (minimiseBtn.getBounds().toFloat().contains (p)) return WindowControlKind::minimise;
-    if (maximiseBtn.getBounds().toFloat().contains (p)) return WindowControlKind::maximise;
-    if (closeBtn.getBounds().toFloat().contains (p))    return WindowControlKind::close;
+    if (maximiseBtn.getBounds().toFloat().contains (p))
+    {
+        // Snap Layouts need the native button, and Windows asks this for every mouse move over it.
+        const_cast<IconButton&> (maximiseBtn).setNativeHover (true);
+        maximiseHover.startTimerHz (30);
+        return WindowControlKind::maximise;
+    }
 
     for (auto* c : getChildren())
         if (c->isVisible() && c->getBounds().toFloat().contains (p))
@@ -302,11 +314,14 @@ void TopBar::update()
         s = "MIDI LEARN MODE - click a control, then move / press a MIDI control.   Esc = exit";
     statusLink.setStatus (s, e.getMasterDevice() != nullptr, ctx.learnMode);
 
-    // DSP load: the engine value reacts instantly to peaks, which makes the display jitter.
-    // Smooth it here (~0.5 s time constant at 30 Hz) and refresh the number only 4x per second.
-    cpuSmooth += 0.07f * (e.getCpuLoad() - cpuSmooth);
-    if (++cpuTick >= 8) { cpuTick = 0; cpu = cpuSmooth; }
-    dsp.setLoad (cpu);
+    // DSP load: average over the last ~0.25 s (like a DAW's CPU meter), refreshed 4x per second.
+    // The peak (single slowest callback) goes into the tooltip.
+    peakSmooth = juce::jmax (e.getPeakLoad(), peakSmooth * 0.97f);
+    if (++cpuTick >= 8)
+    {
+        cpuTick = 0;
+        dsp.setLoad (cpuMeter.update (e), peakSmooth);
+    }
 
     const auto act = ctx.midi.activity.load();
     bool dirty = false;
@@ -323,7 +338,7 @@ void TopBar::update()
 void TopBar::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds();
-    g.setColour (theme::panel);
+    g.setColour (theme::deep() ? theme::bg : theme::panel);   // Default theme: same as the background behind strips and effects
     g.fillRect (r);
     g.setColour (theme::outline.withAlpha (0.6f));
     g.fillRect (r.removeFromBottom (1));
@@ -331,15 +346,19 @@ void TopBar::paint (juce::Graphics& g)
     // Logo: same as the tray icon and the exe icon (resources/icon.png); only the icon when space is short.
     const auto logo = logoArea;
     theme::drawLogo (g, { (float) logo.getX(), (float) logo.getCentreY() - 11.0f, 23.0f, 22.0f });
-    if (! compactLogo)
+    if (logoShown > 0.01f)
     {
-        g.setColour (theme::text);
+        // Fades and is covered from the right while the logo shrinks to its icon.
+        juce::Graphics::ScopedSaveState clip (g);
+        g.reduceClipRegion (logo);
+        const auto wide = logo.withWidth (400);
+        g.setColour (theme::text.withMultipliedAlpha (logoShown));
         const auto bold = theme::font (17.0f, true);
         g.setFont (bold);
-        g.drawText ("HYDRA", logo.withTrimmedLeft (34), juce::Justification::centredLeft);
-        g.setColour (theme::textDim);
+        g.drawText ("HYDRA", wide.withTrimmedLeft (34), juce::Justification::centredLeft);
+        g.setColour (theme::textDim.withMultipliedAlpha (logoShown));
         g.setFont (theme::font (17.0f));
-        g.drawText ("MIXER", logo.withTrimmedLeft (34 + juce::GlyphArrangement::getStringWidthInt (bold, "HYDRA") + 8),
+        g.drawText ("MIXER", wide.withTrimmedLeft (34 + juce::GlyphArrangement::getStringWidthInt (bold, "HYDRA") + 8),
                     juce::Justification::centredLeft);
     }
 
@@ -359,7 +378,48 @@ void TopBar::paint (juce::Graphics& g)
     }
 }
 
+namespace
+{
+constexpr int kBarLogoFull = 190, kBarLogoIcon = 34, kBarRecFull = 220, kBarRecIcon = 36, kBarDspW = 162, kBarMidiW = 64, kBarTextMin = 150;
+constexpr double kBarGlideSeconds = 0.07;
+}
+
 void TopBar::resized()
+{
+    // What is left next to the buttons is shared by the logo, the recorder and the status. Narrow windows give
+    // up the full recorder first (cassette button instead), then the logo text, then the status text.
+    const int avail = juce::jmax (0, getWidth() - (46 * 3 + 6) - 2 * 12 - (36 * 3 + 6 + 6 + 12));
+    const int statusWanted = kBarDspW + kBarMidiW + kBarTextMin;
+    const bool fullRecorder = avail >= kBarLogoFull + 12 + kBarRecFull + 12 + statusWanted;
+    const bool fullLogo = avail >= kBarLogoFull + 12 + (fullRecorder ? kBarRecFull : kBarRecIcon) + 12 + statusWanted;
+    recorderTarget = fullRecorder ? 1.0f : 0.0f;
+    logoTarget = fullLogo ? 1.0f : 0.0f;
+    if (recorderShown < 0.0f || ! isShowing())
+    {
+        recorderShown = recorderTarget;
+        logoShown = logoTarget;
+    }
+    layoutBar();
+}
+
+void TopBar::glideFrame (double t)
+{
+    if (recorderShown == recorderTarget && logoShown == logoTarget) { lastGlideFrame = 0.0; return; }
+    const double dt = lastGlideFrame > 0.0 ? juce::jlimit (0.0, 0.05, t - lastGlideFrame) : 1.0 / 60.0;
+    lastGlideFrame = t;
+    const float k = 1.0f - (float) std::exp (-dt / kBarGlideSeconds);
+    auto step = [k] (float& shown, float target)
+    {
+        shown += (target - shown) * k;
+        if (std::abs (target - shown) < 0.01f) shown = target;
+    };
+    step (recorderShown, recorderTarget);
+    step (logoShown, logoTarget);
+    layoutBar();
+    repaint();
+}
+
+void TopBar::layoutBar()
 {
     auto r = getLocalBounds().withTrimmedBottom (1);
     // Window controls: full height at the right edge, like a native title bar.
@@ -376,83 +436,34 @@ void TopBar::resized()
     tools.setBounds (r.removeFromRight (36));
     r.removeFromRight (12);
 
-    // What is left is shared by the logo, the recorder and the status. Narrow windows give up the
-    // full recorder first (cassette button instead), then the logo text, then the status text.
-    constexpr int kLogoFull = 190, kLogoIcon = 34, kRecFull = 220, kRecIcon = 36, kDspW = 162, kMidiW = 64, kTextMin = 150;
-    const int avail = juce::jmax (0, r.getWidth());
-    const int statusWanted = kDspW + kMidiW + kTextMin;
-    const bool fullRecorder = avail >= kLogoFull + 12 + kRecFull + 12 + statusWanted;
-    const int recW = fullRecorder ? kRecFull : kRecIcon;
-    compactLogo = avail < kLogoFull + 12 + recW + 12 + statusWanted;
-
-    logoArea = r.removeFromLeft (juce::jmin (r.getWidth(), compactLogo ? kLogoIcon : kLogoFull)).withTrimmedLeft (4);
+    // While they change size (see resized) the slot shrinks and clips, the recorder fades into the cassette:
+    // one out in the first half of the way, the other in during the second.
+    const int logoW = juce::roundToInt (juce::jmap (logoShown, (float) kBarLogoIcon, (float) kBarLogoFull));
+    const int recW = juce::roundToInt (juce::jmap (recorderShown, (float) kBarRecIcon, (float) kBarRecFull));
+    logoArea = r.removeFromLeft (juce::jmin (r.getWidth(), logoW)).withTrimmedLeft (4);
     r.removeFromLeft (juce::jmin (r.getWidth(), 8));
-    recorder.setVisible (fullRecorder);
-    cassette.setVisible (! fullRecorder);
     const auto recArea = r.removeFromRight (juce::jmin (r.getWidth(), recW));
-    if (fullRecorder) recorder.setBounds (recArea);
-    else              cassette.setBounds (recArea);
+    recorderSlot.setBounds (recArea);
+    recorder.setBounds (recArea.getWidth() - kBarRecFull, 0, kBarRecFull, recArea.getHeight());
+    cassette.setBounds (recArea.getWidth() - kBarRecIcon, 0, kBarRecIcon, recArea.getHeight());
+    const float recorderAlpha = juce::jlimit (0.0f, 1.0f, recorderShown * 2.0f - 1.0f);
+    const float cassetteAlpha = juce::jlimit (0.0f, 1.0f, 1.0f - recorderShown * 2.0f);
+    recorder.setAlpha (recorderAlpha);
+    cassette.setAlpha (cassetteAlpha);
+    recorder.setVisible (recorderAlpha > 0.0f);
+    cassette.setVisible (cassetteAlpha > 0.0f);
     r.removeFromRight (juce::jmin (r.getWidth(), 12));
 
     // Status: DSP meter at the right end (visible as long as there is room for it), MIDI activity
     // next to it, the engine status (click = audio settings) gets the rest.
     statusArea = r;
     auto inner = statusArea.reduced (6, 0);
-    const bool showDsp = inner.getWidth() >= kDspW;
+    const bool showDsp = inner.getWidth() >= kBarDspW;
     dsp.setVisible (showDsp);
-    if (showDsp) dsp.setBounds (inner.removeFromRight (kDspW));
-    midiArea = inner.getWidth() >= kMidiW + 40 ? inner.removeFromRight (kMidiW) : juce::Rectangle<int>();
+    if (showDsp) dsp.setBounds (inner.removeFromRight (kBarDspW));
+    midiArea = inner.getWidth() >= kBarMidiW + 40 ? inner.removeFromRight (kBarMidiW) : juce::Rectangle<int>();
     statusLink.setVisible (inner.getWidth() >= 40);
     statusLink.setBounds (inner);
-}
-
-//==============================================================================
-PanelHost::PanelHost()
-{
-    closeButton.showArrow = false;
-    closeButton.centred = true;
-    closeButton.onClick = [this] { close(); };
-    addAndMakeVisible (closeButton);
-    setVisible (false);
-}
-
-void PanelHost::show (std::unique_ptr<juce::Component> c, const juce::String& t, juce::Colour col)
-{
-    content = std::move (c);
-    title = t;
-    colour = col;
-    addAndMakeVisible (*content);
-    setSize (content->getWidth() + 2, content->getHeight() + 38);
-    setVisible (true);
-    toFront (false);
-    resized();
-    repaint();
-}
-
-void PanelHost::close()
-{
-    content.reset();
-    setVisible (false);
-}
-
-void PanelHost::paint (juce::Graphics& g)
-{
-    auto r = getLocalBounds().toFloat();
-    juce::DropShadow (juce::Colours::black.withAlpha (0.6f), 18, {}).drawForRectangle (g, getLocalBounds());
-    g.setColour (theme::panel);
-    g.fillRoundedRectangle (r, 10.0f);
-    g.setColour (colour.withAlpha (0.7f));
-    g.drawRoundedRectangle (r.reduced (0.5f), 10.0f, 1.2f);
-    g.setColour (colour);
-    g.setFont (theme::font (13.0f, true));
-    g.drawText (title, getLocalBounds().removeFromTop (36).reduced (14, 0), juce::Justification::centredLeft);
-}
-
-void PanelHost::resized()
-{
-    closeButton.setBounds (getWidth() - 36, 7, 26, 24);
-    if (content != nullptr)
-        content->setBounds (getLocalBounds().withTrimmedTop (36).reduced (1, 0).withTrimmedBottom (2));
 }
 
 //==============================================================================
@@ -460,6 +471,7 @@ MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys
     : ctx { engine, midi, hotkeys, &session }, undo (engine.params), top (ctx), strips (ctx), inspector (ctx)
 {
     ctx.undo = &undo;
+    appComponent = this;
     setOpaque (true);
     ctx.select = [this] (int i) { select (i); };
     ctx.learnModeChanged = [this] { top.update(); repaint(); };
@@ -485,17 +497,11 @@ MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys
     addAndMakeVisible (strips);
     shownLayout = engine.getLayoutVersion();
     addAndMakeVisible (inspector);
-    addChildComponent (panelHost);
-    ctx.openPanel = [this] (std::unique_ptr<juce::Component> content, juce::String title, juce::Colour colour)
-    {
-        panelHost.show (std::move (content), title, colour);
-        const int w = logicalWidth();
-        panelHost.setTopLeftPosition (juce::jlimit (8, w - panelHost.getWidth() - 8, (w - panelHost.getWidth()) / 2),
-                                      inspector.getY() - panelHost.getHeight() - 10);
-    };
+    ctx.openPanel = [this] (std::unique_ptr<juce::Component> content, juce::String title) { openPanelWindow (std::move (content), title); };
     ctx.addChannel = [this] (int group) { addChannel (group); };
     ctx.changeOrder = [this] { beginReorder(); };
-    ctx.openRoomMeasurement = [this] { openRoomMeasurement(); };
+    ctx.openRoomMeasurement = [this] (int output) { openRoomMeasurement (output); };
+    ctx.openCorrectionWindow = [this] (int i) { openCorrectionWindow (i); };
     // Async: the buttons that call these are destroyed when the strips are rebuilt.
     strips.onReorderDone = [this]
     {
@@ -508,9 +514,13 @@ MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys
         juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->discardReorder(); });
     };
     ctx.removeChannel = [this] (int sel) { removeChannel (sel); };
-    inspector.onScanRequested = [this] { openSettings (3); }; // Plugins tab
-    ctx.openEqWindow = [this] (int i) { openEqWindow (i); };
+    ctx.cutChannel = [this] (int sel) { cutChannel (sel); };
+    ctx.duplicateChannel = [this] (int sel) { duplicateChannel (sel); };
+    ctx.pasteNewChannel = [this] (int group) { pasteNewChannel (group); };
+    inspector.onScanRequested = [this] { openSettings (SettingsPanel::plugins); };
+    ctx.openEqWindow = [this] (int i, int k) { openEqWindow (i, true, k); };
     ctx.openDevicePicker = [this] (int i) { openDevicePicker (i); };
+    ctx.openCableManager = [this] { openCableManager(); };
     ctx.prefsChanged = [this] { if (onPrefsChanged) onPrefsChanged(); };
     ctx.shutdown = [this]
     {
@@ -530,7 +540,7 @@ MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys
     };
     top.tools.onClick = [this] { showToolsMenu(); };
     top.dsp.onClick = [this] { openDspView(); };
-    top.statusLink.onClick = [this] { openSettings (1); };   // Audio Engine tab
+    top.statusLink.onClick = [this] { openSettings (SettingsPanel::audio); };
 
     midi.onLearned = [this] (Param* p)
     {
@@ -570,12 +580,14 @@ void MainComponent::finishHotkeyCapture()
 
 MainComponent::~MainComponent()
 {
+    if (appComponent == this) appComponent = nullptr;
     stopTimer();
     if (hotkeyTarget != nullptr) { ctx.hotkeys.setMouseCapture (nullptr); ctx.hotkeys.setSuspended (false); }
     ctx.engine.removeChangeListener (this);
     ctx.midi.onLearned = nullptr;
     if (ctx.session != nullptr) ctx.session->scenes.onRecalled = nullptr;
     sceneBar.reset();
+    sidePanel.reset();
     settingsWindow.reset();
     midiWindow.reset();
     eqWindow.reset();
@@ -583,14 +595,14 @@ MainComponent::~MainComponent()
     dspWindow.reset();
     syncWindow.reset();
     deviceWindow.reset();
-    roomWindow.reset();
+    corrWindow.reset();
+    cableWindow.reset();
 }
 
 void MainComponent::select (int index)
 {
     if (index == ctx.selected) return;
     ctx.selected = index;
-    panelHost.close();
     inspector.showChannel (index);
     strips.repaintStrips();
     top.repaint();
@@ -598,6 +610,8 @@ void MainComponent::select (int index)
     // An open EQ window follows the selected channel.
     if (eqWindow != nullptr && eqWindow->isVisible() && index != kRecorderSelect)
         openEqWindow (index, false);
+    if (auto* v = correctionView(); v != nullptr && corrWindow->isVisible() && ! v->isBusy())
+        v->showOutput (index);   // ignored for anything but a hardware output
 }
 
 auto MainComponent::windowControlAt (juce::Point<float> p) const -> WindowControlKind
@@ -618,6 +632,7 @@ void MainComponent::rebuildStrips()
 {
     shownLayout = ctx.engine.getLayoutVersion();
     strips.rebuild();
+    if (sidePanel != nullptr) sidePanel->rebuild();
     shownSelBus = -2; // re-apply the SEL fader target to the new strips
     resized();
     if (! isChannelShown (ctx.selected))
@@ -628,6 +643,7 @@ void MainComponent::rebuildStrips()
     if (eqWindow != nullptr)
         if (auto* ed = dynamic_cast<EqEditor*> (eqWindow->getContentComponent()); ed != nullptr && ! isChannelShown (ed->getSelectIndex()))
             eqWindow.reset();
+    if (onChannelsChanged) onChannelsChanged();
 }
 
 void MainComponent::scrollToChannel (int sel)
@@ -662,38 +678,144 @@ void MainComponent::removeChannel (int sel)
                      juce::String ("Its settings, plugins, MIDI mappings and shortcuts are reset")
                          + (isInput ? "." : ", and no input is routed to it any more.")
                          + " The channel can be added again with the + button.",
-                     "Remove", [safe, sel]
-    {
-        if (safe == nullptr) return;
-        auto& self = *safe;
-        auto& e = self.ctx.engine;
-        // Leave the channel first: the inspector / EQ window hold references to its plugins and parameters.
-        if (self.ctx.selected == sel)
-        {
-            int other = -1;
-            for (int i = 0; i < kMaxInputs && other < 0; ++i)
-                if (i != sel && e.isInputActive (i)) other = i;
-            self.select (other >= 0 ? other : busSelectIndex (0));
-        }
-        if (self.eqWindow != nullptr)
-            if (auto* ed = dynamic_cast<EqEditor*> (self.eqWindow->getContentComponent()); ed != nullptr && ed->getSelectIndex() == sel)
-                self.eqWindow.reset();
+                     "Remove", [safe, sel] { if (safe != nullptr) safe->removeChannelNow (sel); });
+}
 
-        const auto reset = sel < kMaxInputs ? e.removeInput (sel) : e.removeBus (sel - kMaxInputs);
-        for (auto* p : reset)
+void MainComponent::removeChannelNow (int sel)
+{
+    removeChannelCore (sel);
+    rebuildStrips();
+    showToast (channelCode (sel) + " removed", 2.0);
+}
+
+void MainComponent::removeChannelCore (int sel)
+{
+    auto& e = ctx.engine;
+    if (! isChannelShown (sel)) return;
+    closePanelWindow();
+    // Leave the channel first: the inspector / EQ window hold references to its plugins and parameters.
+    if (ctx.selected == sel)
+    {
+        int other = -1;
+        for (int i = 0; i < kMaxInputs && other < 0; ++i)
+            if (i != sel && e.isInputActive (i)) other = i;
+        select (other >= 0 ? other : busSelectIndex (0));
+    }
+    if (eqWindow != nullptr)
+        if (auto* ed = dynamic_cast<EqEditor*> (eqWindow->getContentComponent()); ed != nullptr && ed->getSelectIndex() == sel)
+            eqWindow.reset();
+
+    const auto reset = sel < kMaxInputs ? e.removeInput (sel) : e.removeBus (sel - kMaxInputs);
+    for (auto* p : reset)
+    {
+        if (ctx.midi.hasMapping (p)) ctx.midi.removeMappingsFor (p);
+        if (ctx.hotkeys.getKeyFor (p).isValid()) ctx.hotkeys.remove (p);
+    }
+    undo.forget (reset);
+}
+
+void MainComponent::cutChannel (int sel)
+{
+    if (! isChannelShown (sel) || sel == kRecorderSelect) return;
+    auto& e = ctx.engine;
+    if (sel < kMaxInputs ? e.numActiveInputs() <= 1 : (isHwBus (sel - kMaxInputs) && e.numActiveBuses (false) <= 1)) return;
+    clip::toClipboard (*clip::copyChannel (e, sel));
+    removeChannelNow (sel);
+    showToast (channelCode (sel) + " cut  -  right-click next to the strips: Paste as new channel", 3.0);
+}
+
+void MainComponent::pasteNewChannel (int group)
+{
+    auto x = clip::fromClipboard();
+    if (x == nullptr) return;
+    const int sel = clip::pasteAsNewChannel (ctx.engine, group, *x);
+    if (sel < 0)
+    {
+        showToast (clip::canPasteAsNew (x.get(), group) ? "No free channel left in this group" : "The clipboard holds no channel of this kind", 2.5);
+        return;
+    }
+    rebuildStrips();
+    select (sel);
+    scrollToChannel (sel);
+}
+
+void MainComponent::duplicateChannel (int sel)
+{
+    if (! isChannelShown (sel) || sel == kRecorderSelect) return;
+    auto& e = ctx.engine;
+    const bool isInput = sel < kMaxInputs;
+    const int slot = isInput ? sel : sel - kMaxInputs;
+    const int group = isInput ? 0 : isHwBus (slot) ? 1 : 2;
+    auto xml = clip::copyChannel (e, sel);
+    xml->setAttribute ("name", xml->getStringAttribute ("name") + " 2");
+    const int copy = clip::pasteAsNewChannel (e, group, *xml);
+    if (copy < 0) { showToast ("No free channel left in this group", 2.5); return; }
+
+    // The copy goes right after its original: the channels after it move one place (with their MIDI / shortcuts).
+    const int copySlot = isInput ? copy : copy - kMaxInputs;
+    std::vector<int> order;
+    const int first = group == 2 ? virtBusIndex (0) : 0;
+    const int count = group == 0 ? kMaxInputs : group == 1 ? kMaxHwBuses : kMaxVirtBuses;
+    for (int k = first; k < first + count; ++k)
+        if ((isInput ? e.isInputActive (k) : e.isBusActive (k)) && k != copySlot)
         {
-            if (self.ctx.midi.hasMapping (p)) self.ctx.midi.removeMappingsFor (p);
-            if (self.ctx.hotkeys.getKeyFor (p).isValid()) self.ctx.hotkeys.remove (p);
+            order.push_back (k);
+            if (k == slot) order.push_back (copySlot);
         }
-        self.undo.forget (reset);
-        self.rebuildStrips();
-        self.showToast (channelCode (sel) + " removed", 2.0);
-    });
+    int target = copy;
+    const auto plan = e.reorderPlan ((Engine::Group) group, order);
+    if (e.reorderChannels ((Engine::Group) group, order))
+    {
+        ctx.midi.remapParams (plan);
+        ctx.hotkeys.remapParams (plan);
+        undo.clear();
+        target = sel + 1;   // the copy now sits in the slot after the original
+        auto used = order;
+        std::sort (used.begin(), used.end());
+        for (size_t k = 0; k < order.size(); ++k)
+            if (order[k] == copySlot) target = isInput ? used[k] : busSelectIndex (used[k]);
+    }
+    deviceWindow.reset();
+    rebuildStrips();
+    ctx.selected = -1;
+    select (target);
+    inspector.reload();
+    scrollToChannel (target);
+}
+
+void MainComponent::openPanelWindow (std::unique_ptr<juce::Component> content, const juce::String& title)
+{
+    // One window for the settings of all effects: it keeps its place when another effect's settings open in it.
+    const int w = content->getWidth(), h = content->getHeight();
+    if (panelWindow == nullptr)
+    {
+        auto& window = makeToolWindow (panelWindow, title, content.release(), w, h);
+        window.setResizable (false, false);
+        window.onKey = [this] (const juce::KeyPress& k)
+        {
+            if (k == juce::KeyPress::escapeKey) { closePanelWindow(); return true; }
+            return handleUndoKey (k);
+        };
+        window.onClose = [this] { closePanelWindow(); };
+    }
+    else
+        panelWindow->replaceContent (content.release(), title);
+    panelWindow->setBackgroundColour (theme::panel);
+    panelWindow->setContentComponentSize (w, h);
+    panelWindow->setVisible (true);
+    panelWindow->toFront (true);
+}
+
+void MainComponent::closePanelWindow()
+{
+    if (panelWindow == nullptr) return;
+    panelWindow->setVisible (false);
+    panelWindow->clearContentComponent();   // stops the panel's timer; it is created anew when opened again
 }
 
 void MainComponent::beginReorder()
 {
-    panelHost.close();
+    closePanelWindow();
     if (ctx.learnMode)
     {
         ctx.learnMode = false;
@@ -707,6 +829,7 @@ void MainComponent::beginReorder()
 void MainComponent::discardReorder()
 {
     if (! strips.isReordering()) return;
+    reorderRemoved = 0;
     rebuildStrips(); // back to the real order
 }
 
@@ -714,6 +837,13 @@ void MainComponent::finishReorder()
 {
     if (! strips.isReordering()) return;
     auto& e = ctx.engine;
+    // Channels deleted with the trash can go first: the order then covers exactly the channels that stay.
+    for (int sel : strips.getRemovedChannels())
+    {
+        removeChannelCore (sel);
+        ++reorderRemoved;
+    }
+    strips.clearRemovedChannels();
     const auto order = strips.getShownOrder();
     std::vector<std::pair<Param*, Param*>> moves;
     for (int g = 0; g < 3; ++g)
@@ -722,7 +852,9 @@ void MainComponent::finishReorder()
     if (moves.empty())
     {
         rebuildStrips();
-        showToast ("Order unchanged", 1.5);
+        showToast (reorderRemoved > 0 ? juce::String (reorderRemoved) + (reorderRemoved == 1 ? " channel deleted" : " channels deleted")
+                                      : juce::String ("Order unchanged"), 2.0);
+        reorderRemoved = 0;
         return;
     }
 
@@ -737,7 +869,7 @@ void MainComponent::finishReorder()
     // An example with the first MIDI mapping on a moved strip makes the choice concrete.
     juce::String example;
     auto nameOf = [&e] (int g, int slot) { return g == 0 ? e.inputs[(size_t) slot].name : e.buses[(size_t) slot].name; };
-    auto codeOf = [] (int g, int slot) { return g == 0 ? channelCode (slot) : busCode (slot); };
+    auto codeOf = [] (int g, int slot) { return g == 0 ? channelCode (slot) : busLabel (slot); };
     const auto mappings = ctx.midi.getMappings();
     for (int g = 0; g < 3 && example.isEmpty(); ++g)
     {
@@ -804,7 +936,8 @@ void MainComponent::applyReorder (const std::array<std::vector<int>, 3>& order, 
     if (eqWindow != nullptr)
         if (auto* ed = dynamic_cast<EqEditor*> (eqWindow->getContentComponent())) eqChannel = ed->getSelectIndex();
     eqWindow.reset();       // holds references to the old slot's EQ
-    panelHost.close();
+    const int corrChannel = correctionView() != nullptr ? correctionView()->getOutput() : -1;
+    closePanelWindow();
 
     // One group after the other: a routing parameter can move with its input and then with its bus,
     // so assignments are remapped step by step too.
@@ -829,9 +962,13 @@ void MainComponent::applyReorder (const std::array<std::vector<int>, 3>& order, 
     select (sel);
     inspector.reload();
     if (eqChannel >= 0) openEqWindow (newIndex (eqChannel), false);
-    showToast (assigned == 0 ? juce::String ("New order applied")
-               : follow ? juce::String ("New order applied  -  MIDI assignments and shortcuts follow their channels")
-                        : juce::String ("New order applied  -  MIDI assignments and shortcuts stay on their positions"), 3.0);
+    if (corrChannel >= 0) correctionView()->showOutput (newIndex (corrChannel));   // the window follows its output
+    const auto deleted = reorderRemoved > 0 ? juce::String (", ") + juce::String (reorderRemoved) + (reorderRemoved == 1 ? " channel deleted" : " channels deleted")
+                                            : juce::String();
+    reorderRemoved = 0;
+    showToast (assigned == 0 ? "New order applied" + deleted
+               : follow ? "New order applied" + deleted + "  -  MIDI assignments and shortcuts follow their channels"
+                        : "New order applied" + deleted + "  -  MIDI assignments and shortcuts stay on their positions", 3.0);
 }
 
 void MainComponent::setUiScale (float scale)
@@ -846,19 +983,30 @@ void MainComponent::setUiScale (float scale)
 void MainComponent::fontScaleChanged()
 {
     strips.rebuild();
+    sidePanel.reset();   // recreated by resized() with the new colours / fonts
     shownSelBus = -2;
     inspector.reload();
-    panelHost.close();
+    closePanelWindow();
     resized();
     repaint();
 }
 
-void MainComponent::openEqWindow (int index, bool bringToFront)
+void MainComponent::themeChanged()
 {
-    if (index < 0 || index >= kRecorderSelect) return;
-    auto* editor = new EqEditor (ctx, index);
-    if (! isChannelShown (index)) return;
-    const auto title = "Hydra Mixer - EQ " + channelCode (index);
+    fontScaleChanged();   // both rebuild what captured its colours when it was created
+    for (int i = juce::TopLevelWindow::getNumTopLevelWindows(); --i >= 0;)
+        if (auto* w = juce::TopLevelWindow::getTopLevelWindow (i))
+        {
+            if (auto* doc = dynamic_cast<juce::DocumentWindow*> (w)) doc->setBackgroundColour (theme::bg);
+            w->sendLookAndFeelChange();
+        }
+}
+
+void MainComponent::openEqWindow (int index, bool bringToFront, int instance)
+{
+    if (index < 0 || index >= kRecorderSelect || ! isChannelShown (index)) return;
+    auto* editor = new EqEditor (ctx, index, instance);
+    const auto title = "Hydra Mixer - EQ " + channelCode (index) + (instance > 0 ? " (EQ " + juce::String (instance + 1) + ")" : juce::String());
     if (eqWindow == nullptr)
         makeToolWindow (eqWindow, title, editor, editor->getWidth(), editor->getHeight(), juce::DocumentWindow::allButtons);
     else
@@ -872,11 +1020,45 @@ void MainComponent::openEqWindow (int index, bool bringToFront)
     }
 }
 
+CorrectionView* MainComponent::correctionView() const
+{
+    return corrWindow != nullptr ? dynamic_cast<CorrectionView*> (corrWindow->getContentComponent()) : nullptr;
+}
+
+void MainComponent::openCorrectionWindow (int index, bool measure)
+{
+    // One window for the correction and the measurement; created once (a running measurement lives in it).
+    if (corrWindow == nullptr)
+    {
+        auto* view = new CorrectionView (ctx);
+        makeToolWindow (corrWindow, "Hydra Mixer - Room Correction", view, view->getWidth(), view->getHeight(), juce::DocumentWindow::allButtons);
+        corrWindow->setResizeLimits (1100, 820, 8000, 4000);
+    }
+    auto* view = correctionView();
+    // Which output: the one asked for, else the one shown, else the selected one, else the first hardware output.
+    int output = ctx.engine.correctionFor (index) != nullptr ? index : view->getOutput();
+    if (output < 0 && ctx.engine.correctionFor (ctx.selected) != nullptr) output = ctx.selected;
+    for (int b = 0; output < 0 && b < kMaxBuses; ++b)
+        if (ctx.engine.isBusActive (b) && ctx.engine.correctionFor (kMaxInputs + b) != nullptr) output = kMaxInputs + b;
+    if (! view->isBusy()) view->showOutput (output);
+    view->showPage (measure ? CorrectionView::Page::wizard : CorrectionView::Page::correction);
+    corrWindow->setVisible (true);
+    corrWindow->toFront (true);
+}
+
+void MainComponent::stripLayoutChanged()
+{
+    resized();   // the side panel may come or go
+    strips.resized();
+    strips.repaint();
+}
+
 void MainComponent::refreshAll()
 {
     if (ctx.engine.getLayoutVersion() != shownLayout)
         rebuildStrips();
     strips.refreshStrips();
+    if (sidePanel != nullptr) sidePanel->refresh();
     inspector.repaint();
 }
 
@@ -937,7 +1119,9 @@ void MainComponent::showToolsMenu()
     m.addItem ("Latency Finder...", run (&MainComponent::openLatencyFinder));
     m.addItem ("Sync Delay...", run (&MainComponent::openSyncDelay));
     m.addItem ("DSP Load...", run (&MainComponent::openDspView));
-    m.addItem ("Room Measurement...", run (&MainComponent::openRoomMeasurement));
+    m.addItem ("Room Correction...", [safe] { if (safe != nullptr) safe->openRoomMeasurement(); });
+    if (ctx.session != nullptr && ctx.session->vacCables != nullptr && ctx.session->vacCables->isAvailable())
+        m.addItem ("Cable Manager (debug)...", run (&MainComponent::openCableManager));
     m.addItem ("Recorder", [safe] { if (safe != nullptr) safe->select (kRecorderSelect); });
     m.addSeparator();
     m.addItem ("Restart Audio Engine", run (&MainComponent::restartAudioEngine));
@@ -954,7 +1138,7 @@ void MainComponent::openSettings (int tab)
         {
             undo.clear();
             refreshAll();
-            panelHost.close();
+            closePanelWindow();
             inspector.reload();
             showToast ("Settings loaded", 2.5);
         };
@@ -1001,13 +1185,25 @@ void MainComponent::openSyncDelay()
     syncWindow->toFront (true);
 }
 
-void MainComponent::openRoomMeasurement()
+void MainComponent::openCableManager()
 {
-    if (roomWindow == nullptr)
-        makeToolWindow (roomWindow, "Hydra Mixer - Room Measurement", new RoomView (ctx), 1320, 860, juce::DocumentWindow::allButtons);
-    roomWindow->setResizeLimits (1100, 720, 8000, 4000);
-    roomWindow->setVisible (true);
-    roomWindow->toFront (true);
+    if (cableWindow == nullptr)
+    {
+        auto* manager = new CableManager (ctx);
+        manager->onClose = [safe = juce::Component::SafePointer<MainComponent> (this)]
+        {
+            if (safe != nullptr && safe->cableWindow != nullptr) safe->cableWindow->setVisible (false);
+        };
+        makeToolWindow (cableWindow, "Hydra Mixer - Cable Manager", manager, 1100, 560);
+    }
+    cableWindow->setResizeLimits (860, 320, 8000, 4000);
+    cableWindow->setVisible (true);
+    cableWindow->toFront (true);
+}
+
+void MainComponent::openRoomMeasurement (int outputSelect)
+{
+    openCorrectionWindow (outputSelect, true);
 }
 
 void MainComponent::openDevicePicker (int channel)
@@ -1089,11 +1285,6 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
     }
     if (handleUndoKey (k))
         return true;
-    if (k == juce::KeyPress::escapeKey && panelHost.isOpen() && ! ctx.learnMode)
-    {
-        panelHost.close();
-        return true;
-    }
     if (k == juce::KeyPress::escapeKey && ctx.learnMode)
     {
         ctx.learnMode = false;
@@ -1163,6 +1354,24 @@ void MainComponent::paintOverChildren (juce::Graphics& g)
     }
 }
 
+juce::Point<int> MainComponent::fittingSize() const
+{
+    // Logical units as in resized(): top bar, strips, inspector; scene bar left, side panel right (if it would be shown).
+    const auto s = strips.fittingSize();
+    int w = s.x;
+    if (ctx.session != nullptr && ctx.session->prefs.sidePanel)
+    {
+        const int needed = (int) std::ceil ((float) strips.idealWidthFor (s.y) * 1.12f);
+        int total = juce::jmax (s.x, needed);
+        for (int k = 0; k < 4; ++k)   // the side panel's width depends on the room it gets
+            total = juce::jmax (s.x, needed) + juce::jlimit (SidePanel::kMinWidth, SidePanel::kMaxWidth, total * 26 / 100) + 8 + 1;
+        w = total;
+    }
+    w += sceneBar != nullptr ? sceneBar->getWidth() : 0;
+    const int h = 54 + 4 + s.y + 236;
+    return { (int) std::ceil ((float) w * uiScale), (int) std::ceil ((float) h * uiScale) };
+}
+
 int MainComponent::idealWidth() const
 {
     const int logical = strips.idealWidth() + (sceneBar != nullptr ? sceneBar->getWidth() : 0);
@@ -1173,7 +1382,7 @@ void MainComponent::resized()
 {
     // Children are laid out in logical units and drawn scaled by uiScale.
     const auto scale = juce::AffineTransform::scale (uiScale);
-    for (juce::Component* c : { (juce::Component*) &top, (juce::Component*) &strips, (juce::Component*) &inspector, (juce::Component*) &panelHost })
+    for (juce::Component* c : { (juce::Component*) &top, (juce::Component*) &strips, (juce::Component*) &inspector })
         c->setTransform (scale);
 
     auto r = juce::Rectangle<int> (0, 0, logicalWidth(), logicalHeight());
@@ -1185,9 +1394,24 @@ void MainComponent::resized()
         sceneBar->setBounds (r.removeFromLeft (juce::jmin (SceneSidebar::kWidth, r.getWidth() / 2)).withTrimmedBottom (4));
     }
     inspector.setBounds (r.removeFromBottom (236).reduced (8, 4));
+
+    // Side panel: only while the strips (with their "+" placeholders and some room to grow) leave enough space.
+    const int sideW = juce::jlimit (SidePanel::kMinWidth, SidePanel::kMaxWidth, r.getWidth() * 26 / 100);
+    const bool side = ctx.session != nullptr && ctx.session->prefs.sidePanel
+                   && (float) strips.idealWidthFor (r.getHeight()) * 1.12f + (float) sideW + 8.0f <= (float) r.getWidth();
+    if (side && sidePanel == nullptr)
+    {
+        sidePanel = std::make_unique<SidePanel> (ctx);
+        addAndMakeVisible (*sidePanel);
+    }
+    else if (! side)
+        sidePanel.reset();
+    if (sidePanel != nullptr)
+    {
+        sidePanel->setTransform (scale);
+        sidePanel->setBounds (r.removeFromRight (sideW).reduced (0, 4).withTrimmedRight (6));
+        r.removeFromRight (8);
+    }
     strips.setBounds (r);
-    if (panelHost.isOpen())
-        panelHost.setTopLeftPosition (juce::jlimit (8, juce::jmax (8, logicalWidth() - panelHost.getWidth() - 8), panelHost.getX()),
-                                      inspector.getY() - panelHost.getHeight() - 10);
 }
 } // namespace hydra

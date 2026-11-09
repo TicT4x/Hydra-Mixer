@@ -1,10 +1,21 @@
-#include "Settings.h"
+﻿#include "Settings.h"
 #include "state/VoicemeeterImport.h"
 #include "state/Session.h"
 #include "state/Autostart.h"
+#include "state/VacCables.h"
+#include "engine/NetLink.h"
+#include "remote/RemoteControl.h"
+#include "remote/QrCode.h"
 
 namespace hydra
 {
+/** Puts an "i" right after a title label's text. */
+static void placeInfoAfter (InfoButton& info, const juce::Label& title)
+{
+    const int w = juce::GlyphArrangement::getStringWidthInt (title.getFont(), title.getText());
+    info.setBounds (title.getX() + w + 10, title.getY() + (title.getHeight() - InfoButton::kSize) / 2, InfoButton::kSize, InfoButton::kSize);
+}
+
 namespace
 {
 void styleLabel (juce::Label& l, bool dim = true, float size = 13.0f)
@@ -13,8 +24,102 @@ void styleLabel (juce::Label& l, bool dim = true, float size = 13.0f)
     l.setColour (juce::Label::textColourId, dim ? theme::textDim : theme::text);
 }
 
+/** Base of every settings page, so they all look alike: sections with a small title in capitals (optionally
+    with an "i" that explains it), a fine line between the sections, rows with a label column. */
+class SettingsPage : public juce::Component
+{
+public:
+    struct Heading { juce::Label title; InfoButton info; };
+    static constexpr int kLabelWidth = 150, kLine = 30, kMaxWidth = 660;
+
+    void paint (juce::Graphics& g) override
+    {
+        g.setColour (theme::outline.withAlpha (0.6f));
+        for (auto& d : dividers) g.fillRect (d);
+    }
+
+protected:
+    void addHeading (Heading& h, const juce::String& text, const juce::String& info = {}, bool visible = true)
+    {
+        addChildComponent (h.title);
+        h.title.setText (text.toUpperCase(), juce::dontSendNotification);
+        h.title.setFont (theme::font (12.0f, true));
+        h.title.setColour (juce::Label::textColourId, theme::textDim);
+        h.title.setBorderSize ({});
+        h.title.setVisible (visible);
+        if (info.isNotEmpty())
+        {
+            h.info.setText (text + "\n" + info);
+            addChildComponent (h.info);
+            h.info.setVisible (visible);
+        }
+    }
+    static void showHeading (Heading& h, bool shown)
+    {
+        h.title.setVisible (shown);
+        if (h.info.getParentComponent() != nullptr) h.info.setVisible (shown);
+    }
+
+    /** Start of resized(): the area of the page. */
+    juce::Rectangle<int> beginLayout()
+    {
+        dividers.clear();
+        firstSection = true;
+        return getLocalBounds().reduced (24, 18);
+    }
+    /** A new section at the top of r (with a line above it, except the first one). Returns the title's row
+        (room right of the title is free for buttons). */
+    juce::Rectangle<int> section (juce::Rectangle<int>& r, Heading& h)
+    {
+        if (! firstSection)
+        {
+            r.removeFromTop (14);
+            dividers.push_back (r.removeFromTop (1));
+            r.removeFromTop (14);
+        }
+        firstSection = false;
+        auto row = r.removeFromTop (22);
+        h.title.setBounds (row);
+        if (h.info.getParentComponent() != nullptr) placeInfoAfter (h.info, h.title);
+        r.removeFromTop (8);
+        return row;
+    }
+    /** Label in the label column, the control right of it (at most w wide). */
+    static void labelled (juce::Rectangle<int>& r, juce::Label& l, juce::Component& c, int w = 380)
+    {
+        auto line = r.removeFromTop (kLine);
+        l.setBounds (line.removeFromLeft (kLabelWidth));
+        c.setBounds (line.withWidth (juce::jmin (w, line.getWidth())));
+        r.removeFromTop (8);
+    }
+    /** A check box line. */
+    static void option (juce::Rectangle<int>& r, juce::Component& b)
+    {
+        b.setBounds (r.removeFromTop (28).withWidth (juce::jmin (kMaxWidth, r.getWidth())));
+    }
+
+private:
+    std::vector<juce::Rectangle<int>> dividers;
+    bool firstSection = true;
+};
+
+/** Check box bound to one of the app preferences (stored with the session). */
+void bindPref (UiContext& ctx, juce::ToggleButton& b, bool Session::AppPrefs::* field, const juce::String& text, const juce::String& tip = {})
+{
+    b.setButtonText (text);
+    if (tip.isNotEmpty()) b.setTooltip (tip);
+    b.setToggleState (ctx.session != nullptr && ctx.session->prefs.*field, juce::dontSendNotification);
+    b.onClick = [&ctx, &b, field]
+    {
+        if (ctx.session == nullptr) return;
+        ctx.session->prefs.*field = b.getToggleState();
+        ctx.session->prefsVersion.fetch_add (1);
+        if (ctx.prefsChanged) ctx.prefsChanged();
+    };
+}
+
 //==============================================================================
-class AudioTab final : public juce::Component, private juce::Timer
+class AudioTab final : public SettingsPage, private juce::Timer
 {
 public:
     AudioTab (UiContext& c, std::function<void()> changed) : ctx (c), onChanged (std::move (changed))
@@ -24,14 +129,14 @@ public:
         addAndMakeVisible (apply);
         addAndMakeVisible (panel);
         addAndMakeVisible (status);
-        addAndMakeVisible (info);
         styleLabel (status, false);
-        styleLabel (info);
-        info.setJustificationType (juce::Justification::topLeft);
-        info.setText ("The master device is the clock of the whole mixer. All of its inputs/outputs are "
-                      "processed with zero extra buffering. Use an ASIO driver here for the lowest possible "
-                      "latency; every other device is synchronised automatically with an adaptive, "
-                      "self-tuning drift compensator.", juce::dontSendNotification);
+        status.setJustificationType (juce::Justification::topLeft);
+        addHeading (masterH, "Master device",
+                    "The master device is the clock of the whole mixer. All of its inputs/outputs are "
+                    "processed with zero extra buffering. Use an ASIO driver here for the lowest possible "
+                    "latency; every other device is synchronised automatically with an adaptive, "
+                    "self-tuning drift compensator.");
+        addHeading (statusH, "Status");
 
         for (auto* t : ctx.engine.getDeviceTypes())
             typeBox.addItem (t->getTypeName(), typeBox.getNumItems() + 1);
@@ -51,26 +156,18 @@ public:
 
     void resized() override
     {
-        auto r = getLocalBounds().reduced (24, 20);
-        auto row = [&r] (juce::Label& l, juce::Component& c)
-        {
-            auto line = r.removeFromTop (30);
-            l.setBounds (line.removeFromLeft (130));
-            c.setBounds (line.withWidth (juce::jmin (420, line.getWidth())));
-            r.removeFromTop (10);
-        };
-        row (typeL, typeBox);
-        row (devL, devBox);
-        row (rateL, rateBox);
-        row (bufL, bufBox);
-        auto buttons = r.removeFromTop (32).withTrimmedLeft (130);
+        auto r = beginLayout();
+        section (r, masterH);
+        labelled (r, typeL, typeBox, 420);
+        labelled (r, devL, devBox, 420);
+        labelled (r, rateL, rateBox, 420);
+        labelled (r, bufL, bufBox, 420);
+        auto buttons = r.removeFromTop (32).withTrimmedLeft (kLabelWidth);
         apply.setBounds (buttons.removeFromLeft (150));
         buttons.removeFromLeft (10);
         panel.setBounds (buttons.removeFromLeft (190));
-        r.removeFromTop (16);
-        status.setBounds (r.removeFromTop (44));
-        r.removeFromTop (8);
-        info.setBounds (r.removeFromTop (80));
+        section (r, statusH);
+        status.setBounds (r.removeFromTop (44).withWidth (juce::jmin (kMaxWidth + 100, r.getWidth())));
     }
 
 private:
@@ -90,7 +187,7 @@ private:
         devBox.clear (juce::dontSendNotification);
         if (auto* t = ctx.engine.findType (typeBox.getText()))
         {
-            t->scanForDevices();
+            // No scan here (it froze the window): the lists are read at start and JUCE updates them on device changes.
             for (auto& n : t->getDeviceNames (false))
                 devBox.addItem (n, devBox.getNumItems() + 1);
             const int def = t->getDefaultDeviceIndex (false);
@@ -137,14 +234,18 @@ private:
         if (onChanged) onChanged();
     }
 
+    Engine::LoadMeter loadMeter;
+
     void timerCallback() override
     {
+        if (! isShowing()) return;
         auto& e = ctx.engine;
         juce::String s;
         if (auto* d = e.getMasterDevice())
             s << "Running: " << d->getName() << "  |  " << (int) e.getSampleRate() << " Hz  |  "
-              << d->getCurrentBufferSizeSamples() << " samples  |  in+out latency ~" << juce::String (e.getMasterLatencyMs(), 2)
-              << " ms  |  DSP load " << juce::String (e.getCpuLoad() * 100.0f, 1) << " %";
+              << d->getCurrentBufferSizeSamples() << " samples\nIn + out latency ~" << juce::String (e.getMasterLatencyMs(), 2)
+              << " ms  |  DSP load " << juce::String (loadMeter.update (e) * 100.0f, 1) << " % (peak "
+              << juce::String (e.getPeakLoad() * 100.0f, 0) << " %)";
         else
             s << "Stopped. " << e.getLastError();
         status.setText (s, juce::dontSendNotification);
@@ -155,26 +256,29 @@ private:
     juce::Label typeL { {}, "Driver" }, devL { {}, "Device" }, rateL { {}, "Sample rate" }, bufL { {}, "Buffer size" };
     juce::ComboBox typeBox, devBox, rateBox, bufBox;
     juce::TextButton apply { "Apply / Restart" }, panel { "ASIO Control Panel" };
-    juce::Label status, info;
+    juce::Label status;
+    Heading masterH, statusH;
 };
 
 //==============================================================================
-class MidiTab final : public juce::Component
+class MidiTab final : public SettingsPage
 {
 public:
     explicit MidiTab (UiContext& c) : ctx (c)
     {
-        addAndMakeVisible (inL); styleLabel (inL);
         addAndMakeVisible (outL); styleLabel (outL);
         addAndMakeVisible (outBox);
         addAndMakeVisible (refresh);
-        addAndMakeVisible (help); styleLabel (help);
-        help.setJustificationType (juce::Justification::topLeft);
-        help.setText ("MIDI learn: right-click ANY control in the mixer and choose \"MIDI Learn\", "
-                      "or enable MIDI Learn Mode in the Tools menu (wrench) and click controls one after another, moving a "
-                      "hardware knob/fader/button after each click. Buttons toggle, faders/knobs track absolute "
-                      "values (Pitch-Bend faders supported). The feedback output sends values back to "
-                      "LEDs / motor faders.", juce::dontSendNotification);
+        addHeading (inH, "Controllers (MIDI inputs)",
+                    "MIDI learn: right-click ANY control in the mixer and choose \"MIDI Learn\", "
+                    "or enable MIDI Learn Mode in the Tools menu (wrench) and click controls one after another, moving a "
+                    "hardware knob/fader/button after each click. Buttons toggle, faders/knobs track absolute "
+                    "values (Pitch-Bend faders supported).");
+        addHeading (feedbackH, "Feedback", "Sends the values back to the controller: LEDs light up, motor faders move.");
+        addHeading (ledH, "LED feedback profile",
+                    "Pad colours by velocity. Active = button on, Inactive = mapped but off, Unbound = no mapping, "
+                    "Muted row = unbound pads in a row whose channel is muted. APC mini mk1: 0 off, 1 green, 3 red, "
+                    "5 yellow (2 / 4 / 6 = blinking).");
         refresh.onClick = [this] { rebuild(); };
         outBox.onChange = [this]
         {
@@ -190,11 +294,6 @@ public:
 
         addAndMakeVisible (ledL); styleLabel (ledL);
         addAndMakeVisible (ledBox);
-        addAndMakeVisible (ledHelp); styleLabel (ledHelp, true, 12.0f);
-        ledHelp.setJustificationType (juce::Justification::topLeft);
-        ledHelp.setText ("Pad colours by velocity. Active = button on, Inactive = mapped but off, Unbound = no mapping, "
-                         "Muted row = unbound pads in a row whose channel is muted. APC mini mk1: 0 off, 1 green, 3 red, "
-                         "5 yellow (2 / 4 / 6 = blinking).", juce::dontSendNotification);
         const auto presets = LedProfile::presets();
         for (int i = 0; i < (int) presets.size(); ++i) ledBox.addItem (presets[(size_t) i].name, i + 1);
         ledBox.addItem ("Custom", 100);
@@ -282,69 +381,61 @@ public:
 
     void resized() override
     {
-        auto r = getLocalBounds().reduced (24, 20);
-        auto top = r.removeFromTop (30);
-        inL.setBounds (top.removeFromLeft (200));
-        refresh.setBounds (top.removeFromRight (110));
+        auto r = beginLayout();
+        auto top = section (r, inH);
+        refresh.setBounds (top.removeFromRight (110).withSizeKeepingCentre (110, 26));
+        for (auto& t : toggles) option (r, *t);
+        if (toggles.empty()) noDevices = r.removeFromTop (28);
         r.removeFromTop (4);
-        for (auto& t : toggles) t->setBounds (r.removeFromTop (28).withTrimmedLeft (8));
-        if (toggles.empty()) r.removeFromTop (28);
-        r.removeFromTop (16);
-        auto o = r.removeFromTop (30);
-        outL.setBounds (o.removeFromLeft (200));
-        outBox.setBounds (o.withWidth (juce::jmin (380, o.getWidth())));
-        r.removeFromTop (12);
-        faderTop.setBounds (r.removeFromTop (28).withTrimmedLeft (200).withWidth (juce::jmin (520, r.getWidth() - 200)));
-        r.removeFromTop (12);
-        auto l = r.removeFromTop (30);
-        ledL.setBounds (l.removeFromLeft (200));
-        ledBox.setBounds (l.withWidth (juce::jmin (380, l.getWidth())));
-        r.removeFromTop (6);
-        auto caps = r.removeFromTop (18).withTrimmedLeft (200);
-        auto vals = r.removeFromTop (26).withTrimmedLeft (200);
+        option (r, faderTop);
+        section (r, feedbackH);
+        labelled (r, outL, outBox);
+        section (r, ledH);
+        labelled (r, ledL, ledBox);
+        auto caps = r.removeFromTop (18).withTrimmedLeft (kLabelWidth);
+        auto vals = r.removeFromTop (26).withTrimmedLeft (kLabelWidth);
         const int w = juce::jmin (78, caps.getWidth() / 8);
         for (auto& f : fields)
         {
             f.caption.setBounds (caps.removeFromLeft (w));
             f.value.setBounds (vals.removeFromLeft (w).reduced (4, 0));
         }
-        r.removeFromTop (4);
-        ledHelp.setBounds (r.removeFromTop (34).withTrimmedLeft (200));
-        r.removeFromTop (12);
-        help.setBounds (r.removeFromTop (90));
     }
 
     void paint (juce::Graphics& g) override
     {
+        SettingsPage::paint (g);
         if (toggles.empty())
         {
             g.setColour (theme::textFaint);
             g.setFont (theme::font (12.5f));
-            g.drawText ("No MIDI input devices found.", 32, 54, 400, 24, juce::Justification::centredLeft);
+            g.drawText ("No MIDI input devices found.", noDevices, juce::Justification::centredLeft);
         }
     }
 
 private:
     UiContext& ctx;
-    juce::Label inL { {}, "MIDI inputs (controllers)" }, outL { {}, "Feedback output (LEDs, motor faders)" };
+    juce::Label outL { {}, "Output" };
     juce::ComboBox outBox;
     juce::TextButton refresh { "Refresh" };
     juce::ToggleButton faderTop { "MIDI faders stop at 0 dB (instead of +12 dB)" };
-    juce::Label help;
+    Heading inH, feedbackH, ledH;
+    juce::Rectangle<int> noDevices;
     std::vector<std::unique_ptr<juce::ToggleButton>> toggles;
-    juce::Label ledL { {}, "LED feedback profile" }, ledHelp;
+    juce::Label ledL { {}, "Profile" };
     juce::ComboBox ledBox;
     struct NumField { juce::Label caption, value; };
     std::array<NumField, 8> fields;
 };
 
 //==============================================================================
-class PluginTab final : public juce::Component, private juce::Timer, private juce::Thread
+class PluginTab final : public SettingsPage, private juce::Timer, private juce::Thread
 {
 public:
     explicit PluginTab (UiContext& c) : juce::Thread ("Plugin scan"), ctx (c)
     {
-        addAndMakeVisible (pathsL); styleLabel (pathsL);
+        addHeading (pathsH, "VST3 search folders", "One folder per line. Scanning looks for VST3 plugins in these folders "
+                                                   "and their subfolders. Plugins that crash during a scan are blacklisted automatically.");
         addAndMakeVisible (paths);
         paths.setMultiLine (true);
         paths.setReturnKeyStartsNewLine (true);
@@ -370,14 +461,14 @@ public:
 
     void resized() override
     {
-        auto r = getLocalBounds().reduced (24, 20);
-        pathsL.setBounds (r.removeFromTop (24));
-        paths.setBounds (r.removeFromTop (110));
+        auto r = beginLayout();
+        section (r, pathsH);
+        paths.setBounds (r.removeFromTop (110).withWidth (juce::jmin (kMaxWidth, r.getWidth())));
         r.removeFromTop (12);
         auto row = r.removeFromTop (32);
         scan.setBounds (row.removeFromLeft (160));
         row.removeFromLeft (12);
-        bar.setBounds (row.withHeight (22).withY (row.getY() + 5));
+        bar.setBounds (row.withHeight (22).withY (row.getY() + 5).withWidth (juce::jmin (kMaxWidth - 172, row.getWidth())));
         r.removeFromTop (10);
         status.setBounds (r.removeFromTop (40));
     }
@@ -415,7 +506,7 @@ private:
     }
 
     UiContext& ctx;
-    juce::Label pathsL { {}, "VST3 search folders (one per line)" };
+    Heading pathsH;
     juce::TextEditor paths;
     juce::TextButton scan { "Scan for plugins" };
     double progress = 0.0;
@@ -433,13 +524,15 @@ class VoicemeeterSection final : public juce::Component
 public:
     VoicemeeterSection (UiContext& c, std::function<void()> changed) : ctx (c), onChanged (std::move (changed))
     {
-        addAndMakeVisible (title); styleLabel (title, false, 15.0f);
-        addAndMakeVisible (hint); styleLabel (hint);
-        hint.setJustificationType (juce::Justification::topLeft);
-        hint.setText ("Reads a Voicemeeter (Potato) settings XML (Voicemeeter: Menu -> Save Settings) and takes over "
+        addAndMakeVisible (title);
+        title.setText ("IMPORT FROM VOICEMEETER", juce::dontSendNotification);
+        title.setFont (theme::font (12.0f, true));
+        title.setColour (juce::Label::textColourId, theme::textDim);
+        title.setBorderSize ({});
+        addAndMakeVisible (hint);
+        hint.setText ("Import from Voicemeeter\nReads a Voicemeeter (Potato) settings XML (Voicemeeter: Menu -> Save Settings) and takes over "
                       "devices, ASIO channel patches, names, routing, faders, EQ, gate, compressor, denoiser and the "
-                      "MIDI mapping. Close Voicemeeter first so the ASIO driver is free. Your current Hydra settings are replaced.",
-                      juce::dontSendNotification);
+                      "MIDI mapping.\n\nClose Voicemeeter first so the ASIO driver is free. Your current Hydra settings are replaced.");
         addAndMakeVisible (files);
         addAndMakeVisible (browse);
         addAndMakeVisible (import);
@@ -448,13 +541,19 @@ public:
         report.setReadOnly (true);
         report.setFont (theme::mono (12.0f));
 
-        for (auto& f : VoicemeeterImport::findCandidates())
+        // Looking through Documents can take long (OneDrive): in the background, the window opens at once.
+        files.setTextWhenNothingSelected ("Looking for Voicemeeter settings in Documents...");
+        juce::Component::SafePointer<VoicemeeterSection> safe (this);
+        juce::Thread::launch ([safe]
         {
-            candidates.add (f);
-            files.addItem (f.getFileName() + "   (" + f.getLastModificationTime().formatted ("%d.%m.%Y %H:%M") + ")", candidates.size());
-        }
-        if (! candidates.isEmpty()) files.setSelectedId (1, juce::dontSendNotification);
-        else files.setTextWhenNothingSelected ("No Voicemeeter XML found in Documents - use Browse");
+            auto found = VoicemeeterImport::findCandidates();
+            juce::StringArray names;
+            for (auto& f : found) names.add (f.getFileName() + "   (" + f.getLastModificationTime().formatted ("%d.%m.%Y %H:%M") + ")");
+            juce::MessageManager::callAsync ([safe, found, names]
+            {
+                if (safe != nullptr) safe->addFound (found, names);
+            });
+        });
 
         browse.onClick = [this]
         {
@@ -485,8 +584,9 @@ public:
     void resized() override
     {
         auto r = getLocalBounds();
-        title.setBounds (r.removeFromTop (26));
-        hint.setBounds (r.removeFromTop (40));
+        title.setBounds (r.removeFromTop (22));
+        placeInfoAfter (hint, title);
+        r.removeFromTop (8);
         auto row = r.removeFromTop (30);
         import.setBounds (row.removeFromRight (120));
         row.removeFromRight (8);
@@ -498,9 +598,22 @@ public:
     }
 
 private:
+    void addFound (const juce::Array<juce::File>& found, const juce::StringArray& names)
+    {
+        const bool hadSelection = files.getSelectedId() != 0;   // a file chosen with Browse meanwhile stays selected
+        for (int i = 0; i < found.size(); ++i)
+        {
+            candidates.add (found[i]);
+            files.addItem (names[i], candidates.size());
+        }
+        if (! hadSelection && ! found.isEmpty()) files.setSelectedId (candidates.size() - found.size() + 1, juce::dontSendNotification);
+        if (candidates.isEmpty()) files.setTextWhenNothingSelected ("No Voicemeeter XML found in Documents - use Browse");
+    }
+
     UiContext& ctx;
     std::function<void()> onChanged;
-    juce::Label title { {}, "Import from Voicemeeter" }, hint;
+    juce::Label title;
+    InfoButton hint;
     juce::ComboBox files;
     juce::TextButton browse { "Browse..." }, import { "Import" };
     juce::TextEditor report;
@@ -510,7 +623,7 @@ private:
 
 //==============================================================================
 /** Export / import of the complete settings, restore of automatic backups and the Voicemeeter import. */
-class BackupTab final : public juce::Component
+class BackupTab final : public SettingsPage
 {
 public:
     BackupTab (UiContext& c, std::function<void()> replaced, std::function<void()> engineChanged)
@@ -522,14 +635,14 @@ public:
           })
     {
         addAndMakeVisible (voicemeeter);
-        for (auto* l : { &title, &backupTitle }) { addAndMakeVisible (l); styleLabel (*l, false, 15.0f); }
-        for (auto* l : { &hint, &backupHint, &status }) { addAndMakeVisible (l); styleLabel (*l); l->setJustificationType (juce::Justification::topLeft); }
-        hint.setText ("Saves everything (devices, routing, names, faders, EQ, dynamics, denoiser, plugins, MIDI map, "
-                      "keyboard shortcuts) to one file, e.g. to move it to another PC or keep it safe before an update.",
-                      juce::dontSendNotification);
-        backupHint.setText ("Hydra keeps a copy of your settings at every start and before every import (newest "
-                            + juce::String (Session::kMaxBackups) + "). An unreadable settings file is never overwritten.",
-                            juce::dontSendNotification);
+        addAndMakeVisible (status); styleLabel (status); status.setJustificationType (juce::Justification::topLeft);
+        addHeading (exportH, "Export / Import Settings",
+                    "Saves everything (devices, routing, names, faders, EQ, dynamics, denoiser, plugins, MIDI map, "
+                    "keyboard shortcuts) to one file, e.g. to move it to another PC or keep it safe before an update.");
+        addHeading (backupH, "Automatic Backups",
+                    "Hydra keeps a copy of your settings at every start and before every import (newest "
+                    + juce::String (Session::kMaxBackups) + "). An unreadable settings file is never overwritten.");
+        addHeading (vmH, {});   // only the line above the Voicemeeter import (it has its own title)
         for (auto* b : { &exportButton, &importButton, &restoreButton, &folderButton }) addAndMakeVisible (b);
         addAndMakeVisible (backups);
 
@@ -556,17 +669,14 @@ public:
 
     void resized() override
     {
-        auto r = getLocalBounds().reduced (24, 20);
-        title.setBounds (r.removeFromTop (26));
-        hint.setBounds (r.removeFromTop (40));
+        auto r = beginLayout();
+        section (r, exportH);
         auto row = r.removeFromTop (30);
         exportButton.setBounds (row.removeFromLeft (180));
         row.removeFromLeft (10);
         importButton.setBounds (row.removeFromLeft (180));
-        r.removeFromTop (24);
-        backupTitle.setBounds (r.removeFromTop (26));
-        backupHint.setBounds (r.removeFromTop (40));
-        row = r.removeFromTop (30);
+        section (r, backupH);
+        row = r.removeFromTop (30).withWidth (juce::jmin (kMaxWidth + 100, r.getWidth()));
         folderButton.setBounds (row.removeFromRight (130));
         row.removeFromRight (8);
         restoreButton.setBounds (row.removeFromRight (120));
@@ -574,8 +684,9 @@ public:
         backups.setBounds (row);
         r.removeFromTop (6);
         status.setBounds (r.removeFromTop (36));
-        r.removeFromTop (14);
-        voicemeeter.setBounds (r);
+        // The Voicemeeter import has its own title: only the line above it (the section's title row is skipped).
+        section (r, vmH);
+        voicemeeter.setBounds (r.withTop (r.getY() - 30).withWidth (juce::jmin (kMaxWidth + 100, r.getWidth())));
     }
 
 private:
@@ -642,7 +753,8 @@ private:
 
     UiContext& ctx;
     std::function<void()> onReplaced;
-    juce::Label title { {}, "Export / Import Settings" }, hint, backupTitle { {}, "Automatic Backups" }, backupHint, status;
+    juce::Label status;
+    Heading exportH, backupH, vmH;
     juce::TextButton exportButton { "Export Settings..." }, importButton { "Import Settings..." },
                      restoreButton { "Restore" }, folderButton { "Open Folder" };
     juce::ComboBox backups;
@@ -652,22 +764,29 @@ private:
 };
 
 //==============================================================================
-class CablesTab final : public juce::Component
+class CablesTab final : public SettingsPage, private juce::Timer
 {
 public:
     CablesTab (UiContext& c, std::function<void()> changed) : ctx (c), onChanged (std::move (changed))
     {
-        addAndMakeVisible (title); styleLabel (title, false, 15.0f);
-        addAndMakeVisible (info); styleLabel (info);
-        info.setJustificationType (juce::Justification::topLeft);
-        info.setText ("Software inputs without a driver of our own:\n"
-                      "  1) Per-app capture: choose \"Application\" in a strip's source menu (e.g. Spotify.exe). "
-                      "Works with any app, no install. To avoid hearing the app twice, set its output in "
-                      "Windows (Settings > Sound > Volume mixer) to a device you don't listen to.\n"
-                      "  2) Virtual cables (signed drivers, Secure Boot stays on): free VB-Cable (vb-audio.com/Cable, "
-                      "up to 5 cables with A+B / C+D) or Virtual Audio Cable (vac.muzychenko.net, any number, freely named). "
-                      "Apps play into the cable's playback side, Hydra records the other side. For B buses it's reversed.",
-                      juce::dontSendNotification);
+        addHeading (vacH, "Virtual Audio Cable",
+                    "Hydra sets up Virtual Audio Cable itself: each input or bus that uses a virtual cable gets one of its "
+                    "own (device picker > Virtual Cable). Adding or removing cables restarts the driver.", false);
+        addHeading (cablesH, "Detected virtual cables",
+                    "Software inputs without a driver of our own:\n"
+                    "  1) Per-app capture: choose \"Application\" in a strip's source menu (e.g. Spotify.exe). "
+                    "Works with any app, no install. To avoid hearing the app twice, set its output in "
+                    "Windows (Settings > Sound > Volume mixer) to a device you don't listen to.\n"
+                    "  2) Virtual cables (signed drivers, Secure Boot stays on): free VB-Cable (vb-audio.com/Cable, "
+                    "up to 5 cables with A+B / C+D) or Virtual Audio Cable (vac.muzychenko.net, any number; Hydra adds cables itself). "
+                    "Apps play into the cable's playback side, Hydra records the other side. For V buses it's reversed.");
+        addHeading (renameH, "Device names in Windows",
+                    "Windows and your apps then list the device a software input listens to under the channel's name: "
+                    "an input \"Chrome\" that records a loopback of \"Voicemeeter In 4\" turns that device into "
+                    "\"Hydra Chrome\" (unnamed: \"Hydra In 4\"). For a virtual cable the side apps use is renamed, "
+                    "for V buses the side apps record from (\"Hydra V1\"). Hardware devices keep their names. "
+                    "Windows asks for administrator rights (once, see below). Original names come back when a "
+                    "channel no longer uses the device or this is switched off.");
         addAndMakeVisible (list);
         list.setMultiLine (true);
         list.setReadOnly (true);
@@ -676,25 +795,173 @@ public:
         addAndMakeVisible (assign);
         refresh.onClick = [this] { ctx.engine.rescanDevices(); update(); };
         assign.onClick = [this] { autoAssign(); };
-        assign.setTooltip ("Gives every input / B bus that still points to a 'Hydra Virtual' placeholder the next free cable");
+        assign.setTooltip ("Gives every input / V bus that still points to a 'Hydra Virtual' placeholder the next free cable");
+
+        // Virtual Audio Cable: Hydra sets the number of cables itself (VacCables)
+        addChildComponent (vacState); styleLabel (vacState);
+        vacState.setJustificationType (juce::Justification::topLeft);
+        addChildComponent (vacAdd);
+        addChildComponent (vacRemove);
+        addChildComponent (vacManage);
+        addChildComponent (vacDirect);
+        vacDirect.setButtonText ("Connect cables directly (Kernel Streaming, cable clock synced to the master)");
+        vacDirect.setTooltip ("Hydra reads / writes Virtual Audio Cable's driver buffer itself instead of going through Windows, "
+                              "and keeps the cable's clock in step with the master: no resampling, less latency and CPU. "
+                              "Apps keep using the cable as usual. Off: WASAPI like any other Windows device.");
+        vacDirect.setToggleState (ctx.session == nullptr || ctx.session->prefs.vacDirect, juce::dontSendNotification);
+        addChildComponent (vacHide);
+        vacHide.setButtonText ("Hide the side Hydra uses from other apps");
+        vacHide.setTooltip ("An input on \"Line 1\" records the cable's recording side: Windows then lists Line 1 only as a "
+                            "playback device, so apps can only play into it (a bus: only as a recording device). Needs the direct "
+                            "connection. Shown again when no channel uses the cable any more, or when this is switched off.");
+        vacHide.setToggleState (ctx.session == nullptr || ctx.session->prefs.vacHideOwnSide, juce::dontSendNotification);
+        addChildComponent (vacHideUnused);
+        vacHideUnused.setButtonText ("Hide unused cables until a channel uses them");
+        vacHideUnused.setTooltip ("Cables no channel of Hydra uses are hidden in Windows on both sides, so apps only see the "
+                                  "cables Hydra has set up. A cable an app is streaming on right now stays visible. Hydra's "
+                                  "device picker still lists them. Needs the direct connection.");
+        vacHideUnused.setToggleState (ctx.session == nullptr || ctx.session->prefs.vacHideUnused, juce::dontSendNotification);
+        addChildComponent (vacAutoName);
+        vacAutoName.setButtonText ("Name cables after their channel (\"Hydra In 2\", \"Hydra Out 1\")");
+        vacAutoName.setTooltip ("A cable an input records is called \"Hydra In <input number>\" in Windows, a cable a bus plays "
+                                "into \"Hydra Out <V number>\" (a hardware bus: \"Hydra Out H1\"). It gets its old name back "
+                                "when no channel uses it any more. Renaming needs administrator rights (see \"Rename without asking\" below).");
+        vacAutoName.setToggleState (ctx.session == nullptr || ctx.session->prefs.vacAutoName, juce::dontSendNotification);
+        auto bindPref = [this] (juce::ToggleButton& b, bool Session::AppPrefs::* field)
+        {
+            b.onClick = [this, &b, field]
+            {
+                if (ctx.session == nullptr) return;
+                ctx.session->prefs.*field = b.getToggleState();
+                ctx.session->prefsVersion.fetch_add (1);
+                if (ctx.prefsChanged) ctx.prefsChanged();
+            };
+        };
+        bindPref (vacHide, &Session::AppPrefs::vacHideOwnSide);
+        bindPref (vacHideUnused, &Session::AppPrefs::vacHideUnused);
+        bindPref (vacAutoName, &Session::AppPrefs::vacAutoName);
+        vacDirect.onClick = [this]
+        {
+            if (ctx.session == nullptr) return;
+            ctx.session->prefs.vacDirect = vacDirect.getToggleState();
+            ctx.session->prefsVersion.fetch_add (1);
+            if (ctx.prefsChanged) ctx.prefsChanged();
+        };
+        vacManage.onClick = [this] { if (ctx.openCableManager) ctx.openCableManager(); };
+        vacAdd.setTooltip ("Adds one cable (\"Line N (Virtual Audio Cable)\"). The driver restarts: all cables are gone for a "
+                           "moment, so apps using one may need to reconnect. Windows asks for administrator rights.");
+        vacRemove.setTooltip ("Removes the cables at the end that no channel uses and no app is playing / recording on.");
+        auto report = [this] (bool, const juce::String& msg) { update (msg); if (onChanged) onChanged(); };
+        vacAdd.onClick = [this, report] { if (auto* v = vac()) v->setCount (v->info().numCables + 1, report); };
+        vacRemove.onClick = [this, report] { if (auto* v = vac()) v->removeUnused (report); };
+
+        // Device names in Windows (DeviceNamer)
+        addAndMakeVisible (renameToggle);
+        renameToggle.setButtonText ("Name software devices in Windows after their channels");
+        renameToggle.setToggleState (ctx.session != nullptr && ctx.session->prefs.renameDevices, juce::dontSendNotification);
+        renameToggle.onClick = [this]
+        {
+            if (ctx.session == nullptr) return;
+            ctx.session->prefs.renameDevices = renameToggle.getToggleState();
+            ctx.session->prefsVersion.fetch_add (1);
+            if (ctx.prefsChanged) ctx.prefsChanged();
+        };
+        addAndMakeVisible (renameSilent);
+        renameSilent.setButtonText ("Rename without asking each time (Windows asks once to set this up)");
+        renameSilent.setTooltip ("Renaming a device needs administrator rights. With this on, the first rename also sets up a "
+                                 "Windows task (\"Hydra Mixer Device Names\") that Hydra starts for later renames, so Windows "
+                                 "does not ask again. The task only renames audio devices; it starts this copy of Hydra Mixer "
+                                 "with administrator rights. Off: the task is removed and Windows asks each time.");
+        renameSilent.setToggleState (ctx.session == nullptr || ctx.session->prefs.renameNoPrompt, juce::dontSendNotification);
+        renameSilent.onClick = [this]
+        {
+            if (ctx.session == nullptr) return;
+            ctx.session->prefs.renameNoPrompt = renameSilent.getToggleState();
+            ctx.session->prefsVersion.fetch_add (1);
+            if (! ctx.session->prefs.renameNoPrompt && ctx.session->deviceNamer != nullptr) ctx.session->deviceNamer->removeTask();
+            if (ctx.prefsChanged) ctx.prefsChanged();
+        };
+        addAndMakeVisible (renameStatus);
+        renameStatus.setMultiLine (true);
+        renameStatus.setReadOnly (true);
+        renameStatus.setFont (theme::mono (12.0f));
         update();
+        updateVac();
+        startTimer (500);
     }
 
     void resized() override
     {
-        auto r = getLocalBounds().reduced (24, 20);
-        title.setBounds (r.removeFromTop (26));
-        info.setBounds (r.removeFromTop (120));
-        r.removeFromTop (8);
-        auto row = r.removeFromTop (30);
-        assign.setBounds (row.removeFromRight (200));
-        row.removeFromRight (8);
-        refresh.setBounds (row.removeFromRight (100));
-        r.removeFromTop (10);
-        list.setBounds (r);
+        // Virtual Audio Cable (when installed) | detected cables | device names in Windows
+        auto r = beginLayout();
+        const int width = juce::jmin (kMaxWidth + 160, r.getWidth());
+        if (vacState.isVisible())
+        {
+            section (r, vacH);
+            auto v = r.removeFromTop (36);
+            vacManage.setBounds (v.removeFromRight (140).withSizeKeepingCentre (140, 30));
+            v.removeFromRight (8);
+            vacRemove.setBounds (v.removeFromRight (190).withSizeKeepingCentre (190, 30));
+            v.removeFromRight (8);
+            vacAdd.setBounds (v.removeFromRight (120).withSizeKeepingCentre (120, 30));
+            v.removeFromRight (12);
+            vacState.setBounds (v);
+            r.removeFromTop (6);
+            for (auto* b : { &vacDirect, &vacHide, &vacHideUnused, &vacAutoName }) option (r, *b);
+        }
+        auto top = section (r, cablesH);
+        assign.setBounds (top.removeFromRight (180).withSizeKeepingCentre (180, 26));
+        top.removeFromRight (8);
+        refresh.setBounds (top.removeFromRight (100).withSizeKeepingCentre (100, 26));
+        // What is left is shared by the two text boxes (cable list, renamed devices).
+        const int fixed = 14 + 1 + 14 + 30 + 28 + 28 + 6;
+        const int boxes = juce::jmax (100, r.getHeight() - fixed);
+        list.setBounds (r.removeFromTop (boxes * 55 / 100).withWidth (width));
+        section (r, renameH);
+        option (r, renameToggle);
+        option (r, renameSilent);
+        r.removeFromTop (6);
+        renameStatus.setBounds (r.withWidth (width));
     }
 
 private:
+    VacCables* vac() const { return ctx.session != nullptr ? ctx.session->vacCables : nullptr; }
+
+    void timerCallback() override
+    {
+        // Asks the VAC driver every 2 s: only while this page is on screen (the settings window stays alive when closed).
+        if (! isShowing()) return;
+        const auto t = ctx.session != nullptr && ctx.session->deviceNamer != nullptr ? ctx.session->deviceNamer->describe() : juce::String();
+        if (t != renameStatus.getText()) renameStatus.setText (t, false);
+        updateVac();
+    }
+
+    void updateVac()
+    {
+        auto* v = vac();
+        if (v != nullptr && ! v->isBusy() && ++vacTick % 4 == 0) v->refresh();   // every 2 s
+        const bool shown = v != nullptr && v->isAvailable();
+        if (shown != vacState.isVisible())
+        {
+            for (auto* c : { (juce::Component*) &vacState, (juce::Component*) &vacAdd, (juce::Component*) &vacRemove, (juce::Component*) &vacManage, (juce::Component*) &vacDirect, (juce::Component*) &vacHide,
+                             (juce::Component*) &vacHideUnused, (juce::Component*) &vacAutoName })
+                c->setVisible (shown);
+            showHeading (vacH, shown);
+            resized();
+            repaint();
+        }
+        if (! shown) return;
+        const auto& i = v->info();
+        if (i.numCables != shownCables && ! v->isBusy()) { shownCables = i.numCables; update(); }   // changed in the Cable Manager too
+        juce::String t;
+        t << i.numCables << (i.numCables == 1 ? " cable" : " cables") << " - version " << i.version << " (" << i.edition << ")";
+        if (i.restartPending) t << " - restart pending";
+        if (const auto st = v->status(); st.isNotEmpty()) t << juce::newLine << st;
+        if (t != vacState.getText()) vacState.setText (t, juce::dontSendNotification);
+        vacAdd.setEnabled (! v->isBusy() && i.edition != "lite" && i.numCables < 256);
+        vacRemove.setEnabled (! v->isBusy() && i.numCables > 1);
+    }
+
     void update (const juce::String& extra = {})
     {
         juce::String t;
@@ -740,21 +1007,375 @@ private:
             auto& bus = eng.buses[(size_t) b];
             if (! eng.isBusActive (b) || bus.output.kind != IoTarget::Kind::Virtual) continue;
             const auto* c = nextFree();
-            if (c == nullptr) { rep.add (busCode (b) + ": no free cable left"); continue; }
+            if (c == nullptr) { rep.add (busLabel (b) + ": no free cable left"); continue; }
             IoTarget t; t.kind = IoTarget::Kind::Device; t.typeName = "Windows Audio (Low Latency Mode)"; t.deviceName = c->playbackName;
             eng.setBusOutput (b, t);
-            rep.add (busCode (b) + ": apps (Discord, OBS ...) record from \"" + c->recordingName + "\"");
+            rep.add (busLabel (b) + ": apps (Discord, OBS ...) record from \"" + c->recordingName + "\"");
         }
-        if (rep.isEmpty()) rep.add ("Nothing to assign: no input / B bus points to a 'Hydra Virtual' placeholder.");
+        if (rep.isEmpty()) rep.add ("Nothing to assign: no input / V bus points to a 'Hydra Virtual' placeholder.");
         update (rep.joinIntoString ("\n"));
         if (onChanged) onChanged();
     }
 
     UiContext& ctx;
     std::function<void()> onChanged;
-    juce::Label title { {}, "Software inputs & virtual cables" }, info;
+    Heading vacH, cablesH, renameH;
     juce::TextEditor list;
+    juce::ToggleButton renameToggle, renameSilent;
+    juce::TextEditor renameStatus;
     juce::TextButton refresh { "Refresh" }, assign { "Auto-assign cables" };
+    juce::Label vacState;
+    juce::TextButton vacAdd { "+ Add cable" }, vacRemove { "Remove unused cables" }, vacManage { "Manage cables..." };
+    juce::ToggleButton vacDirect, vacHide, vacHideUnused, vacAutoName;
+    int vacTick = 0, shownCables = -1;
+};
+
+//==============================================================================
+/** Hydra Link: audio between computers (engine/NetLink.h). */
+class NetworkTab final : public SettingsPage, private juce::Timer
+{
+public:
+    explicit NetworkTab (UiContext& c) : ctx (c)
+    {
+        addHeading (linkH, "Hydra Link",
+                    "Sends and receives audio between Hydras on different computers. On the sending computer choose "
+                    "\"Network\" as the output of a V bus, on the receiving one \"Network\" as the source of an input: every "
+                    "stream the computer hears is listed there.\n\n"
+                    "In the local network the audio goes uncompressed (lowest latency, ~2.3 Mbit/s per stream). Beyond it "
+                    "(internet, VPN) Opus compresses it to ~128 kbit/s. Windows may ask once whether Hydra may use the network.");
+        addHeading (secH, "Password",
+                    "Without a password Hydra Link only talks to computers in the local network (home / studio network) and "
+                    "the audio is not encrypted.\n\n"
+                    "With a password everything is encrypted (AES-256) and only Hydras with the same password hear each other. "
+                    "This is needed for anything outside the local network. Use the same password on all your computers.");
+        addHeading (peersH, "Other computers",
+                    "Hydras in the same local network find each other by themselves. Others (over a VPN such as Tailscale or "
+                    "ZeroTier, or the internet) need their address here, one per line: \"100.101.102.103\" or "
+                    "\"studio.example.com:6980\". Over the internet the receiving side must forward the UDP port in its router "
+                    "(a VPN needs no forwarding).");
+        addHeading (heardH, "On the network");
+
+        addAndMakeVisible (enabled);
+        enabled.setButtonText ("Send and receive audio over the network");
+        enabled.setToggleState (prefs().netEnabled, juce::dontSendNotification);
+        enabled.onClick = [this] { prefs().netEnabled = enabled.getToggleState(); changed(); };
+
+        for (auto* l : { &nameL, &portL, &passwordL }) { addAndMakeVisible (l); styleLabel (*l); }
+        addAndMakeVisible (status);
+        styleLabel (status, false);
+
+        auto field = [this] (juce::TextEditor& e, const juce::String& text, std::function<void()> commit)
+        {
+            addAndMakeVisible (e);
+            e.setText (text, false);
+            e.onReturnKey = commit;
+            e.onFocusLost = commit;
+        };
+        field (name, prefs().netName, [this]
+        {
+            const auto v = name.getText().trim();
+            if (v != prefs().netName) { prefs().netName = v; changed(); }
+        });
+        name.setTextToShowWhenEmpty (net::Hub::computerName(), theme::textDim);
+        name.setTooltip ("How the other computers list this one (empty: the Windows computer name)");
+        field (port, prefs().netPort != net::kDefaultPort ? juce::String (prefs().netPort) : juce::String(), [this]
+        {
+            const int v = port.getText().trim().isEmpty() ? net::kDefaultPort : juce::jlimit (1, 65535, port.getText().getIntValue());
+            if (v != prefs().netPort) { prefs().netPort = v; changed(); }
+        });
+        port.setInputRestrictions (5, "0123456789");
+        port.setTextToShowWhenEmpty (juce::String (net::kDefaultPort), theme::textDim);
+        port.setTooltip ("UDP port (the same on all computers, so they find each other)");
+        field (password, prefs().netPassword, [this]
+        {
+            if (password.getText() != prefs().netPassword) { prefs().netPassword = password.getText(); changed(); }
+        });
+        password.setPasswordCharacter ((juce::juce_wchar) 0x2022);
+        password.setTextToShowWhenEmpty ("none: local network only, not encrypted", theme::textDim);
+        password.setTooltip ("Stored encrypted for your Windows account (on another computer or account enter it again)");
+
+        addAndMakeVisible (peers);
+        peers.setMultiLine (true, false);
+        peers.setReturnKeyStartsNewLine (true);
+        peers.setText (prefs().netPeers.joinIntoString ("\n"), false);
+        peers.setTextToShowWhenEmpty ("e.g. 100.101.102.103 or studio.example.com:6980", theme::textDim);
+        peers.onFocusLost = [this]
+        {
+            auto list = juce::StringArray::fromLines (peers.getText());
+            list.trim();
+            list.removeEmptyStrings();
+            list.removeDuplicates (true);
+            if (list != prefs().netPeers) { prefs().netPeers = list; changed(); }
+        };
+
+        addAndMakeVisible (heard);
+        heard.setMultiLine (true);
+        heard.setReadOnly (true);
+        heard.setFont (theme::mono (12.0f));
+        refresh();
+        startTimer (1000);
+    }
+
+    void resized() override
+    {
+        auto r = beginLayout();
+        section (r, linkH);
+        option (r, enabled);
+        status.setBounds (r.removeFromTop (22).withWidth (juce::jmin (kMaxWidth + 160, r.getWidth())));
+        r.removeFromTop (8);
+        labelled (r, nameL, name, 260);
+        labelled (r, portL, port, 100);
+        section (r, secH);
+        labelled (r, passwordL, password, 260);
+        section (r, peersH);
+        peers.setBounds (r.removeFromTop (58).withWidth (juce::jmin (420, r.getWidth())));
+        section (r, heardH);
+        heard.setBounds (r.withWidth (juce::jmin (kMaxWidth + 160, r.getWidth())));
+    }
+
+private:
+    Session::AppPrefs& prefs() { return ctx.session->prefs; }
+
+    void changed()
+    {
+        ctx.session->prefsVersion.fetch_add (1);
+        if (ctx.prefsChanged) ctx.prefsChanged();
+        refresh();
+    }
+
+    void timerCallback() override
+    {
+        if (isShowing()) refresh();   // the settings window stays alive when closed: only while on screen
+    }
+
+    void refresh()
+    {
+        auto& hub = net::Hub::get();
+        const bool on = hub.isRunning();
+        juce::String s;
+        if (! prefs().netEnabled) s = "Off: no port is open.";
+        else if (! on)            s = "Not running: " + hub.getLastError();
+        else
+        {
+            const auto cfg = hub.getConfig();
+            s << "On, port " << cfg.port << ". This computer is \"" << hub.getName() << "\"";
+            s << (cfg.password.isNotEmpty() ? ", encrypted." : ", local network only.");
+        }
+        status.setText (s, juce::dontSendNotification);
+        status.setColour (juce::Label::textColourId, prefs().netEnabled && ! on ? theme::mute : theme::text);
+        for (auto* c : { (juce::Component*) &name, (juce::Component*) &port, (juce::Component*) &password, (juce::Component*) &peers })
+            c->setAlpha (prefs().netEnabled ? 1.0f : 0.5f);
+
+        juce::String t;
+        t << "Addresses of this computer: " << net::Hub::localAddresses().joinIntoString (", ") << "\n\n";
+        if (on)
+        {
+            const auto list = hub.getPeers();
+            t << "Hydras:" << (list.empty() ? "  none heard yet" : "") << "\n";
+            for (auto& p : list)
+            {
+                t << "  " << (p.name.isNotEmpty() ? p.name : juce::String ("(no answer)")).paddedRight (' ', 22) << "  " << p.address;
+                if (p.port != net::kDefaultPort) t << ":" << p.port;
+                if (! p.lan) t << "  (outside the local network)";
+                if (p.name.isEmpty()) t << "  - not reachable or other password";
+                t << "\n";
+            }
+            const auto streams = hub.getStreams();
+            t << "\nStreams this computer receives:" << (streams.empty() ? "  none" : "") << "\n";
+            for (auto& st : streams)
+            {
+                t << "  " << (st.stream + " from " + st.sender).paddedRight (' ', 34) << "  " << net::codecName (st.codec);
+                if (st.codec == net::Codec::opus) t << " " << st.kbps << " kbit/s";
+                t << ", " << juce::String (st.rate / 1000.0, 1) << " kHz" << (st.used ? ", in use" : "") << "\n";
+            }
+            if (const auto why = hub.getRejectHint(); why.isNotEmpty()) t << "\nTurned away: " << why << "\n";
+        }
+        if (t != heard.getText()) heard.setText (t, false);
+    }
+
+    UiContext& ctx;
+    Heading linkH, secH, peersH, heardH;
+    juce::ToggleButton enabled;
+    juce::Label status, nameL { {}, "Computer name" }, portL { {}, "Port" }, passwordL { {}, "Network password" };
+    juce::TextEditor name, port, password, peers, heard;
+};
+
+//==============================================================================
+/** The QR code of the link a phone opens (camera app: scan, tap, connected). */
+class QrView final : public juce::Component
+{
+public:
+    void setText (const juce::String& t)
+    {
+        if (t == text) return;
+        text = t;
+        code = qr::Code::encode (t.toStdString());
+        repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        if (code.size() == 0) return;
+        const int quiet = 3;   // light border in modules (white card around it)
+        const int cells = code.size() + 2 * quiet;
+        const float cell = std::floor ((float) juce::jmin (getWidth(), getHeight()) / (float) cells);
+        const float side = cell * (float) cells;
+        const auto area = juce::Rectangle<float> (side, side).withCentre (getLocalBounds().toFloat().getCentre());
+        g.setColour (juce::Colours::white);
+        g.fillRoundedRectangle (area, cell * 1.5f);
+        g.setColour (juce::Colours::black);
+        for (int y = 0; y < code.size(); ++y)
+            for (int x = 0; x < code.size(); ++x)
+                if (code.dark (x, y))
+                    g.fillRect (area.getX() + (float) (x + quiet) * cell, area.getY() + (float) (y + quiet) * cell, cell, cell);
+    }
+
+private:
+    juce::String text;
+    qr::Code code;
+};
+
+/** Hydra Remote: phones and tablets control Hydra in their browser (remote/RemoteControl.h). */
+class RemoteTab final : public SettingsPage, private juce::Timer
+{
+public:
+    explicit RemoteTab (UiContext& c) : ctx (c)
+    {
+        addHeading (remoteH, "Phone & Tablet",
+                    "Control Hydra from a phone or tablet: faders, mute, solo, routing, SEL and scenes, with live meters. "
+                    "Nothing has to be installed: the phone opens a page that Hydra serves.\n\n"
+                    "The phone must be in the same network (Wi-Fi of the same router). Scan the QR code with the camera app, "
+                    "or open the address in the browser and enter the access code. In Chrome choose \"Add to Home screen\" to "
+                    "get an app icon.\n\nWindows may ask once whether Hydra may use the network: allow it for private networks.");
+        addHeading (codeH, "Access code",
+                    "Every phone needs this code once (the QR code contains it). \"New code\" disconnects all phones; each "
+                    "has to enter the new one.\n\nThe connection is not encrypted (local network only): use it at home or "
+                    "in the studio, not in public Wi-Fi.");
+        addHeading (clientsH, "Connected");
+
+        addAndMakeVisible (enabled);
+        enabled.setButtonText ("Control Hydra from phones and tablets");
+        enabled.setToggleState (prefs().remoteEnabled, juce::dontSendNotification);
+        enabled.onClick = [this] { prefs().remoteEnabled = enabled.getToggleState(); changed(); };
+
+        for (auto* l : { &portL, &codeL }) { addAndMakeVisible (l); styleLabel (*l); }
+        addAndMakeVisible (status);
+        styleLabel (status, false);
+        addAndMakeVisible (links);
+        styleLabel (links, false);
+        links.setFont (theme::mono (14.0f));
+        links.setJustificationType (juce::Justification::topLeft);
+        addAndMakeVisible (codeText);
+        codeText.setFont (theme::mono (22.0f));
+        codeText.setColour (juce::Label::textColourId, theme::text);
+        addAndMakeVisible (newCode);
+        newCode.onClick = [this]
+        {
+            prefs().remoteCode = remote::Server::newCode();
+            changed();
+        };
+        addAndMakeVisible (port);
+        port.setText (prefs().remotePort != remote::kDefaultPort ? juce::String (prefs().remotePort) : juce::String(), false);
+        port.setInputRestrictions (5, "0123456789");
+        port.setTextToShowWhenEmpty (juce::String (remote::kDefaultPort), theme::textDim);
+        port.setTooltip ("TCP port of the page the phones open");
+        auto commitPort = [this]
+        {
+            const int v = port.getText().trim().isEmpty() ? remote::kDefaultPort : juce::jlimit (1, 65535, port.getText().getIntValue());
+            if (v != prefs().remotePort) { prefs().remotePort = v; changed(); }
+        };
+        port.onReturnKey = commitPort;
+        port.onFocusLost = commitPort;
+        addChildComponent (qr);
+        addAndMakeVisible (clients);
+        clients.setMultiLine (true);
+        clients.setReadOnly (true);
+        clients.setFont (theme::mono (12.0f));
+        refresh();
+        startTimer (1000);
+    }
+
+    void resized() override
+    {
+        auto r = beginLayout();
+        section (r, remoteH);
+        option (r, enabled);
+        status.setBounds (r.removeFromTop (22).withWidth (juce::jmin (kMaxWidth + 160, r.getWidth())));
+        r.removeFromTop (8);
+        auto top = r.removeFromTop (180);
+        qr.setBounds (top.removeFromLeft (180));
+        top.removeFromLeft (20);
+        links.setBounds (top);
+        r.removeFromTop (8);
+        labelled (r, portL, port, 100);
+        section (r, codeH);
+        auto line = r.removeFromTop (kLine + 6);
+        codeL.setBounds (line.removeFromLeft (kLabelWidth));
+        codeText.setBounds (line.removeFromLeft (170));
+        newCode.setBounds (line.removeFromLeft (110).reduced (0, 4));
+        section (r, clientsH);
+        clients.setBounds (r.withWidth (juce::jmin (kMaxWidth, r.getWidth())));
+    }
+
+private:
+    Session::AppPrefs& prefs() { return ctx.session->prefs; }
+
+    void changed()
+    {
+        ctx.session->prefsVersion.fetch_add (1);
+        if (ctx.prefsChanged) ctx.prefsChanged();   // the app applies it (and makes a code the first time)
+        refresh();
+    }
+
+    void timerCallback() override
+    {
+        if (isShowing()) refresh();
+    }
+
+    void refresh()
+    {
+        auto* rc = RemoteControl::get();
+        const bool on = rc != nullptr && rc->getServer().isRunning();
+        juce::String s;
+        if (! prefs().remoteEnabled) s = "Off: no port is open.";
+        else if (! on)               s = "Not running: " + (rc != nullptr ? rc->getServer().getLastError() : juce::String());
+        else                         s = "On. Scan the code with the phone's camera, or open this address in its browser:";
+        status.setText (s, juce::dontSendNotification);
+        status.setColour (juce::Label::textColourId, prefs().remoteEnabled && ! on ? theme::mute : theme::text);
+
+        const auto code = prefs().remoteCode;
+        codeText.setText (code.isEmpty() ? juce::String ("-") : remote::Server::formatCode (code), juce::dontSendNotification);
+        const auto all = on ? rc->links() : juce::StringArray();
+        links.setText (on ? (all.isEmpty() ? juce::String ("No network connection") : all.joinIntoString ("\n")) : juce::String(),
+                       juce::dontSendNotification);
+        const auto link = on ? rc->preferredLink() : juce::String();
+        qr.setVisible (link.isNotEmpty());
+        if (link.isNotEmpty()) qr.setText (link + "#k=" + remote::Server::normaliseCode (code));
+        for (auto* c : { (juce::Component*) &port, (juce::Component*) &codeText, (juce::Component*) &newCode })
+            c->setAlpha (prefs().remoteEnabled ? 1.0f : 0.5f);
+
+        juce::String t;
+        if (on)
+        {
+            const auto list = rc->getServer().getClients();
+            if (list.empty()) t = "No phone or tablet connected.";
+            for (auto& cl : list)
+            {
+                const int min = (int) (cl.seconds / 60.0);
+                t << cl.device.paddedRight (' ', 18) << "  " << cl.address.paddedRight (' ', 16) << "  "
+                  << (min < 1 ? juce::String ("just now") : juce::String (min) + " min") << "\n";
+            }
+        }
+        if (t != clients.getText()) clients.setText (t, false);
+    }
+
+    UiContext& ctx;
+    Heading remoteH, codeH, clientsH;
+    juce::ToggleButton enabled;
+    juce::Label status, links, codeText, portL { {}, "Port" }, codeL { {}, "Code" };
+    juce::TextButton newCode { "New code" };
+    juce::TextEditor port, clients;
+    QrView qr;
 };
 
 } // namespace
@@ -766,7 +1387,7 @@ namespace
 juce::StringArray activeHwLabels (const Engine& e)
 {
     juce::StringArray l;
-    for (int a = 0; a < kMaxHwBuses; ++a) if (e.isBusActive (hwBusIndex (a))) l.add (busCode (hwBusIndex (a)));
+    for (int a = 0; a < kMaxHwBuses; ++a) if (e.isBusActive (hwBusIndex (a))) l.add (busLabel (hwBusIndex (a)));
     return l;
 }
 
@@ -778,67 +1399,132 @@ std::vector<int> activeHwValues (const Engine& e)
 }
 } // namespace
 
-/** Monitoring of the selected bus, system tray behaviour, shutdown. */
-class GeneralTab final : public juce::Component
+/** Start with Windows, system tray, devices, monitoring of the selected bus, shutdown. */
+class GeneralTab final : public SettingsPage
 {
 public:
     explicit GeneralTab (UiContext& c)
         : ctx (c), monOn (c, *c.engine.monOn, "Monitor selected bus", theme::learn),
           monBus (c, *c.engine.monBus, theme::accentHw, activeHwLabels (c.engine), activeHwValues (c.engine))
     {
-        for (auto* l : { &monTitle, &trayTitle, &displayTitle })
-        {
-            addAndMakeVisible (l);
-            l->setFont (theme::font (12.0f, true));
-            l->setColour (juce::Label::textColourId, theme::textDim);
-        }
-        for (auto* l : { &monHelp, &monBusL, &trayHelp, &uiScaleL, &fontScaleL })
-        {
-            addAndMakeVisible (l);
-            styleLabel (*l, true, 12.5f);
-            l->setJustificationType (juce::Justification::topLeft);
-        }
-        for (auto* l : { &uiScaleL, &fontScaleL }) l->setJustificationType (juce::Justification::centredLeft);
+        addHeading (startH, "Startup", "\"Start when Windows starts\" starts Hydra right when you log on, before other apps and "
+                                       "with high priority, so audio works from the first moment. Combine it with \"Start hidden in the tray\".");
+        addHeading (trayH, "System tray", "With \"Close to tray\" the close button only hides the window and the mixer keeps running. "
+                                          "Quit with \"Shut down\" below or in the right-click menu of the tray icon.");
+        addHeading (devicesH, "Devices", "A device that was unplugged or not there at startup is opened again as soon as it is back "
+                                         "(checked every 3 s). Off: choose it again or use Tools > Restart Audio Engine.");
+        addHeading (monH, "Monitoring (SEL)", "Press SEL on a bus: the input faders then set each input's level on that bus only.\n\n"
+                                              "With monitoring on, the selected bus is heard on the monitor output - its normal mix is muted "
+                                              "while monitoring, so you hear only the monitored bus (through the monitor bus's EQ, fader and limiter). "
+                                              "Press SEL again to return to normal.");
+        addAndMakeVisible (monBusL);
+        styleLabel (monBusL);
         addAndMakeVisible (monOn);
         addAndMakeVisible (monBus);
-        monHelp.setText ("Press SEL on a bus: the input faders then set each input's level on that bus only. "
-                         "With monitoring on, the selected bus is heard on the monitor output below - its normal mix is muted "
-                         "while monitoring, so you hear only the monitored bus (through the monitor bus's EQ, fader and limiter). "
-                         "Press SEL again to return to normal.", juce::dontSendNotification);
 
-        trayHelp.setText ("With \"Close to tray\" the close button only hides the window and the mixer keeps running. "
-                          "Quit with \"Shut down\" below or in the right-click menu of the tray icon.",
-                          juce::dontSendNotification);
+        bindPref (ctx, trayIcon,  &Session::AppPrefs::trayIcon,       "Show Hydra Mixer in the system tray (notification area)");
+        bindPref (ctx, closeTray, &Session::AppPrefs::closeToTray,    "Close button hides to the tray (audio keeps running)");
+        bindPref (ctx, minTray,   &Session::AppPrefs::minimiseToTray, "Minimise to the tray instead of the taskbar");
+        bindPref (ctx, startTray, &Session::AppPrefs::startInTray,    "Start hidden in the tray");
+        bindPref (ctx, reconnect, &Session::AppPrefs::autoReconnect,  "Reconnect devices automatically when they are back");
+        bindPref (ctx, expertModes, &Session::AppPrefs::expertDeviceModes, "Show all Windows audio modes in the device selection (expert)",
+                  "Off: Windows devices are offered in one mode only, Low Latency (shared), which suits almost everything. "
+                  "On: also Exclusive (lowest latency, blocks the device for other apps) and Shared (compatibility).");
+        for (auto* b : { &autostart, &trayIcon, &closeTray, &minTray, &startTray, &reconnect, &expertModes }) addAndMakeVisible (b);
+
+        addAndMakeVisible (shutdown);
+        shutdown.setColour (juce::TextButton::buttonColourId, theme::mute.withAlpha (0.25f));
+        shutdown.onClick = [this] { if (ctx.shutdown) ctx.shutdown(); };
+
+        // Start with Windows (Task Scheduler entry, see Autostart). Asking schtasks.exe can take seconds and froze
+        // the window while the settings opened: asked in the background, the box is greyed out until the answer is there.
+        autostart.setButtonText ("Start Hydra Mixer when Windows starts");
+        autostart.setTooltip ("Starts right when you log on, before other apps and with high priority, "
+                              "so audio works from the first moment. Combine with \"Start hidden in the tray\".");
+        autostart.setEnabled (false);
+        autostart.onClick = [this]
+        {
+            const bool want = autostart.getToggleState();
+            autostart.setEnabled (false);
+            runAutostart ([want] { return Autostart::setEnabled (want); });
+        };
+        runAutostart ({});
+    }
+
+    void resized() override
+    {
+        auto r = beginLayout();
+        section (r, startH);
+        option (r, autostart);
+        option (r, startTray);
+        section (r, trayH);
+        option (r, trayIcon);
+        option (r, closeTray);
+        option (r, minTray);
+        section (r, devicesH);
+        option (r, reconnect);
+        option (r, expertModes);
+        section (r, monH);
+        auto row = r.removeFromTop (28);
+        monOn.setBounds (row.removeFromLeft (230));
+        row.removeFromLeft (24);
+        monBusL.setBounds (row.removeFromLeft (110));
+        monBus.setBounds (row.removeFromLeft (juce::jmin (300, row.getWidth())));
+        // Shut down at the bottom, set apart from the options.
+        auto bottom = getLocalBounds().reduced (24, 18).removeFromBottom (32);
+        shutdown.setBounds (bottom.removeFromLeft (220).withY (juce::jmax (bottom.getY(), r.getY() + 20)));
+    }
+
+private:
+    /** Runs action (may be empty) and then reads the autostart state, both on a background thread. */
+    void runAutostart (std::function<juce::String()> action)
+    {
+        juce::Component::SafePointer<GeneralTab> safe (this);
+        juce::Thread::launch ([safe, action]
+        {
+            const auto error = action != nullptr ? action() : juce::String();
+            const bool on = Autostart::isEnabled();
+            juce::MessageManager::callAsync ([safe, error, on]
+            {
+                if (safe == nullptr) return;
+                safe->autostart.setToggleState (on, juce::dontSendNotification);
+                safe->autostart.setEnabled (true);
+                if (error.isNotEmpty())
+                    dialog::message (safe.getComponent(), dialog::Kind::warning, "Start with Windows", error);
+            });
+        });
+    }
+
+    UiContext& ctx;
+    Heading startH, trayH, devicesH, monH;
+    juce::Label monBusL { {}, "Monitor output" };
+    Switch monOn;
+    ChoiceSegments monBus;
+    juce::ToggleButton autostart, trayIcon, closeTray, minTray, startTray, reconnect, expertModes;
+    juce::TextButton shutdown { "Shut down Hydra Mixer" };
+};
+
+//==============================================================================
+/** Size of the interface and the text, theme, how the channels are laid out. */
+class DisplayTab final : public SettingsPage
+{
+public:
+    explicit DisplayTab (UiContext& c) : ctx (c)
+    {
+        addHeading (lookH, "Size & theme");
+        addHeading (layoutH, "Channel layout", "Adaptive strips: with room to spare the groups stay compact and centred and the "
+                                               "strips grow a little. Horizontal channels: one row per channel with the fader sideways. "
+                                               "Dividers: while not all channels fit, drag them to give a group more room.");
+        addHeading (labH, "Experimental", "Options that are being tried out. They may change or go away.");
+        for (auto* l : { &uiScaleL, &fontScaleL, &themeL }) { addAndMakeVisible (l); styleLabel (*l); }
 
         auto& prefs = ctx.session->prefs;
-        struct Opt { juce::ToggleButton* b; bool Session::AppPrefs::* field; const char* text; };
-        const Opt opts[] = {
-            { &trayIcon,   &Session::AppPrefs::trayIcon,       "Show Hydra Mixer in the system tray (notification area)" },
-            { &closeTray,  &Session::AppPrefs::closeToTray,    "Close button hides to the tray (audio keeps running)" },
-            { &minTray,    &Session::AppPrefs::minimiseToTray, "Minimise to the tray instead of the taskbar" },
-            { &startTray,  &Session::AppPrefs::startInTray,    "Start hidden in the tray" },
-        };
-        for (auto& o : opts)
-        {
-            addAndMakeVisible (o.b);
-            o.b->setButtonText (o.text);
-            o.b->setToggleState (prefs.*(o.field), juce::dontSendNotification);
-            auto field = o.field;
-            auto* b = o.b;
-            o.b->onClick = [this, b, field]
-            {
-                ctx.session->prefs.*field = b->getToggleState();
-                ctx.session->prefsVersion.fetch_add (1);
-                if (ctx.prefsChanged) ctx.prefsChanged();
-            };
-        }
-
-        // Display: zoom of the main window and text size.
-        auto setupScale = [this] (juce::ComboBox& box, std::initializer_list<int> percents, float current, float Session::AppPrefs::* field)
+        // Zoom of the main window and text size, both with the same steps.
+        auto setupScale = [this] (juce::ComboBox& box, float current, float Session::AppPrefs::* field)
         {
             addAndMakeVisible (box);
             int id = 1, sel = 0, bestDiff = 1000;
-            for (int pc : percents)
+            for (int pc : { 75, 80, 90, 100, 110, 125, 150, 175, 200 })
             {
                 box.addItem (juce::String (pc) + " %", id);
                 if (const int d = std::abs (pc - juce::roundToInt (current * 100.0f)); d < bestDiff) { bestDiff = d; sel = id; }
@@ -852,88 +1538,50 @@ public:
                 if (ctx.prefsChanged) ctx.prefsChanged();
             };
         };
-        // Both use the same steps.
-        const std::initializer_list<int> steps { 75, 80, 90, 100, 110, 125, 150, 175, 200 };
-        setupScale (uiScale, steps, prefs.uiScale, &Session::AppPrefs::uiScale);
-        setupScale (fontScale, steps, prefs.fontScale, &Session::AppPrefs::fontScale);
+        setupScale (uiScale, prefs.uiScale, &Session::AppPrefs::uiScale);
+        setupScale (fontScale, prefs.fontScale, &Session::AppPrefs::fontScale);
         uiScale.setTooltip ("Size of everything in the main window. The strips scroll sideways when they no longer fit.");
         fontScale.setTooltip ("Size of the text in all windows (open windows update when they are rebuilt / reopened)");
 
-        addAndMakeVisible (shutdown);
-        shutdown.setColour (juce::TextButton::buttonColourId, theme::mute.withAlpha (0.25f));
-        shutdown.onClick = [this] { if (ctx.shutdown) ctx.shutdown(); };
-
-        // Start with Windows (Task Scheduler entry, see Autostart)
-        addAndMakeVisible (autostart);
-        autostart.setButtonText ("Start Hydra Mixer when Windows starts");
-        autostart.setToggleState (Autostart::isEnabled(), juce::dontSendNotification);
-        autostart.setTooltip ("Starts right when you log on, before other apps and with high priority, "
-                              "so audio works from the first moment. Combine with \"Start hidden in the tray\".");
-        autostart.onClick = [this]
+        addAndMakeVisible (themeBox);
+        themeBox.addItem ("Default", 1);
+        themeBox.addItem ("Legacy", 2);
+        themeBox.setSelectedId (theme::styleFromName (prefs.theme) == theme::Style::legacy ? 2 : 1, juce::dontSendNotification);
+        themeBox.setTooltip ("Look of the app. Default: dark, channels as one block, rectangular faders. Legacy: rounded cards and round faders.");
+        themeBox.onChange = [this]
         {
-            const bool want = autostart.getToggleState();
-            const auto error = Autostart::setEnabled (want);
-            autostart.setToggleState (Autostart::isEnabled(), juce::dontSendNotification);
-            if (error.isNotEmpty())
-                dialog::message (this, dialog::Kind::warning, "Start with Windows", error);
+            ctx.session->prefs.theme = theme::styleName (themeBox.getSelectedId() == 2 ? theme::Style::legacy : theme::Style::deep);
+            ctx.session->prefsVersion.fetch_add (1);
+            if (ctx.prefsChanged) ctx.prefsChanged();
         };
-    }
 
-    void paint (juce::Graphics& g) override
-    {
-        g.setColour (theme::outline.withAlpha (0.6f));
-        g.fillRect (divider);
-        g.fillRect (divider2);
+        bindPref (ctx, adaptiveStrips, &Session::AppPrefs::adaptiveStrips,   "Adaptive strips: compact groups, centred, larger strips when there is room");
+        bindPref (ctx, horizontal,     &Session::AppPrefs::horizontalStrips, "Horizontal channels: one row per channel, faders sideways");
+        bindPref (ctx, stripDividers,  &Session::AppPrefs::stripDividers,    "Draggable dividers when the channels don't fit (off: one shared scroll bar)");
+        bindPref (ctx, fitWindow,      &Session::AppPrefs::fitWindow,        "Window always as large as needed: takes its fitting size each time it appears");
+        bindPref (ctx, sidePanel,      &Session::AppPrefs::sidePanel,        "Side panel with the routing matrix when there is room");
+        for (auto* b : { &adaptiveStrips, &horizontal, &stripDividers, &fitWindow, &sidePanel }) addAndMakeVisible (b);
     }
 
     void resized() override
     {
-        auto r = getLocalBounds().reduced (24, 18);
-        monTitle.setBounds (r.removeFromTop (22));
-        r.removeFromTop (6);
-        auto row = r.removeFromTop (28);
-        monOn.setBounds (row.removeFromLeft (230));
-        row.removeFromLeft (24);
-        monBusL.setBounds (row.removeFromLeft (110));
-        monBus.setBounds (row.removeFromLeft (300));
-        r.removeFromTop (10);
-        monHelp.setBounds (r.removeFromTop (64));
-        r.removeFromTop (10);
-        divider = r.removeFromTop (1);
-        r.removeFromTop (16);
-
-        displayTitle.setBounds (r.removeFromTop (22));
-        r.removeFromTop (6);
-        auto drow = r.removeFromTop (28);
-        uiScaleL.setBounds (drow.removeFromLeft (110));
-        uiScale.setBounds (drow.removeFromLeft (110));
-        drow.removeFromLeft (36);
-        fontScaleL.setBounds (drow.removeFromLeft (80));
-        fontScale.setBounds (drow.removeFromLeft (110));
-        r.removeFromTop (16);
-        divider2 = r.removeFromTop (1);
-        r.removeFromTop (16);
-
-        trayTitle.setBounds (r.removeFromTop (22));
-        r.removeFromTop (4);
-        for (auto* b : { &autostart, &trayIcon, &closeTray, &minTray, &startTray })
-            b->setBounds (r.removeFromTop (28).withWidth (520));
-        r.removeFromTop (8);
-        trayHelp.setBounds (r.removeFromTop (40));
-        r.removeFromTop (8);
-        shutdown.setBounds (r.removeFromTop (32).withWidth (220));
+        auto r = beginLayout();
+        section (r, lookH);
+        labelled (r, uiScaleL, uiScale, 140);
+        labelled (r, fontScaleL, fontScale, 140);
+        labelled (r, themeL, themeBox, 140);
+        section (r, layoutH);
+        for (auto* b : { &adaptiveStrips, &horizontal, &stripDividers, &fitWindow }) option (r, *b);
+        section (r, labH);
+        option (r, sidePanel);
     }
 
 private:
     UiContext& ctx;
-    juce::Label monTitle { {}, "MONITORING (SEL)" }, trayTitle { {}, "STARTUP, WINDOW & SYSTEM TRAY" }, displayTitle { {}, "DISPLAY" };
-    juce::Label monHelp, monBusL { {}, "Monitor output" }, trayHelp, uiScaleL { {}, "Interface size" }, fontScaleL { {}, "Text size" };
-    juce::ComboBox uiScale, fontScale;
-    Switch monOn;
-    ChoiceSegments monBus;
-    juce::ToggleButton autostart, trayIcon, closeTray, minTray, startTray;
-    juce::TextButton shutdown { "Shut down Hydra Mixer" };
-    juce::Rectangle<int> divider, divider2;
+    Heading lookH, layoutH, labH;
+    juce::Label uiScaleL { {}, "Interface size" }, fontScaleL { {}, "Text size" }, themeL { {}, "Theme" };
+    juce::ComboBox uiScale, fontScale, themeBox;
+    juce::ToggleButton adaptiveStrips, horizontal, stripDividers, fitWindow, sidePanel;
 };
 
 //==============================================================================
@@ -941,11 +1589,15 @@ SettingsPanel::SettingsPanel (UiContext& c) : ctx (c)
 {
     addAndMakeVisible (tabs);
     tabs.setTabBarDepth (40);
+    // Same order as SettingsPanel::Tab.
     tabs.addTab ("General", theme::panel, new GeneralTab (c), true);
+    tabs.addTab ("Display", theme::panel, new DisplayTab (c), true);
     tabs.addTab ("Audio Engine", theme::panel, new AudioTab (c, [this] { if (onEngineChanged) onEngineChanged(); }), true);
+    tabs.addTab ("Virtual Cables", theme::panel, new CablesTab (c, [this] { if (onEngineChanged) onEngineChanged(); }), true);
+    tabs.addTab ("Network", theme::panel, new NetworkTab (c), true);
+    tabs.addTab ("Remote", theme::panel, new RemoteTab (c), true);
     tabs.addTab ("MIDI", theme::panel, new MidiTab (c), true);
     tabs.addTab ("Plugins", theme::panel, new PluginTab (c), true);
-    tabs.addTab ("Virtual Cables", theme::panel, new CablesTab (c, [this] { if (onEngineChanged) onEngineChanged(); }), true);
     tabs.addTab ("Backup & Transfer", theme::panel, new BackupTab (c, [this] { if (onSessionReplaced) onSessionReplaced(); },
                                                                   [this] { if (onEngineChanged) onEngineChanged(); }), true);
 }
@@ -953,6 +1605,12 @@ SettingsPanel::SettingsPanel (UiContext& c) : ctx (c)
 SettingsPanel::~SettingsPanel() = default;
 
 void SettingsPanel::paint (juce::Graphics& g) { g.fillAll (theme::bg); }
+
+void SettingsPanel::lookAndFeelChanged()
+{
+    for (int i = 0; i < tabs.getNumTabs(); ++i)
+        tabs.setTabBackgroundColour (i, theme::panel);
+}
 void SettingsPanel::resized() { tabs.setBounds (getLocalBounds().reduced (8)); }
 
 //==============================================================================
@@ -1072,8 +1730,8 @@ MidiMapPanel::MidiMapPanel (UiContext& c) : ctx (c)
     addAndMakeVisible (learnButton);
     addAndMakeVisible (clearButton);
     addAndMakeVisible (hint);
-    styleLabel (hint);
-    hint.setText ("Right-click any control -> MIDI Learn / MIDI Range, or use Learn Mode. Click a range value to type it (e.g. 0 or -inf).", juce::dontSendNotification);
+    hint.setText ("MIDI mapping\nRight-click any control -> MIDI Learn / MIDI Range, or use Learn Mode.\n\n"
+                  "Click a range value in the table to type it (e.g. 0 or -inf).");
     learnButton.setClickingTogglesState (true);
     learnButton.onClick = [this]
     {
@@ -1102,7 +1760,7 @@ void MidiMapPanel::resized()
     top.removeFromLeft (8);
     clearButton.setBounds (top.removeFromLeft (110));
     top.removeFromLeft (12);
-    hint.setBounds (top);
+    hint.setBounds (top.removeFromLeft (InfoButton::kSize).withSizeKeepingCentre (InfoButton::kSize, InfoButton::kSize));
     r.removeFromTop (10);
     list.setBounds (r);
 }

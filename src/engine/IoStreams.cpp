@@ -1,4 +1,6 @@
 #include "IoStreams.h"
+#include "VacStream.h"
+#include "NetLink.h"
 
 #include <windows.h>
 #include <mmdeviceapi.h>
@@ -21,10 +23,46 @@ juce::String IoTarget::describe() const
         case Kind::Device:   return deviceName + (channel > 0 || mono ? " [" + pair + "]" : juce::String());
         case Kind::Loopback: return "Loopback: " + deviceName;
         case Kind::Virtual:  return "Hydra Virtual " + juce::String (virtualIndex + 1);
-        case Kind::App:      return "App: " + deviceName;
+        case Kind::App:
+        {
+            juce::StringArray shown;
+            for (auto& exe : appNames()) shown.add (exe.endsWithIgnoreCase (".exe") ? exe.dropLastCharacters (4) : exe);
+            return (shown.size() > 1 ? "Apps: " : "App: ") + shown.joinIntoString (" + ");
+        }
+        case Kind::Network:
+        {
+            if (deviceName.startsWith ("hydralink://"))
+            {
+                const auto d = net::Destination::parse (deviceName);
+                return "Network: " + d.stream + " to " + d.host;
+            }
+            const auto s = net::Source::parse (deviceName);
+            return "Network: " + s.stream + " from " + s.sender;
+        }
         case Kind::None:
         default:             return "- none -";
     }
+}
+
+juce::StringArray IoTarget::appNames() const
+{
+    juce::StringArray a;
+    a.addTokens (deviceName, "|", {});
+    a.trim();
+    a.removeEmptyStrings();
+    return a;
+}
+
+IoTarget IoTarget::apps (juce::StringArray exes)
+{
+    exes.trim();
+    exes.removeEmptyStrings();
+    exes.removeDuplicates (true);
+    exes.sortNatural();   // one order, so the same set is the same stream
+    IoTarget t;
+    t.kind = exes.isEmpty() ? Kind::None : Kind::App;
+    t.deviceName = exes.joinIntoString ("|");
+    return t;
 }
 
 std::unique_ptr<juce::XmlElement> IoTarget::toXml (const juce::String& tag) const
@@ -43,7 +81,7 @@ IoTarget IoTarget::fromXml (const juce::XmlElement* e)
 {
     IoTarget t;
     if (e == nullptr) return t;
-    t.kind = (Kind) juce::jlimit (0, 5, e->getIntAttribute ("kind"));
+    t.kind = (Kind) juce::jlimit (0, (int) Kind::Network, e->getIntAttribute ("kind"));
     t.typeName = e->getStringAttribute ("type");
     t.deviceName = e->getStringAttribute ("device");
     t.channel = e->getIntAttribute ("channel");
@@ -67,6 +105,7 @@ void AsyncInput::setup (double devRate, int devBlock, int numChannels, double en
     channels = juce::jlimit (1, kMaxStreamChannels, numChannels);
     allocBuffers();
 
+    if (direct) deviceRate = engineRate;
     const double ratio = deviceRate / engineRate;              // device frames per engine frame
     const double perBlock = engineBlock * ratio;
     ring.allocate (channels, (int) (perBlock * 4 + deviceBlock * 8 + 16384));
@@ -80,9 +119,11 @@ void AsyncInput::setup (double devRate, int devBlock, int numChannels, double en
     const double frac = larger / smaller - std::floor (larger / smaller);
     slipMargin = (frac < 0.25 || frac > 0.75) ? smaller : 0.0;
     // Fill measured *before* the engine reads: must cover one engine block + the device's burst size.
-    drift.prepare (juce::jmax (perBlock + deviceBlock + 32, perBlock + slipMargin + 32), perBlock + slipMargin + 16,
+    drift.setHoldFloor (preferStable);
+    drift.prepare (juce::jmax (perBlock + deviceBlock + 32, perBlock + slipMargin + 32), juce::jmax (perBlock + slipMargin + 16, perBlock + jitterFloor),
                    perBlock + deviceBlock * 6 + 4096,
-                   juce::jmax (16.0, deviceBlock * 0.25), engineRate, engineBlock, deviceRate, minWindow (perBlock, deviceBlock));
+                   juce::jmax (16.0, deviceBlock * 0.25), engineRate, engineBlock, deviceRate,
+                   juce::jmax (minWindow (perBlock, deviceBlock), (int) std::ceil (minWindowSeconds * engineRate / juce::jmax (1, engineBlock))));
     primed = false;
 }
 
@@ -104,7 +145,26 @@ void AsyncInput::pullBlock (int n) noexcept
 
     // Engine stalled / device burst: drop the excess instead of carrying latency forever.
     if (avail > (int) drift.getTarget() + deviceBlock * 8 + 2048)
+    {
         ring.skip (avail - (int) drift.getTarget());
+        underruns.fetch_add (1, std::memory_order_relaxed);   // audible like a dropout (a jump)
+    }
+
+    if (direct)
+    {
+        // Device at the engine rate, its clock steered: no resampling, just the ring.
+        clockRatio.store (1.0 / drift.update ((double) ring.available(), n + slipMargin, false), std::memory_order_relaxed);
+        const int got = ring.read (bufPtrs, channels, n);
+        if (got < n)
+        {
+            for (int c = 0; c < channels; ++c) std::memset (bufPtrs[c] + got, 0, (size_t) (n - got) * sizeof (float));
+            underruns.fetch_add (1, std::memory_order_relaxed);
+            drift.update ((double) ring.available(), n + slipMargin, true);
+            primed = false;
+        }
+        latencyFrames.store (ring.available(), std::memory_order_relaxed);
+        return;
+    }
 
     const double corr = drift.update ((double) ring.available(), need + slipMargin, false);
     resampler.setCorrection (corr);
@@ -127,6 +187,7 @@ void AsyncOutput::setup (double devRate, int devBlock, int numChannels, double e
     channels = juce::jlimit (1, kMaxStreamChannels, numChannels);
     allocBuffers();
 
+    if (direct) deviceRate = engineRate;
     const double ratio = engineRate / deviceRate;               // engine frames per device frame
     const double perBlock = engineBlock / ratio;                 // device frames produced per engine block
     ring.allocate (channels, (int) (perBlock * 4 + deviceBlock * 8 + 16384));
@@ -135,6 +196,7 @@ void AsyncOutput::setup (double devRate, int devBlock, int numChannels, double e
     // the device takes one block, or more when its blocks are shorter than the engine's (an ASIO
     // device at 64 next to a master at 128 takes up to 3 blocks between two engine blocks).
     minSafeFill = (std::floor (perBlock / deviceBlock) + 1.0) * deviceBlock;
+    drift.setHoldFloor (preferStable);
     drift.prepare (juce::jmax (perBlock + deviceBlock + 32, minSafeFill + 32), minSafeFill + 16, perBlock + deviceBlock * 6 + 4096,
                    juce::jmax (16.0, deviceBlock * 0.25), engineRate, engineBlock, deviceRate, minWindow (perBlock, deviceBlock));
     primeTarget.store ((int) drift.getTarget());
@@ -145,18 +207,23 @@ void AsyncOutput::pushBlock (int n) noexcept
 {
     const float* in[kMaxStreamChannels];
     for (int c = 0; c < channels; ++c) in[c] = bufPtrs[c];
-    resampler.push (in, n, ring);
+    if (direct) ring.write (in, channels, n);   // device at the engine rate, its clock steered
+    else        resampler.push (in, n, ring);
 
     const int avail = ring.available();
     const bool under = devUnderrun.exchange (false, std::memory_order_relaxed);
     if (under) underruns.fetch_add (1, std::memory_order_relaxed);
-    resampler.setCorrection (drift.update ((double) avail, minSafeFill, under));
+    const double corr = drift.update ((double) avail, minSafeFill, under);
+    // Ring too full -> the device takes too little: resample to fewer frames, or (direct) run the device faster.
+    if (direct) clockRatio.store (corr, std::memory_order_relaxed);
+    else        resampler.setCorrection (corr);
     primeTarget.store ((int) drift.getTarget(), std::memory_order_relaxed);
-    latencyFrames.store (avail + resampler.getLatencyFrames(), std::memory_order_relaxed);
+    latencyFrames.store (avail + (direct ? 0 : resampler.getLatencyFrames()), std::memory_order_relaxed);
 }
 
 void AsyncOutput::consume (float* const* out, int numCh, int n) noexcept
 {
+    deviceCallbacks.fetch_add (1, std::memory_order_relaxed);
     if (! primed && ring.available() >= primeTarget.load (std::memory_order_relaxed))
         primed = true;
 
@@ -210,13 +277,44 @@ int pickBuffer (juce::AudioIODevice& d)
     return sizes.getFirst();
 }
 
+/** Creates a JUCE device by name. Runs on the StreamOpener's thread, so it must not scan: the engine makes sure
+    (on the message thread) that a device plugged in after the last scan is in the type's list before it asks. */
+juce::AudioIODevice* createNamedDevice (juce::AudioIODeviceType& type, const juce::String& name, bool input)
+{
+    return input ? type.createDevice ({}, name) : type.createDevice (name, {});
+}
+
+/** Watchdog for a JUCE device stream: a device that delivers no callbacks for ~2 s (unplugged, driver gone)
+    counts as failed, so the engine reopens it (and choosing it again opens it anew instead of reusing it). */
+struct StallWatch
+{
+    void poll (AsyncStream& s)
+    {
+        const auto n = s.deviceCallbacks.load (std::memory_order_relaxed);
+        if (n != seen) { seen = n; quietPolls = 0; return; }
+        if (++quietPolls == 20 && ! s.failed.load())
+        {
+            s.error = "device stopped (unplugged?)";
+            s.failed = true;
+        }
+    }
+    uint32_t seen = 0;
+    int quietPolls = 0;
+};
+
 /** Input from a JUCE device (WASAPI shared / low latency / exclusive). */
+/** Software endpoints (virtual cables, Voicemeeter): timer-driven, rare late wake-ups. */
+bool isVirtualCableName (const juce::String& n)
+{
+    return n.containsIgnoreCase ("Cable") || n.containsIgnoreCase ("Virtual Audio") || n.containsIgnoreCase ("Voicemeeter");
+}
+
 class DeviceInput final : public AsyncInput, private juce::AudioIODeviceCallback
 {
 public:
     bool open (juce::AudioIODeviceType& type, const juce::String& name, double engRate, int engBlock)
     {
-        device.reset (type.createDevice ({}, name));
+        device.reset (createNamedDevice (type, name, true));
         if (device == nullptr) { error = "Cannot create device " + name; return false; }
 
         const int numCh = juce::jlimit (1, 8, device->getInputChannelNames().size());
@@ -225,6 +323,7 @@ public:
         error = device->open (ins, {}, rate, pickBuffer (*device));
         if (error.isNotEmpty()) return false;
 
+        preferStable = isVirtualCableName (name);
         setup (device->getCurrentSampleRate(), device->getCurrentBufferSizeSamples(), numCh, engRate, engBlock);
         deviceLatencyFrames = device->getInputLatencyInSamples();
         return true;
@@ -233,6 +332,7 @@ public:
     ~DeviceInput() override { stop(); if (device) device->close(); }
     void start() override   { if (device) device->start (this); }
     void stop() override    { if (device) device->stop(); }
+    void poll() override    { watch.poll (*this); }
 
 private:
     void audioDeviceIOCallbackWithContext (const float* const* in, int numIn, float* const* out, int numOut,
@@ -246,6 +346,7 @@ private:
     void audioDeviceError (const juce::String& e) override { error = e; failed = true; }
 
     std::unique_ptr<juce::AudioIODevice> device;
+    StallWatch watch;
 };
 
 /** Output to a JUCE device. */
@@ -254,7 +355,7 @@ class DeviceOutput final : public AsyncOutput, private juce::AudioIODeviceCallba
 public:
     bool open (juce::AudioIODeviceType& type, const juce::String& name, double engRate, int engBlock)
     {
-        device.reset (type.createDevice (name, {}));
+        device.reset (createNamedDevice (type, name, false));
         if (device == nullptr) { error = "Cannot create device " + name; return false; }
 
         const int numCh = juce::jlimit (1, 8, device->getOutputChannelNames().size());
@@ -263,6 +364,7 @@ public:
         error = device->open ({}, outs, rate, pickBuffer (*device));
         if (error.isNotEmpty()) return false;
 
+        preferStable = isVirtualCableName (name);
         setup (device->getCurrentSampleRate(), device->getCurrentBufferSizeSamples(), numCh, engRate, engBlock);
         deviceLatencyFrames = device->getOutputLatencyInSamples();
         return true;
@@ -568,20 +670,29 @@ DWORD findRootProcess (const juce::String& exe)
     return matches.empty() ? 0 : matches.front().first;
 }
 
-/** Captures everything a single application (and its child processes) plays, via Windows'
-    process-loopback virtual device. No driver needed; reconnects when the app restarts. */
+/** Captures everything one or more applications (and their child processes) play, via Windows' process-loopback
+    virtual device, mixed into one stereo stream. No driver needed; each app reconnects when it restarts.
+
+    Several apps: one capture client per app on the same thread. Their packets come from the same Windows audio
+    engine, so they are mixed sample by sample from small per-app queues. An app that delivers nothing (not
+    playing, stalled) for 30 ms is filled with silence, so it never holds the others back for longer than that.
+    With a single app nothing is queued (same latency as before). */
 class AppCaptureInput final : public AsyncInput, private juce::Thread
 {
 public:
     AppCaptureInput() : juce::Thread ("Hydra App Capture") {}
     ~AppCaptureInput() override { stop(); }
 
-    bool open (const juce::String& exe, double engRate, int engBlock)
+    bool open (const juce::StringArray& exes, double engRate, int engBlock)
     {
-        exeName = exe;
+        for (auto& e : exes) { auto c = std::make_unique<Client>(); c->exe = e; clients.push_back (std::move (c)); }
+        if (clients.empty()) { error = "No app chosen"; return false; }
         // Fixed capture format; Windows converts the app's audio to it.
+        preferStable = true;   // software routing like a cable: stability before latency
         setup (48000.0, 480, 2, engRate, engBlock);
         idle = true;
+        for (auto& c : clients) c->event = CreateEventW (nullptr, FALSE, FALSE, nullptr);
+        wake = CreateEventW (nullptr, FALSE, FALSE, nullptr);
         startThread (juce::Thread::Priority::highest);
         return true;
     }
@@ -593,37 +704,70 @@ public:
         signalThreadShouldExit();
         if (wake) SetEvent (wake);
         stopThread (3000);
+        for (auto& c : clients) if (c->event) { CloseHandle (c->event); c->event = nullptr; }
+        if (wake) { CloseHandle (wake); wake = nullptr; }
     }
 
 private:
+    struct Client
+    {
+        juce::String exe;
+        IAudioClient* client = nullptr;
+        IAudioCaptureClient* cc = nullptr;
+        HANDLE event = nullptr, proc = nullptr;
+        std::vector<float> queue;   // interleaved stereo, not mixed yet (several apps only)
+        double lastData = 0;        // ms, last packet with frames
+        bool active() const noexcept { return cc != nullptr; }
+    };
+
+    int numActive() const { return (int) std::count_if (clients.begin(), clients.end(), [] (auto& c) { return c->active(); }); }
+
     void run() override
     {
         CoInitializeEx (nullptr, COINIT_MULTITHREADED);
         DWORD taskIndex = 0;
         HANDLE mmcss = AvSetMmThreadCharacteristicsW (L"Pro Audio", &taskIndex);
-        wake = CreateEventW (nullptr, FALSE, FALSE, nullptr);
+        for (auto& c : clients) c->queue.reserve (48000);
+        mix.reserve (48000);
 
+        double lastLook = -1.0e9;
         while (! threadShouldExit())
         {
-            const DWORD pid = findRootProcess (exeName);
-            if (pid == 0)
+            double now = juce::Time::getMillisecondCounterHiRes();
+            // Look for apps that are not captured yet (started later, restarted).
+            if (numActive() < (int) clients.size() && now - lastLook > 1000.0)
             {
-                idle = true;
-                wait (1000);
-                continue;
+                lastLook = now;
+                for (auto& c : clients)
+                    if (! c->active())
+                        if (const DWORD pid = findRootProcess (c->exe); pid != 0) activate (*c, pid);
             }
-            captureProcess (pid);
-            idle = true;
-            wait (500);
+            idle = numActive() == 0;
+
+            HANDLE events[MAXIMUM_WAIT_OBJECTS];
+            DWORD n = 0;
+            events[n++] = wake;
+            for (auto& c : clients) if (c->active() && n < MAXIMUM_WAIT_OBJECTS) events[n++] = c->event;
+            WaitForMultipleObjects (n, events, FALSE, n == 1 ? 500 : 20);
+            if (threadShouldExit()) break;
+
+            now = juce::Time::getMillisecondCounterHiRes();
+            const bool single = numActive() == 1;
+            for (auto& c : clients)
+            {
+                if (! c->active()) continue;
+                if (c->proc != nullptr && WaitForSingleObject (c->proc, 0) == WAIT_OBJECT_0) { close (*c); continue; }   // app closed -> look for it again
+                drain (*c, single, now);
+            }
+            if (! single) mixQueues (now);
         }
 
-        CloseHandle (wake);
-        wake = nullptr;
+        for (auto& c : clients) close (*c);
         if (mmcss) AvRevertMmThreadCharacteristics (mmcss);
         CoUninitialize();
     }
 
-    void captureProcess (DWORD pid)
+    void activate (Client& c, DWORD pid)
     {
         AUDIOCLIENT_ACTIVATION_PARAMS params {};
         params.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
@@ -658,7 +802,7 @@ private:
                                    | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
                                  200000 /* 20 ms */, 0, &fmt, nullptr);
         IAudioCaptureClient* cc = nullptr;
-        if (SUCCEEDED (hr)) hr = client->SetEventHandle (wake);
+        if (SUCCEEDED (hr)) hr = client->SetEventHandle (c.event);
         if (SUCCEEDED (hr)) hr = client->GetService (__uuidof (IAudioCaptureClient), (void**) &cc);
         if (FAILED (hr) || cc == nullptr)
         {
@@ -666,47 +810,86 @@ private:
             client->Release();
             return;
         }
-
-        HANDLE proc = OpenProcess (SYNCHRONIZE, FALSE, pid);
+        c.client = client;
+        c.cc = cc;
+        c.proc = OpenProcess (SYNCHRONIZE, FALSE, pid);
+        c.queue.clear();
+        c.lastData = juce::Time::getMillisecondCounterHiRes();
         client->Start();
-        idle = false;
         error.clear();
+    }
 
-        while (! threadShouldExit())
+    static void close (Client& c)
+    {
+        if (c.client != nullptr) c.client->Stop();
+        if (c.cc != nullptr) c.cc->Release();
+        if (c.client != nullptr) c.client->Release();
+        if (c.proc != nullptr) CloseHandle (c.proc);
+        c.cc = nullptr; c.client = nullptr; c.proc = nullptr;
+        c.queue.clear();
+    }
+
+    /** Reads the app's packets: straight into the ring (single app) or into its queue. */
+    void drain (Client& c, bool single, double now)
+    {
+        UINT32 packet = 0;
+        while (SUCCEEDED (c.cc->GetNextPacketSize (&packet)) && packet > 0)
         {
-            WaitForSingleObject (wake, 20);
-            if (proc != nullptr && WaitForSingleObject (proc, 0) == WAIT_OBJECT_0)
-                break; // app closed -> look for it again
-
-            UINT32 packet = 0;
-            while (SUCCEEDED (cc->GetNextPacketSize (&packet)) && packet > 0)
+            BYTE* data = nullptr; UINT32 frames = 0; DWORD flags = 0;
+            if (FAILED (c.cc->GetBuffer (&data, &frames, &flags, nullptr, nullptr))) break;
+            if (frames > 0) c.lastData = now;
+            if (capturing.load (std::memory_order_relaxed))
             {
-                BYTE* data = nullptr; UINT32 frames = 0; DWORD flags = 0;
-                if (FAILED (cc->GetBuffer (&data, &frames, &flags, nullptr, nullptr))) break;
-                if (capturing.load (std::memory_order_relaxed))
+                const bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0 || data == nullptr;
+                const auto* f = reinterpret_cast<const float*> (data);
+                if (single)
                 {
-                    if ((flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0 || data == nullptr)
+                    if (silent)
                     {
                         silence.assign ((size_t) frames * 2, 0.0f);
                         produceInterleaved (silence.data(), 2, (int) frames);
                     }
                     else
-                        produceInterleaved (reinterpret_cast<const float*> (data), 2, (int) frames);
+                        produceInterleaved (f, 2, (int) frames);
                 }
-                cc->ReleaseBuffer (frames);
+                else if (c.queue.size() < 48000 * 2)   // at most 0.5 s (only if nobody mixes: a bug, not normal)
+                {
+                    if (silent) c.queue.insert (c.queue.end(), (size_t) frames * 2, 0.0f);
+                    else        c.queue.insert (c.queue.end(), f, f + (size_t) frames * 2);
+                }
             }
+            c.cc->ReleaseBuffer (frames);
         }
-
-        client->Stop();
-        cc->Release();
-        client->Release();
-        if (proc) CloseHandle (proc);
     }
 
-    juce::String exeName;
+    /** Several apps: mixes what all of them have delivered. An app without packets for 30 ms (or 60 ms behind)
+        gets silence instead, so it does not hold the others back. */
+    void mixQueues (double now)
+    {
+        size_t most = 0;
+        for (auto& c : clients) if (c->active()) most = juce::jmax (most, c->queue.size());
+        if (most == 0) return;
+        for (auto& c : clients)
+            if (c->active() && c->queue.size() < most && (now - c->lastData > 30.0 || most - c->queue.size() > 2880 * 2))
+                c->queue.resize (most, 0.0f);
+        size_t n = most;
+        for (auto& c : clients) if (c->active()) n = juce::jmin (n, c->queue.size());
+        n -= n % 2;
+        if (n == 0) return;
+        mix.assign (n, 0.0f);
+        for (auto& c : clients)
+            if (c->active())
+            {
+                juce::FloatVectorOperations::add (mix.data(), c->queue.data(), (int) n);
+                c->queue.erase (c->queue.begin(), c->queue.begin() + (std::ptrdiff_t) n);
+            }
+        produceInterleaved (mix.data(), 2, (int) (n / 2));
+    }
+
+    std::vector<std::unique_ptr<Client>> clients;
     std::atomic<bool> capturing { false };
     HANDLE wake = nullptr;
-    std::vector<float> silence;
+    std::vector<float> silence, mix;
 };
 } // namespace
 
@@ -725,6 +908,12 @@ std::shared_ptr<AsyncInput> openAsyncInput (const IoTarget& t, juce::OwnedArray<
             if (s != nullptr) s->target = t;
             return s;
         }
+        // Virtual Audio Cable: straight to the driver (Kernel Streaming), WASAPI only as fallback.
+        if (t.typeName.startsWith ("Windows Audio"))
+        {
+            juce::String why;
+            if (auto v = openVacInput (t, engineRate, engineBlock, why)) return v;
+        }
         auto s = std::make_shared<DeviceInput>();
         if (! s->open (*type, t.deviceName, engineRate, engineBlock)) { error = s->error; return nullptr; }
         s->target = t;
@@ -742,10 +931,13 @@ std::shared_ptr<AsyncInput> openAsyncInput (const IoTarget& t, juce::OwnedArray<
     if (t.kind == IoTarget::Kind::App)
     {
         auto s = std::make_shared<AppCaptureInput>();
-        if (! s->open (t.deviceName, engineRate, engineBlock)) { error = s->error; return nullptr; }
+        if (! s->open (t.appNames(), engineRate, engineBlock)) { error = s->error; return nullptr; }
         s->target = t;
         return s;
     }
+
+    if (t.kind == IoTarget::Kind::Network)
+        return net::Hub::get().openInput (t, engineRate, engineBlock, error);
 
     error = "Not an asynchronous input";
     return nullptr;
@@ -765,11 +957,19 @@ std::shared_ptr<AsyncOutput> openAsyncOutput (const IoTarget& t, juce::OwnedArra
             if (s != nullptr) s->target = t;
             return s;
         }
+        if (t.typeName.startsWith ("Windows Audio"))
+        {
+            juce::String why;
+            if (auto v = openVacOutput (t, engineRate, engineBlock, why)) return v;
+        }
         auto s = std::make_shared<DeviceOutput>();
         if (! s->open (*type, t.deviceName, engineRate, engineBlock)) { error = s->error; return nullptr; }
         s->target = t;
         return s;
     }
+
+    if (t.kind == IoTarget::Kind::Network)
+        return net::Hub::get().openOutput (t, engineRate, engineBlock, error);
 
     error = "Not an asynchronous output";
     return nullptr;
@@ -793,6 +993,147 @@ juce::StringArray listRenderEndpoints()
             names.add (friendlyName (d.p));
     }
     return names;
+}
+
+//==============================================================================
+StreamOpener::StreamOpener (juce::OwnedArray<juce::AudioIODeviceType>& deviceTypes)
+    : juce::Thread ("Hydra device opener"), types (deviceTypes)
+{
+    startThread();
+}
+
+StreamOpener::~StreamOpener()
+{
+    signalThreadShouldExit();
+    notify();
+    stopThread (15000);   // a device that hangs while opening must not keep the app from closing forever
+}
+
+void StreamOpener::request (const IoTarget& t, bool input, double rate, int block)
+{
+    const juce::ScopedLock sl (lock);
+    for (auto& j : jobs)
+        if (j.matches (t, input, rate, block)) return;
+    jobs.push_back ({ t, input, rate, block, Job::State::queued, {}, {}, {} });
+    notify();
+}
+
+bool StreamOpener::isPending (const IoTarget& t, bool input) const
+{
+    const juce::ScopedLock sl (lock);
+    for (auto& j : jobs)
+        if (j.input == input && j.target.sameStream (t) && j.state != Job::State::done) return true;
+    return false;
+}
+
+bool StreamOpener::takeInput (const IoTarget& t, double rate, int block, std::shared_ptr<AsyncInput>& stream, juce::String& error)
+{
+    const juce::ScopedLock sl (lock);
+    for (auto it = jobs.begin(); it != jobs.end(); ++it)
+        if (it->state == Job::State::done && it->matches (t, true, rate, block))
+        {
+            stream = std::move (it->in);
+            error = it->error;
+            jobs.erase (it);
+            --numFinished;
+            return true;
+        }
+    return false;
+}
+
+bool StreamOpener::takeOutput (const IoTarget& t, double rate, int block, std::shared_ptr<AsyncOutput>& stream, juce::String& error)
+{
+    const juce::ScopedLock sl (lock);
+    for (auto it = jobs.begin(); it != jobs.end(); ++it)
+        if (it->state == Job::State::done && it->matches (t, false, rate, block))
+        {
+            stream = std::move (it->out);
+            error = it->error;
+            jobs.erase (it);
+            --numFinished;
+            return true;
+        }
+    return false;
+}
+
+void StreamOpener::discardFinishedExcept (const std::vector<IoTarget>& wantedIn, const std::vector<IoTarget>& wantedOut, double rate, int block)
+{
+    const juce::ScopedLock sl (lock);
+    for (auto it = jobs.begin(); it != jobs.end();)
+    {
+        const auto& wanted = it->input ? wantedIn : wantedOut;
+        const bool keep = it->state != Job::State::done
+                       || (it->rate == rate && it->block == block
+                           && std::any_of (wanted.begin(), wanted.end(), [&] (const IoTarget& w) { return w.sameStream (it->target); }));
+        if (keep) { ++it; continue; }
+        if (it->in != nullptr)  trash.push_back (std::move (it->in));
+        if (it->out != nullptr) trash.push_back (std::move (it->out));
+        it = jobs.erase (it);
+        --numFinished;
+        notify();
+    }
+}
+
+void StreamOpener::dispose (std::shared_ptr<void> stream)
+{
+    const juce::ScopedLock sl (lock);
+    trash.push_back (std::move (stream));
+    notify();
+}
+
+void StreamOpener::run()
+{
+    CoInitializeEx (nullptr, COINIT_MULTITHREADED);
+    while (! threadShouldExit())
+    {
+        std::vector<std::shared_ptr<void>> closing;
+        Job* job = nullptr;
+        {
+            const juce::ScopedLock sl (lock);
+            closing.swap (trash);
+            for (auto& j : jobs)
+                if (j.state == Job::State::queued) { j.state = Job::State::opening; job = &j; break; }
+        }
+        closing.clear();   // closes the devices (in the order they were given up, before anything new opens)
+
+        if (job == nullptr)
+        {
+            wait (-1);
+            continue;
+        }
+
+        // The list never loses an element while it is being opened (only finished jobs are removed), so job stays valid.
+        juce::String error;
+        std::shared_ptr<AsyncInput> in;
+        std::shared_ptr<AsyncOutput> out;
+        if (job->input) in  = openAsyncInput  (job->target, types, job->rate, job->block, error, {});
+        else            out = openAsyncOutput (job->target, types, job->rate, job->block, error, {});
+
+        const juce::ScopedLock sl (lock);
+        job->in = std::move (in);
+        job->out = std::move (out);
+        job->error = job->in != nullptr || job->out != nullptr ? juce::String()
+                   : error.isNotEmpty() ? error : juce::String ("could not be opened");
+        job->state = Job::State::done;
+        ++numFinished;
+    }
+    const juce::ScopedLock sl (lock);
+    trash.clear();
+    for (auto& j : jobs) { j.in.reset(); j.out.reset(); }
+    jobs.clear();
+    CoUninitialize();
+}
+
+//==============================================================================
+void listAudioAppsAsync (std::function<void (juce::StringArray)> done)
+{
+    juce::Thread::launch ([done = std::move (done)]
+    {
+        CoInitializeEx (nullptr, COINIT_MULTITHREADED);
+        auto names = listAudioApps();
+        CoUninitialize();
+        juce::MessageManager::callAsync ([done, names = std::move (names)] { done (names); });
+    });
 }
 
 juce::StringArray listAudioApps()
@@ -836,14 +1177,16 @@ juce::StringArray listAudioApps()
 
 std::vector<VirtualCable> findVirtualCables (juce::OwnedArray<juce::AudioIODeviceType>& types)
 {
-    std::vector<VirtualCable> cables;
     auto* type = findType (types, "Windows Audio (Low Latency Mode)");
     if (type == nullptr) type = findType (types, "Windows Audio");
-    if (type == nullptr) return cables;
+    if (type == nullptr) return {};
 
-    const auto outs = type->getDeviceNames (false); // playback endpoints (apps play into these)
-    const auto ins  = type->getDeviceNames (true);  // recording endpoints (Hydra captures these)
+    return findVirtualCables (type->getDeviceNames (false), type->getDeviceNames (true));
+}
 
+std::vector<VirtualCable> findVirtualCables (const juce::StringArray& outs, const juce::StringArray& ins)
+{
+    std::vector<VirtualCable> cables;
     auto isCandidate = [] (const juce::String& n)
     {
         return ! n.containsIgnoreCase ("Voicemeeter")

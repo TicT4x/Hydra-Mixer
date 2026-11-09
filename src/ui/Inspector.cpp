@@ -1,4 +1,5 @@
-﻿#include "Inspector.h"
+#include "Inspector.h"
+#include "state/ChannelClipboard.h"
 #include <juce_dsp/juce_dsp.h>
 
 namespace hydra
@@ -19,6 +20,7 @@ public:
         setContentOwned (ed, true);
         setResizable (ed->isResizable(), false);
         centreWithSize (getWidth(), getHeight());
+        placeOnAppDisplay (*this, true);
         setVisible (true);
         toFront (true);
     }
@@ -35,7 +37,46 @@ private:
     PluginSlot& slot;
 };
 
-/** Rounded section with title, optional ON toggle (headerSlot) and optional settings gear. */
+/** Six dots: "drag here". */
+void drawGrip (juce::Graphics& g, juce::Rectangle<float> r)
+{
+    g.setColour (theme::textFaint);
+    for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 2; ++col)
+            g.fillEllipse (r.getX() + (float) col * 5.0f, r.getY() + (float) row * 5.0f, 2.2f, 2.2f);
+}
+
+/** Transparent handle over a section's title: dragging it moves the effect within the chain. */
+struct DragGrip final : juce::Component, juce::SettableTooltipClient
+{
+    DragGrip()
+    {
+        setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+        setTooltip ("Drag to move this effect in the chain");
+    }
+    std::function<void (const juce::MouseEvent&)> onDown, onDrag;
+    std::function<void()> onDrop, onMenu;
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        dragging = false;
+        if (e.mods.isPopupMenu()) { if (onMenu) onMenu(); return; }
+        if (onDown) onDown (e);
+    }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu()) return;
+        if (! dragging && e.getDistanceFromDragStart() < 6) return;
+        if (! dragging)
+            if (auto* unit = getParentComponent() != nullptr ? getParentComponent()->getParentComponent() : nullptr) unit->toFront (false);
+        dragging = true;
+        if (onDrag) onDrag (e);
+    }
+    void mouseUp (const juce::MouseEvent&) override { if (std::exchange (dragging, false) && onDrop) onDrop(); }
+    bool dragging = false;
+};
+
+/** Rounded section with title, optional ON toggle (headerSlot) and optional settings gear. In an effect
+    chain it also has a drag grip on its title and a remove button (enableChainControls). */
 struct Section : juce::Component
 {
     Section (juce::String t, juce::Colour c) : title (std::move (t)), colour (c)
@@ -51,28 +92,97 @@ struct Section : juce::Component
         addAndMakeVisible (gear);
     }
 
+    void enableChainControls (std::function<void()> onRemove)
+    {
+        chained = true;
+        remove.onClick = std::move (onRemove);
+        remove.setTooltip ("Remove " + title + " from the chain (its settings go back to the defaults; Ctrl+Z brings them back)");
+        addAndMakeVisible (remove);
+        addAndMakeVisible (grip);
+        grip.onMenu = [this] { if (onMenu) onMenu(); };
+        resized();
+        repaint();
+    }
+
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat().reduced (3.0f);
-        g.setColour (theme::panel2);
-        g.fillRoundedRectangle (r, 8.0f);
-        g.setColour (theme::outline.withAlpha (0.6f));
-        g.drawRoundedRectangle (r, 8.0f, 1.0f);
-        g.setColour (theme::textDim);
-        g.setFont (theme::font (11.0f, true));
+        if (theme::deep())
+            theme::drawCard (g, r, theme::panel2, theme::cardLine, colour);
+        else
+        {
+            g.setColour (theme::panel2);
+            g.fillRoundedRectangle (r, 8.0f);
+            g.setColour (theme::cardLine);
+            g.drawRoundedRectangle (r, 8.0f, 1.0f);
+        }
+        if (! subCard.isEmpty() && ! theme::deep())
+        {
+            g.setColour (theme::bg.withAlpha (0.45f));
+            g.fillRoundedRectangle (subCard.toFloat(), 6.0f);
+            g.setColour (subCardColour);
+            g.drawRoundedRectangle (subCard.toFloat().reduced (0.5f), 6.0f, 1.0f);
+        }
         auto titleArea = r.reduced (10.0f, 6.0f).removeFromTop (16.0f);
-        if (gear.isVisible()) titleArea.removeFromRight (72.0f); // ON toggle + gear
-        g.drawFittedText (title.toUpperCase(), titleArea.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+        if (chained)
+        {
+            drawGrip (g, titleArea.removeFromLeft (12.0f).withSizeKeepingCentre (8.0f, 13.0f).translated (0.0f, 1.0f));
+            titleArea.removeFromLeft (4.0f);
+        }
+        titleArea.setRight ((float) titleRight());
+        g.setColour (colour);
+        g.setFont (titleFont());
+        g.drawFittedText (title.toUpperCase(), titleArea.toNearestInt(), juce::Justification::centredLeft, 1, 1.0f);
     }
 
-    void resized() override { gear.setBounds (headerSlot().translated (-28, 0).withWidth (24)); }
+    /** Narrowest width at which the title fits next to the header controls. */
+    int minimumWidth() const
+    {
+        const int text = juce::GlyphArrangement::getStringWidthInt (titleFont(), title.toUpperCase());
+        return 13 + (chained ? 16 : 0) + text + 4 + (gear.isVisible() ? 28 : 0) + headerExtra + 44 + (chained ? 26 : 0) + 10 + 4;
+    }
+
+    /** Right-click on the section (not on a control): the block menu. */
+    void mouseDown (const juce::MouseEvent& e) override { if (e.mods.isPopupMenu() && onMenu) onMenu(); }
+
+    void resized() override
+    {
+        gear.setBounds (headerSlot().withRight (beforeSwitch()).withLeft (beforeSwitch() - 24));
+        if (chained)
+        {
+            remove.setBounds (getLocalBounds().reduced (8, 7).removeFromTop (20).removeFromRight (22));
+            grip.setBounds (juce::Rectangle<int> (8, 4, juce::jmax (20, titleRight() - 8), 24));
+        }
+    }
 
     juce::Rectangle<int> content() const    { return getLocalBounds().reduced (12, 8).withTrimmedTop (24); }
-    juce::Rectangle<int> headerSlot() const { return getLocalBounds().reduced (10, 7).removeFromTop (20).removeFromRight (44); }
+    juce::Rectangle<int> headerSlot() const
+    {
+        return getLocalBounds().reduced (10, 7).removeFromTop (20).withTrimmedRight (chained ? 26 : 0).removeFromRight (44);
+    }
+    /** Right edge for the next control left of the ON switch: the same distance as between the switch and the
+        remove button on its right. (Default theme: the switch only takes the right end of its slot.) */
+    int beforeSwitch() const
+    {
+        const auto slot = headerSlot();
+        return (theme::deep() ? slot.getRight() - 33 : slot.getX()) - 6;
+    }
+    /** Right end of the title text: left of the header controls. Sections place extra header buttons in
+        front of the ON toggle and say how wide they are with headerExtra. */
+    int titleRight() const { return beforeSwitch() - (gear.isVisible() ? 28 : 0) - headerExtra - 2; }
+
+    static juce::Font titleFont() { return theme::font (12.0f, true); }
 
     juce::String title;
     juce::Colour colour;
+    juce::Rectangle<int> subCard;   // optional framed area behind some controls
+    juce::Colour subCardColour;
     Chip gear { "...", theme::text };
+    TrashButton remove;
+    DragGrip grip;
+    std::function<void()> onMenu;   // block menu (copy, cut, paste ...)
+    bool chained = false;
+    int headerExtra = 0;
 };
 
 void rowLayout (juce::Rectangle<int> r, const std::vector<juce::Component*>& comps, int gap = 4)
@@ -93,11 +203,8 @@ public:
         setInterceptsMouseClicks (false, false);
     }
 
-    void update()
-    {
-        const float v = juce::jlimit (0.0f, 1.0f, source());
-        if (std::abs (v - shown) > 0.01f) { shown = v; repaint(); }
-    }
+    /** How fast the bar follows its source (seconds, rising / falling). Noisy sources get longer times. */
+    void setBallistics (float riseSeconds, float fallSeconds) { rise = riseSeconds; fall = fallSeconds; }
 
     void setMarker (float m) { if (m != marker) { marker = m; repaint(); } }
 
@@ -129,25 +236,80 @@ public:
     }
 
 private:
+    void frame (double t)
+    {
+        const float dt = lastFrame > 0.0 ? (float) juce::jlimit (0.0, 0.1, t - lastFrame) : 1.0f / 60.0f;
+        lastFrame = t;
+        const float target = juce::jlimit (0.0f, 1.0f, source());
+        smooth += (target - smooth) * (1.0f - std::exp (-dt / (target > smooth ? rise : fall)));
+        // Repaint for a visible step only (about a pixel at the bar's length).
+        const float step = 0.6f / (float) juce::jmax (20, juce::jmax (getWidth(), getHeight()));
+        if (std::abs (smooth - shown) >= step || (target == 0.0f && shown != 0.0f && smooth < step))
+        {
+            shown = smooth < step ? 0.0f : smooth;
+            repaint();
+        }
+    }
+
     std::function<float()> source;
     juce::Colour colour;
     juce::String caption;
-    float marker = -1.0f, shown = -1.0f;
+    float marker = -1.0f, shown = 0.0f, smooth = 0.0f, rise = 0.03f, fall = 0.18f;
+    double lastFrame = 0.0;
+    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
 };
 
-/** Base for floating advanced panels: polls its live displays at 30 Hz while open. */
+// RNNoise's speech probability jumps from frame to frame: a bar showing it follows slowly.
+constexpr float kVoiceRise = 0.12f, kVoiceFall = 0.4f;
+
+/** Base for floating advanced panels: controls grouped on captioned cards (knobs with label and value,
+    each group's switch in the caption). Polls its live displays at 30 Hz while open. */
 class AdvancedPanel : public juce::Component, private juce::Timer
 {
 public:
     AdvancedPanel() { startTimerHz (30); }
-    void paint (juce::Graphics& g) override { g.fillAll (theme::panel); }
+
+    void paint (juce::Graphics& g) override
+    {
+        for (auto& c : cards)
+        {
+            const auto r = c.area.toFloat();
+            const float corner = theme::deep() ? 4.0f : 8.0f;
+            g.setColour (theme::panel2);
+            g.fillRoundedRectangle (r, corner);
+            g.setColour (theme::cardLine);
+            g.drawRoundedRectangle (r.reduced (0.5f), corner, 1.0f);
+            g.setColour (theme::textDim);
+            g.setFont (theme::font (11.5f, true));
+            g.drawText (c.title, c.area.withHeight (kCaption + 2).withTrimmedLeft (12).withTrimmedRight (8), juce::Justification::centredLeft);
+        }
+    }
 
 protected:
+    static constexpr int kCaption = 26, kKnobs = 96, kPad = 14, kGap = 8;
+    static constexpr int kCardHeight = kCaption + kKnobs + 8;
+
+    /** Adds a card (forget the old ones in resized first) and returns the area for its controls. */
+    juce::Rectangle<int> card (juce::Rectangle<int> area, const juce::String& title)
+    {
+        cards.push_back ({ area, title });
+        return area.reduced (10, 0).withTrimmedTop (kCaption).withTrimmedBottom (8);
+    }
+
+    /** A control in the caption of a card; offset counts from the right edge. */
+    static juce::Rectangle<int> captionSlot (juce::Rectangle<int> cardArea, int width, int offset = 0)
+    {
+        return { cardArea.getRight() - 8 - offset - width, cardArea.getY() + 4, width, 20 };
+    }
+
+    static void showValues (std::initializer_list<Knob*> knobs) { for (auto* k : knobs) k->alwaysShowValue = true; }
+
+    struct Card { juce::Rectangle<int> area; juce::String title; };
+    std::vector<Card> cards;
     virtual void tick() {}
-    std::vector<LiveBar*> bars;
 
 private:
-    void timerCallback() override { for (auto* b : bars) b->update(); tick(); }
+    void timerCallback() override { tick(); }
 };
 
 //==============================================================================
@@ -229,19 +391,72 @@ private:
 };
 
 //==============================================================================
-/** 8-band EQ: type picker | curve | selected band controls. Shared by inputs and buses. */
+/** Import / export / clear of one EQ (instance k) of a channel. Copy / paste: right-click the block. */
+void showEqMenu (UiContext& ctx, int channel, int k, juce::Component& target)
+{
+    auto* e = &ctx.engine;
+    juce::Component::SafePointer<juce::Component> near (&target);
+    juce::PopupMenu m;
+    m.addSectionHeader ("EQ" + (k > 0 ? " " + juce::String (k + 1) : juce::String()) + " of " + channelCode (channel));
+    static std::unique_ptr<juce::FileChooser> chooser;
+    const auto dir = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
+    m.addItem ("Export EQ...", [e, channel, k, dir]
+    {
+        const auto name = channel < kMaxInputs ? e->inputs[(size_t) channel].name : e->buses[(size_t) (channel - kMaxInputs)].name;
+        chooser = std::make_unique<juce::FileChooser> ("Export EQ", dir.getChildFile (juce::File::createLegalFileName (name + " EQ") + clip::kEqExtension),
+                                                       juce::String ("*") + clip::kEqExtension);
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [e, channel, k] (const juce::FileChooser& fc)
+        {
+            auto f = fc.getResult();
+            if (f == juce::File()) return;
+            if (auto xml = clip::copyBuiltin (*e, channel, Fx::eq, k)) xml->writeTo (f.withFileExtension (clip::kEqExtension));
+        });
+    });
+    m.addItem ("Import EQ...", [e, channel, k, dir, near]
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Import EQ", dir, juce::String ("*") + clip::kEqExtension);
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [e, channel, k, near] (const juce::FileChooser& fc)
+        {
+            const auto f = fc.getResult();
+            if (f == juce::File()) return;
+            auto xml = clip::parse (f.loadFileAsString());
+            if (xml == nullptr || ! clip::pasteBuiltinSettings (*e, channel, Fx::eq, k, *xml))
+                dialog::message (near.getComponent(), dialog::Kind::warning, "EQ could not be imported",
+                                 f.getFileName() + " is not an EQ exported from Hydra Mixer.");
+        });
+    });
+    m.addSeparator();
+    m.addItem ("Remove all bands", [&ctx, channel, k]
+    {
+        auto* eq = channel < kMaxInputs ? &ctx.engine.inputs[(size_t) channel].eqs[(size_t) k] : &ctx.engine.buses[(size_t) (channel - kMaxInputs)].eqs[(size_t) k];
+        for (int b = 0; b < ParamEq::kBands; ++b)
+            for (auto* p : { eq->bandOn[(size_t) b], eq->enabled[(size_t) b], eq->type[(size_t) b], eq->gain[(size_t) b], eq->freq[(size_t) b], eq->q[(size_t) b] })
+                p->reset();
+    });
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target));
+}
+
+//==============================================================================
+/** EQ block: type picker | curve | selected band controls. Shared by inputs and buses. */
 class EqSection final : public juce::Component, private ParamPoller::Client
 {
 public:
-    EqSection (UiContext& c, ParamEq& e, juce::Colour col, int selectIndex)
-        : ctx (c), eq (e), colour (col), section ("Equalizer", col), onToggle (c, *e.on, "ON", col), graph (c, e, col)
+    EqSection (UiContext& c, ParamEq& e, juce::Colour col, int selectIndex, int instance, const juce::String& title)
+        : ctx (c), eq (e), colour (col), section (title, theme::fxEq), onToggle (c, *e.on, "ON", theme::fxEq), graph (c, e, col)
     {
         addAndMakeVisible (section);
         section.addAndMakeVisible (onToggle);
         section.addAndMakeVisible (graph);
         section.addAndMakeVisible (expand);
+        section.addAndMakeVisible (menu);
+        section.headerExtra = 62;   // expand + menu in front of the ON toggle
+        onToggle.setTooltip ("Switch the whole EQ on or off");
         expand.setTooltip ("Open the EQ in a large window");
-        expand.onClick = [this, selectIndex] { if (ctx.openEqWindow) ctx.openEqWindow (selectIndex); };
+        expand.onClick = [this, selectIndex, instance] { if (ctx.openEqWindow) ctx.openEqWindow (selectIndex, instance); };
+        menu.showArrow = false;
+        menu.centred = true;
+        menu.setTooltip ("Import or export this EQ, remove all bands");
+        menu.onClick = [this, selectIndex, instance] { showEqMenu (ctx, selectIndex, instance, menu); };
         graph.onBandSelected = [this] (int b) { bindBand (b); };
         bindBand (0);
         for (int k = 0; k < ParamEq::kBands; ++k) // show the first band in use
@@ -251,34 +466,42 @@ public:
 
     ~EqSection() override { ParamPoller::detach (this); }
 
+    Section& getSection() noexcept { return section; }
+
     void resized() override
     {
         section.setBounds (getLocalBounds());
         onToggle.setBounds (section.headerSlot());
-        expand.setBounds (section.headerSlot().translated (-32, 0).withWidth (26));
+        const auto header = section.headerSlot();
+        expand.setBounds (header.withRight (section.beforeSwitch()).withLeft (section.beforeSwitch() - 26));
+        menu.setBounds (header.withRight (expand.getX() - 4).withLeft (expand.getX() - 30));
         auto r = section.content();
         typeBar->setBounds (r.removeFromLeft (34));
         r.removeFromLeft (6);
-        auto col = r.removeFromRight (168);
+        const auto card = r.removeFromRight (172);
         r.removeFromRight (8);
         graph.setBounds (r);
 
-        auto head = col.removeFromTop (22);
-        bandTitle = head.translated (section.getX(), section.getY());
-        bandToggle->setBounds (head.removeFromRight (62));
-        col.removeFromTop (4);
-        rowLayout (col.withSizeKeepingCentre (col.getWidth(), juce::jmin (70, col.getHeight())), { gainKnob.get(), freqKnob.get(), qKnob.get() }, 2);
+        // The selected band has its own framed card, so its switch is not mistaken for the EQ's.
+        // Knobs and switch sit together in the middle of it.
+        section.subCard = card;
+        auto col = card.reduced (8, 6);
+        constexpr int knobsH = 70, gap = 8, footH = 22;
+        auto group = col.withSizeKeepingCentre (col.getWidth(), juce::jmin (col.getHeight(), knobsH + gap + footH));
+        auto foot = group.removeFromBottom (footH).withSizeKeepingCentre (juce::jmin (col.getWidth(), 138), footH);
+        group.removeFromBottom (gap);
+        bandRemove.setBounds (foot.removeFromRight (26));
+        foot.removeFromRight (4);
+        bandToggle->setBounds (foot);
+        rowLayout (group, { gainKnob.get(), freqKnob.get(), qKnob.get() }, 2);
     }
 
     void paintOverChildren (juce::Graphics& g) override
     {
-        const int b = graph.getSelectedBand();
-        g.setColour (theme::bandColour (b));
-        g.setFont (theme::font (12.0f, true));
-        g.drawText ("BAND " + juce::String (b + 1), bandTitle.withWidth (60), juce::Justification::centredLeft);
+        if (eq.bandOn[(size_t) graph.getSelectedBand()]->isOn()) return;
         g.setColour (theme::textDim);
         g.setFont (theme::font (11.5f));
-        g.drawText (eq.type[(size_t) b]->toText(), bandTitle.withTrimmedLeft (58).withTrimmedRight (64), juce::Justification::centredLeft);
+        g.drawFittedText ("Click the curve\nto add a band", section.subCard, juce::Justification::centred, 2);
     }
 
 private:
@@ -286,9 +509,17 @@ private:
     {
         const auto k = (size_t) b;
         const auto bc = theme::bandColour (b);
+        section.subCardColour = bc.withAlpha (0.35f);
         typeBar = std::make_unique<EqTypeBar> (ctx, *eq.type[k], bc);
-        bandToggle = std::make_unique<Toggle> (ctx, *eq.bandOn[k], "IN USE", bc);
-        bandToggle->setTooltip ("Band in use (shown as a point). Click an empty spot in the curve to add a band.");
+        bandToggle = std::make_unique<Toggle> (ctx, *eq.enabled[k], "BAND " + juce::String (b + 1) + " ON", bc);
+        bandToggle->setTooltip ("Switch this band on or off (off keeps its settings). Click an empty spot in the curve to add a band.");
+        bandRemove.setTooltip ("Remove this band");
+        bandRemove.onClick = [this, b]
+        {
+            juce::Component::SafePointer<EqSection> safe (this);
+            juce::MessageManager::callAsync ([safe, b] { if (safe != nullptr) safe->graph.removeBand (b); });
+        };
+        section.addAndMakeVisible (bandRemove);
         gainKnob = std::make_unique<Knob> (ctx, *eq.gain[k], "GAIN", bc);
         freqKnob = std::make_unique<Knob> (ctx, *eq.freq[k], "FREQ", bc);
         qKnob = std::make_unique<Knob> (ctx, *eq.q[k], "Q", bc);
@@ -296,8 +527,10 @@ private:
                                     (juce::Component*) gainKnob.get(), (juce::Component*) freqKnob.get(), (juce::Component*) qKnob.get() })
             section.addAndMakeVisible (c);
         typeVersion = 0;
+        shownUsed = -1;
         pollParams();
         resized();
+        section.repaint();
         repaint();
     }
 
@@ -308,8 +541,14 @@ private:
         {
             typeVersion = t->getVersion();
             gainKnob->setAlpha (ParamEq::typeUsesGain (juce::roundToInt (t->get())) ? 1.0f : 0.35f);
-            repaint (bandTitle);
         }
+        const bool used = eq.bandOn[(size_t) graph.getSelectedBand()]->isOn();
+        if ((used ? 1 : 0) == shownUsed) return;
+        shownUsed = used ? 1 : 0;
+        for (juce::Component* c : std::initializer_list<juce::Component*> { typeBar.get(), (juce::Component*) bandToggle.get(), &bandRemove,
+                                    (juce::Component*) gainKnob.get(), (juce::Component*) freqKnob.get(), (juce::Component*) qKnob.get() })
+            c->setVisible (used);
+        repaint();
     }
 
     UiContext& ctx;
@@ -319,145 +558,170 @@ private:
     Toggle onToggle;
     EqGraph graph;
     ExpandButton expand;
+    Chip menu { "...", theme::text };
     std::unique_ptr<EqTypeBar> typeBar;
     std::unique_ptr<Toggle> bandToggle;
+    TrashButton bandRemove;
     std::unique_ptr<Knob> gainKnob, freqKnob, qKnob;
-    juce::Rectangle<int> bandTitle;
     uint32_t typeVersion = 0;
+    int shownUsed = -1;
 };
 
 //==============================================================================
 class GatePanel final : public AdvancedPanel
 {
 public:
-    GatePanel (UiContext& c, InputStrip& s)
-        : strip (s),
-          thr (c, *s.gateThr, "THRESHOLD", theme::accentIn), range (c, *s.gateRange, "RANGE", theme::accentIn),
-          attack (c, *s.gateAttack, "ATTACK", theme::accentIn), hold (c, *s.gateHold, "HOLD", theme::accentIn),
-          release (c, *s.gateRelease, "RELEASE", theme::accentIn),
-          sc (c, *s.gateScOn, "SIDECHAIN BP", theme::accentIn), scFreq (c, *s.gateScFreq, "SC FREQ", theme::accentIn),
-          on (c, *s.gateOn, "GATE ON", theme::accentIn),
-          voice (c, *s.gateVoice, "VOICE KEY", theme::good), voiceThr (c, *s.gateVoiceThr, "VOICE THR", theme::good),
-          state ([&s] { return s.gateOn->isOn() ? juce::jmap (gainToDb (s.gate.shownGain.load()), -80.0f, 0.0f, 0.0f, 1.0f) : 0.0f; }, theme::good, "OPEN"),
-          vad ([&s] { return s.dnOn->isOn() ? s.denoiser->getVad() : 0.0f; }, theme::good, "VOICE")
+    GatePanel (UiContext& c, InputStrip& s, GateFx& g)
+        : strip (s), fx (g),
+          thr (c, *g.thr, "THRESHOLD", theme::fxGate), range (c, *g.range, "RANGE", theme::fxGate),
+          attack (c, *g.attack, "ATTACK", theme::fxGate), hold (c, *g.hold, "HOLD", theme::fxGate),
+          release (c, *g.release, "RELEASE", theme::fxGate),
+          sc (c, *g.scOn, "ON", theme::fxGate), scFreq (c, *g.scFreq, "FREQUENCY", theme::fxGate),
+          on (c, *g.on, "ON", theme::fxGate),
+          voice (c, *g.voice, "ON", theme::fxGate), voiceThr (c, *g.voiceThr, "VOICE THR", theme::fxGate),
+          state ([&g] { return g.on->isOn() ? juce::jmap (gainToDb (g.dsp.shownGain.load()), -80.0f, 0.0f, 0.0f, 1.0f) : 0.0f; }, theme::fxGate, "OPEN"),
+          vad ([&s] { return juce::jmax (0.0f, s.voiceProbability()); }, theme::fxGate, "VOICE")
     {
+        vad.setBallistics (kVoiceRise, kVoiceFall);
+        showValues ({ &thr, &range, &attack, &hold, &release, &scFreq, &voiceThr });
         for (juce::Component* k : std::initializer_list<juce::Component*> { &thr, &range, &attack, &hold, &release, &sc, &scFreq,
-                                                                           &on, &voice, &voiceThr, &state, &vad })
+                                                                           &on, &voice, &voiceThr, &state, &vad, &info })
             addAndMakeVisible (k);
+        on.setTooltip ("Switch the gate on or off");
+        sc.setTooltip ("The gate listens only to this frequency region (e.g. to ignore rumble)");
         voice.setTooltip ("Voice Key: the gate only opens while the denoiser detects speech (needs the denoiser on)");
-        bars.push_back (&state);
-        bars.push_back (&vad);
-        setSize (660, 236);
+        info.setText ("Gate\nSidechain filter: the gate listens only to this frequency region (e.g. ignore rumble).\n\n"
+                      "Voice Key: it only opens while the denoiser detects speech, so keyboard and background noise stay out. "
+                      "Needs the denoiser in the chain and switched on.");
+        setSize (660, 2 * kPad + 2 * kCardHeight + kGap);
     }
 
     void resized() override
     {
-        auto r = getLocalBounds().reduced (14);
-        rowLayout (r.removeFromTop (78), { &thr, &range, &attack, &hold, &release });
-        r.removeFromTop (14);
-        auto row = r.removeFromTop (78);
-        auto toggles = row.removeFromLeft (124);
-        on.setBounds (toggles.removeFromTop (26));
-        toggles.removeFromTop (8);
-        sc.setBounds (toggles.removeFromTop (26));
-        scFreq.setBounds (row.removeFromLeft (86));
-        row.removeFromLeft (18);
-        voice.setBounds (row.removeFromLeft (104).removeFromTop (26));
-        voiceThr.setBounds (row.removeFromLeft (86));
-        row.removeFromLeft (16);
-        auto barsArea = row.withSizeKeepingCentre (row.getWidth(), 40);
+        cards.clear();
+        auto r = getLocalBounds().reduced (kPad);
+        const auto top = r.removeFromTop (kCardHeight);
+        rowLayout (card (top, "Gate"), { &thr, &range, &attack, &hold, &release });
+        on.setBounds (captionSlot (top, 44));
+        info.setBounds (captionSlot (top, 20, 52).withSizeKeepingCentre (InfoButton::kSize, InfoButton::kSize));
+        r.removeFromTop (kGap);
+
+        const auto filter = r.removeFromLeft (160);
+        scFreq.setBounds (card (filter, "Sidechain filter").withSizeKeepingCentre (84, kKnobs));
+        sc.setBounds (captionSlot (filter, 44));
+        r.removeFromLeft (kGap);
+
+        const auto key = r.removeFromLeft (160);
+        voiceThr.setBounds (card (key, "Voice Key").withSizeKeepingCentre (84, kKnobs));
+        voice.setBounds (captionSlot (key, 44));
+        r.removeFromLeft (kGap);
+
+        auto live = card (r, "Now");
+        auto barsArea = live.removeFromTop (46).withTrimmedTop (4);
         state.setBounds (barsArea.removeFromTop (14));
-        barsArea.removeFromTop (12);
+        barsArea.removeFromTop (10);
         vad.setBounds (barsArea.removeFromTop (14));
-        info = r.withTrimmedTop (4);
+        hint = live;
     }
 
     void paintOverChildren (juce::Graphics& g) override
     {
-        g.setColour (theme::textFaint);
+        // Only a warning stays as text: everything else is behind the "i".
+        if (! needsDenoiser()) return;
+        g.setColour (theme::warn);
         g.setFont (theme::font (11.0f));
-        const bool needsDn = strip.gateVoice->isOn() && ! strip.dnOn->isOn();
-        if (needsDn) g.setColour (theme::warn);
-        g.drawText (needsDn ? juce::String ("Voice Key needs the denoiser switched on - until then the gate works on level only.")
-                            : juce::String ("Sidechain band-pass: listen only to this frequency region.  Voice Key: open only on speech."),
-                    info, juce::Justification::centredLeft);
+        g.drawFittedText ("Voice Key needs the denoiser on. Until then the gate works on level only.", hint, juce::Justification::centredLeft, 3, 1.0f);
     }
 
 private:
+    bool needsDenoiser() const { return fx.voice->isOn() && ! strip.denoiserActive(); }
+
     void tick() override
     {
-        vad.setMarker (strip.gateVoice->isOn() ? strip.gateVoiceThr->get() * 0.01f : -1.0f);
-        const auto v = strip.gateVoice->getVersion() + strip.dnOn->getVersion();
-        if (v != hintVersion) { hintVersion = v; repaint (info); }
+        vad.setMarker (fx.voice->isOn() ? fx.voiceThr->get() * 0.01f : -1.0f);
+        if (needsDenoiser() != shownHint) { shownHint = ! shownHint; repaint (hint); }
     }
 
     InputStrip& strip;
+    GateFx& fx;
     Knob thr, range, attack, hold, release;
     Toggle sc;
     Knob scFreq;
     Toggle on, voice;
     Knob voiceThr;
     LiveBar state, vad;
-    juce::Rectangle<int> info;
-    uint32_t hintVersion = 0;
+    InfoButton info;
+    juce::Rectangle<int> hint;
+    bool shownHint = false;
 };
 
 //==============================================================================
 class DenoiserPanel final : public AdvancedPanel
 {
 public:
-    DenoiserPanel (UiContext& c, InputStrip& s)
-        : strip (s),
-          mode (c, *s.dnMode, theme::good), amount (c, *s.dnAmount, "AMOUNT", theme::good),
-          on (c, *s.dnOn, "DENOISER ON", theme::good),
-          vad ([&s] { return s.dnOn->isOn() ? s.denoiser->getVad() : 0.0f; }, theme::good, "VOICE")
+    DenoiserPanel (UiContext& c, DenoiserFx& d)
+        : fx (d),
+          mode (c, *d.mode, theme::good), amount (c, *d.amount, "AMOUNT", theme::good),
+          on (c, *d.on, "ON", theme::good),
+          vad ([&d] { auto* x = d.live.load(); return x != nullptr && d.on->isOn() ? x->getVad() : 0.0f; }, theme::good, "VOICE")
     {
-        for (juce::Component* k : std::initializer_list<juce::Component*> { &mode, &amount, &on, &vad })
+        vad.setBallistics (kVoiceRise, kVoiceFall);
+        showValues ({ &amount });
+        for (juce::Component* k : std::initializer_list<juce::Component*> { &mode, &amount, &on, &vad, &info })
             addAndMakeVisible (k);
-        bars.push_back (&vad);
-        setSize (620, 210);
+        on.setTooltip ("Switch the denoiser on or off");
+        info.setText ("Latency modes\nUltra Low / Low / Aligned apply RNNoise's band gains with a zero-latency filterbank: "
+                      "less latency = the gains react a little later at word onsets. Native HQ = original RNNoise synthesis (30 ms).\n\n"
+                      "RNNoise itself works at 48 kHz. At other sample rates it listens to a resampled copy: the first three modes "
+                      "keep their latency, Native HQ takes a few ms more.\n\n"
+                      "To mute between words, use the Gate with \"Voice Key\".");
+        setSize (620, 2 * kPad + kModeCard + kGap + kCardHeight);
     }
 
     void resized() override
     {
-        auto r = getLocalBounds().reduced (14);
-        auto top = r.removeFromTop (30);
-        on.setBounds (top.removeFromLeft (130));
-        top.removeFromLeft (12);
-        mode.setBounds (top);
-        r.removeFromTop (14);
-        auto row = r.removeFromTop (80);
-        amount.setBounds (row.removeFromLeft (84));
-        row.removeFromLeft (20);
-        vad.setBounds (row.withSizeKeepingCentre (row.getWidth(), 14));
-        info = r.withTrimmedTop (8);
+        cards.clear();
+        auto r = getLocalBounds().reduced (kPad);
+        const auto top = r.removeFromTop (kModeCard);
+        auto modeArea = card (top, "Latency mode");
+        on.setBounds (captionSlot (top, 44));
+        info.setBounds (captionSlot (top, 20, 52).withSizeKeepingCentre (InfoButton::kSize, InfoButton::kSize));
+        mode.setBounds (modeArea.removeFromTop (30));
+        latency = modeArea.withTrimmedTop (4);
+        r.removeFromTop (kGap);
+
+        const auto mix = r.removeFromLeft (160);
+        amount.setBounds (card (mix, "Mix").withSizeKeepingCentre (84, kKnobs));
+        r.removeFromLeft (kGap);
+        auto live = card (r, "Voice detection");
+        vad.setBounds (live.withSizeKeepingCentre (live.getWidth(), 14));
     }
 
     void paintOverChildren (juce::Graphics& g) override
     {
+        auto* d = fx.live.load();
+        const int m = juce::roundToInt (fx.mode->get());
+        const double ms = d != nullptr ? d->latencyMsForMode (m) : dsp::Denoiser::latencyForMode (m) / 48.0;
         g.setColour (theme::textDim);
         g.setFont (theme::font (11.5f));
-        const auto lat = strip.denoiser->isSupported()
-                             ? juce::String (dsp::Denoiser::latencyForMode (juce::roundToInt (strip.dnMode->get())) / 48.0, 0) + " ms"
-                             : juce::String ("bypassed (engine must run at 48 kHz)");
-        g.drawFittedText ("Latency while on: " + lat + ".  Ultra Low / Low / Aligned apply RNNoise's band gains with a "
-                          "zero-latency filterbank (less latency = gains react a little later at word onsets). Native HQ = "
-                          "original RNNoise synthesis. To mute between words, use the Gate with \"Voice Key\".",
-                          info, juce::Justification::topLeft, 3);
+        g.drawText ("Latency while on: " + juce::String (ms, ms == std::floor (ms) ? 0 : 1) + " ms", latency, juce::Justification::centredLeft);
     }
 
 private:
+    static constexpr int kModeCard = kCaption + 30 + 4 + 18 + 8;
+
     void tick() override
     {
-        if (const auto v = strip.dnMode->getVersion(); v != modeVersion) { modeVersion = v; repaint (info); }
+        if (const auto v = fx.mode->getVersion(); v != modeVersion) { modeVersion = v; repaint (latency); }
     }
 
-    InputStrip& strip;
+    DenoiserFx& fx;
     ChoiceSegments mode;
     Knob amount;
     Toggle on;
     LiveBar vad;
-    juce::Rectangle<int> info;
+    InfoButton info;
+    juce::Rectangle<int> latency;
     uint32_t modeVersion = 0;
 };
 
@@ -466,15 +730,24 @@ private:
 class CompCurve final : public juce::Component
 {
 public:
-    explicit CompCurve (InputStrip& s) : strip (s) { setInterceptsMouseClicks (false, false); }
+    explicit CompCurve (CompFx& c) : fx (c) { setInterceptsMouseClicks (false, false); }
 
     void update()
     {
-        const float gr = strip.compGr.load();
+        // Called at 30 Hz: the number follows smoothly and changes at most ~6 x per second, so it can be read.
+        const float gr = fx.gr.load();
+        smoothGr += (gr - smoothGr) * (gr > smoothGr ? 0.5f : 0.15f);
         uint64_t key = 0;
-        for (auto* p : { strip.compInput, strip.compThr, strip.compRatio, strip.compKnee, strip.compMakeup, strip.compAuto })
+        for (auto* p : { fx.input, fx.thr, fx.ratio, fx.knee, fx.makeup, fx.autoGain })
             key += p->getVersion();
-        if (std::abs (gr - shownGr) > 0.1f || key != shownKey) { shownGr = gr; shownKey = key; repaint(); }
+        ++ticks;
+        if ((std::abs (smoothGr - shownGr) > 0.1f && ticks >= 5) || key != shownKey)
+        {
+            shownGr = smoothGr;
+            shownKey = key;
+            ticks = 0;
+            repaint();
+        }
     }
 
     void paint (juce::Graphics& g) override
@@ -489,7 +762,7 @@ public:
         };
         g.setColour (theme::outline);
         g.drawLine ({ map (-60, -60), map (0, 0) }, 1.0f);
-        const auto s = strip.compSettings();
+        const auto s = fx.settings();
         juce::Path p;
         for (float in = -60.0f; in <= 0.0f; in += 0.5f)
         {
@@ -497,51 +770,56 @@ public:
             const auto pt = map (in, x + s.staticGainDb (x) + s.totalMakeupDb());
             if (in == -60.0f) p.startNewSubPath (pt); else p.lineTo (pt);
         }
-        g.setColour (theme::accentIn);
+        g.setColour (theme::fxComp);
         g.strokePath (p, juce::PathStrokeType (2.0f));
         const auto t = map (s.thresholdDb, s.thresholdDb);
         g.setColour (theme::textFaint);
         g.fillRect (t.x, r.getY(), 1.0f, r.getHeight());
-        g.setColour (theme::warn);
+        g.setColour (theme::text);
         g.setFont (theme::font (11.0f, true));
         g.drawText ("GR " + juce::String (juce::jmax (0.0f, shownGr), 1) + " dB", r.reduced (8.0f, 6.0f), juce::Justification::topLeft);
     }
 
 private:
-    InputStrip& strip;
-    float shownGr = -1.0f;
+    CompFx& fx;
+    float shownGr = -1.0f, smoothGr = 0.0f;
+    int ticks = 0;
     uint64_t shownKey = 0;
 };
 
 class CompPanel final : public AdvancedPanel
 {
 public:
-    CompPanel (UiContext& c, InputStrip& s)
-        : input (c, *s.compInput, "INPUT", theme::accentIn), thr (c, *s.compThr, "THRESHOLD", theme::accentIn),
-          ratio (c, *s.compRatio, "RATIO", theme::accentIn), knee (c, *s.compKnee, "KNEE", theme::accentIn),
-          attack (c, *s.compAttack, "ATTACK", theme::accentIn), release (c, *s.compRelease, "RELEASE", theme::accentIn),
-          makeup (c, *s.compMakeup, "MAKEUP", theme::accentIn), autoMakeup (c, *s.compAuto, "AUTO GAIN", theme::accentIn),
-          on (c, *s.compOn, "COMP ON", theme::accentIn), curve (s)
+    CompPanel (UiContext& c, CompFx& s)
+        : input (c, *s.input, "INPUT", theme::fxComp), thr (c, *s.thr, "THRESHOLD", theme::fxComp),
+          ratio (c, *s.ratio, "RATIO", theme::fxComp), knee (c, *s.knee, "KNEE", theme::fxComp),
+          attack (c, *s.attack, "ATTACK", theme::fxComp), release (c, *s.release, "RELEASE", theme::fxComp),
+          makeup (c, *s.makeup, "MAKEUP", theme::fxComp), autoMakeup (c, *s.autoGain, "AUTO GAIN", theme::fxComp),
+          on (c, *s.on, "ON", theme::fxComp), curve (s)
     {
+        showValues ({ &input, &thr, &ratio, &knee, &attack, &release, &makeup });
         for (juce::Component* k : std::initializer_list<juce::Component*> { &input, &thr, &ratio, &knee, &attack, &release, &makeup, &autoMakeup, &on, &curve })
             addAndMakeVisible (k);
-        setSize (660, 230);
+        on.setTooltip ("Switch the compressor on or off");
+        autoMakeup.setTooltip ("Makes up for the reduction at 0 dBFS automatically");
+        setSize (660, 2 * kPad + 2 * kCardHeight + kGap);
     }
 
     void resized() override
     {
-        auto r = getLocalBounds().reduced (14);
-        curve.setBounds (r.removeFromRight (200));
-        r.removeFromRight (14);
-        rowLayout (r.removeFromTop (80), { &input, &thr, &ratio, &knee });
-        r.removeFromTop (14);
-        auto row = r.removeFromTop (80);
-        auto toggles = row.removeFromRight (100);
-        on.setBounds (toggles.removeFromTop (26));
-        toggles.removeFromTop (8);
-        autoMakeup.setBounds (toggles.removeFromTop (26));
-        row.removeFromRight (8);
-        rowLayout (row, { &attack, &release, &makeup });
+        cards.clear();
+        auto r = getLocalBounds().reduced (kPad);
+        curve.setBounds (card (r.removeFromRight (210), "Curve"));
+        r.removeFromRight (kGap);
+
+        const auto top = r.removeFromTop (kCardHeight);
+        rowLayout (card (top, "Compressor"), { &input, &thr, &ratio, &knee });
+        on.setBounds (captionSlot (top, 44));
+        r.removeFromTop (kGap);
+
+        const auto bottom = r.removeFromTop (kCardHeight);
+        rowLayout (card (bottom, "Timing and output"), { &attack, &release, &makeup });
+        autoMakeup.setBounds (captionSlot (bottom, 84));
     }
 
 private:
@@ -553,36 +831,41 @@ private:
 };
 
 //==============================================================================
-/** Correction stage (room / speaker / headphone): ON, the profile's curve, name and size. The "..." menu
-    (or a click on the curve) opens the room measurement, imports / exports Equalizer APO and AutoEq
-    files, sets the type or clears the profile. */
+/** Correction stage of a hardware output (room + speakers): ON, the profile's curve, name and size.
+    The expand button (or a click on the curve) opens the Correction window with everything else. */
 class CorrectionSection final : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
 {
 public:
     CorrectionSection (UiContext& c, int channel, juce::Colour col)
-        : ctx (c), index (channel), corr (c.engine.correctionFor (channel)), colour (col),
-          section ("Correction", col), onToggle (c, *corr.on, "ON", col)
+        : ctx (c), index (channel), corr (*c.engine.correctionFor (channel)), colour (col),
+          section ("Correction", theme::fxCorrection), onToggle (c, *corr.on, "ON", theme::fxCorrection)
     {
         addAndMakeVisible (section);
         section.addAndMakeVisible (onToggle);
-        section.enableGear ([this] { showMenu(); });
-        section.gear.setTooltip ("Load, import, export or clear the correction profile");
-        onToggle.setTooltip ("Room / speaker / headphone correction on or off (zero latency)");
+        section.addAndMakeVisible (expand);
+        section.headerExtra = 32;
+        expand.setTooltip ("Open the correction in a large window (measure, import, level, bands)");
+        expand.onClick = [this] { open(); };
+        onToggle.setTooltip ("Room correction on or off (zero latency, before the EQ)");
         section.setInterceptsMouseClicks (false, true);
-        setTooltip ("Room / speaker / headphone correction. Click for the menu: measure with Tools > Room Measurement, "
-                    "or import an Equalizer APO / AutoEq parametric EQ file.");
+        setTooltip ("Room correction of the speakers. Click to open it: calibrate the speakers step by step "
+                    "or import an Equalizer APO file.");
         startTimerHz (5);
     }
+
+    Section& getSection() noexcept { return section; }
 
     void resized() override
     {
         section.setBounds (getLocalBounds());
         onToggle.setBounds (section.headerSlot());
+        expand.setBounds (section.headerSlot().withRight (section.beforeSwitch()).withLeft (section.beforeSwitch() - 26));
     }
 
+    void mouseDown (const juce::MouseEvent& e) override { if (e.mods.isPopupMenu() && section.onMenu) section.onMenu(); }
     void mouseUp (const juce::MouseEvent& e) override
     {
-        if (e.mouseWasClicked() && section.content().contains (e.getPosition())) showMenu();
+        if (e.mouseWasClicked() && ! e.mods.isPopupMenu() && section.content().contains (e.getPosition())) open();
     }
 
     void paintOverChildren (juce::Graphics& g) override
@@ -602,105 +885,42 @@ public:
         g.fillRoundedRectangle (plot, 5.0f);
         if (p.isEmpty()) return;
         double range = 12.0;
-        std::vector<double> db;
-        for (int i = 0; i <= 120; ++i)
-        {
-            db.push_back (p.magnitudeDb (20.0 * std::pow (1000.0, i / 120.0)));
-            range = juce::jmax (range, std::abs (db.back()) * 1.1);
-        }
+        const int channels = p.separate ? 2 : 1;   // left / right corrected separately: both curves
+        std::vector<double> db[2];
+        for (int ch = 0; ch < channels; ++ch)
+            for (int i = 0; i <= 120; ++i)
+            {
+                db[ch].push_back (p.magnitudeDb (20.0 * std::pow (1000.0, i / 120.0), 48000.0, ch));
+                range = juce::jmax (range, std::abs (db[ch].back()) * 1.1);
+            }
         range = juce::jmin (range, 30.0);
         auto fy = [&] (double v) { return plot.getCentreY() - (float) (juce::jlimit (-range, range, v) / range) * plot.getHeight() * 0.45f; };
         g.setColour (theme::outline);
         g.drawHorizontalLine (juce::roundToInt (plot.getCentreY()), plot.getX() + 4.0f, plot.getRight() - 4.0f);
-        juce::Path path;
-        for (int i = 0; i <= 120; ++i)
+        for (int ch = 0; ch < channels; ++ch)
         {
-            const float x = plot.getX() + 4.0f + (plot.getWidth() - 8.0f) * (float) i / 120.0f;
-            if (i == 0) path.startNewSubPath (x, fy (db[0]));
-            else        path.lineTo (x, fy (db[(size_t) i]));
+            juce::Path path;
+            for (int i = 0; i <= 120; ++i)
+            {
+                const float x = plot.getX() + 4.0f + (plot.getWidth() - 8.0f) * (float) i / 120.0f;
+                if (i == 0) path.startNewSubPath (x, fy (db[ch][0]));
+                else        path.lineTo (x, fy (db[ch][(size_t) i]));
+            }
+            g.setColour ((ch == 1 ? theme::accentVirt : colour).withAlpha (corr.on->isOn() ? 1.0f : 0.35f));
+            g.strokePath (path, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
-        g.setColour (colour.withAlpha (corr.on->isOn() ? 1.0f : 0.35f));
-        g.strokePath (path, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         g.setColour (theme::textFaint);
         g.setFont (theme::font (9.5f));
         g.drawText ("+-" + juce::String (juce::roundToInt (range)) + " dB", plot.reduced (5.0f, 2.0f), juce::Justification::topRight);
     }
 
 private:
+    void open() { if (ctx.openCorrectionWindow) ctx.openCorrectionWindow (index); }
+
     void timerCallback() override
     {
         const auto v = corr.getVersion() * 2u + (corr.on->isOn() ? 1u : 0u);
         if (v != shown) { shown = v; repaint(); }
-    }
-
-    void importApo (CorrectionProfile::Kind kind)
-    {
-        chooser = std::make_unique<juce::FileChooser> ("Import Equalizer APO / AutoEq parametric EQ",
-                                                       juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.txt");
-        juce::Component::SafePointer<CorrectionSection> safe (this);
-        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [safe, kind] (const juce::FileChooser& fc)
-        {
-            const auto f = fc.getResult();
-            if (safe == nullptr || ! f.existsAsFile()) return;
-            CorrectionProfile p;
-            p.kind = kind;
-            p.name = f.getFileNameWithoutExtension().replace ("ParametricEQ", "").replaceCharacters ("_", " ").trim();
-            if (p.name.isEmpty()) p.name = f.getFileNameWithoutExtension();
-            juce::String err;
-            if (! CorrectionProfile::fromApo (f.loadFileAsString(), p, err))
-                return dialog::message (safe.getComponent(), dialog::Kind::warning, "Cannot import", f.getFileName() + ": " + err);
-            safe->ctx.engine.setCorrection (safe->index, p);
-            safe->corr.on->set (1.0f);
-            if (err.isNotEmpty())
-                dialog::message (safe.getComponent(), dialog::Kind::info, "Imported with notes", err);
-        });
-    }
-
-    void exportApo()
-    {
-        const auto p = corr.getProfile();
-        chooser = std::make_unique<juce::FileChooser> ("Export correction", juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-                                                           .getChildFile (juce::File::createLegalFileName (p.name.isEmpty() ? juce::String ("Correction") : p.name) + ".txt"), "*.txt");
-        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [p] (const juce::FileChooser& fc)
-        {
-            if (fc.getResult() != juce::File()) fc.getResult().withFileExtension (".txt").replaceWithText (p.toApo());
-        });
-    }
-
-    void showMenu()
-    {
-        const auto& p = corr.getProfile();
-        juce::Component::SafePointer<CorrectionSection> safe (this);
-        juce::PopupMenu m;
-        m.addSectionHeader (p.isEmpty() ? juce::String ("Correction") : p.name);
-        m.addItem ("Measure room / speaker (Room Measurement)...", [safe] { if (safe != nullptr && safe->ctx.openRoomMeasurement) safe->ctx.openRoomMeasurement(); });
-        m.addItem ("Import headphone profile (AutoEq / Equalizer APO)...", [safe] { if (safe != nullptr) safe->importApo (CorrectionProfile::Kind::headphone); });
-        m.addItem ("Import room / speaker profile (Equalizer APO)...", [safe] { if (safe != nullptr) safe->importApo (CorrectionProfile::Kind::room); });
-        m.addSeparator();
-        juce::PopupMenu type;
-        const auto names = CorrectionProfile::kindNames();
-        for (int k = 0; k < names.size(); ++k)
-            type.addItem (names[k], ! p.isEmpty(), (int) p.kind == k, [safe, k]
-            {
-                if (safe == nullptr) return;
-                auto q = safe->corr.getProfile();
-                q.kind = (CorrectionProfile::Kind) k;
-                safe->ctx.engine.setCorrection (safe->index, q);
-            });
-        m.addSubMenu ("Type", type, ! p.isEmpty());
-        m.addItem ("Export as Equalizer APO file...", ! p.isEmpty(), false, [safe] { if (safe != nullptr) safe->exportApo(); });
-        m.addItem ("Clear", ! p.isEmpty(), false, [safe]
-        {
-            if (safe == nullptr) return;
-            dialog::confirm (safe.getComponent(), dialog::Kind::danger, "Clear correction?",
-                             "The profile \"" + safe->corr.getProfile().name + "\" is removed from this channel.", "Clear", [safe]
-            {
-                if (safe == nullptr) return;
-                safe->corr.on->set (0.0f);
-                safe->ctx.engine.setCorrection (safe->index, {});
-            });
-        });
-        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&section.gear).withMinimumWidth (260));
     }
 
     UiContext& ctx;
@@ -709,157 +929,789 @@ private:
     juce::Colour colour;
     Section section;
     Toggle onToggle;
+    ExpandButton expand;
     uint32_t shown = ~0u;
-    std::unique_ptr<juce::FileChooser> chooser;
 };
 
 //==============================================================================
-class InputDetail final : public juce::Component
+/** Small built-in effects of the chain: a section with the main controls, the rest in the "..." panel. */
+class GateUnit final : public juce::Component
 {
 public:
-    InputDetail (UiContext& c, int i, std::function<void()> scan)
-        : ctx (c), strip (c.engine.inputs[(size_t) i]),
-          eqSec (c, strip.eq, theme::accentIn, i), corrSec (c, i, theme::accentIn),
-          gateSec ("Gate", theme::accentIn), dnSec ("Denoiser", theme::good),
-          compSec ("Compressor", theme::accentIn),
-          fxSec ("VST3 Insert Chain", theme::accentIn),
-          gateOn (c, *strip.gateOn, "ON", theme::accentIn), gateThr (c, *strip.gateThr, "THRESH", theme::accentIn),
-          gateState ([this] { return strip.gateOn->isOn() ? juce::jmap (gainToDb (strip.gate.shownGain.load()), -80.0f, 0.0f, 0.0f, 1.0f) : 0.0f; }, theme::good, "OPEN"),
-          dnOn (c, *strip.dnOn, "ON", theme::good), dnAmount (c, *strip.dnAmount, "AMOUNT", theme::good),
-          compOn (c, *strip.compOn, "ON", theme::accentIn), compThr (c, *strip.compThr, "THRESH", theme::accentIn),
-          compRatio (c, *strip.compRatio, "RATIO", theme::accentIn),
-          compGr ([this] { return strip.compGr.load() / 24.0f; }, theme::warn, "GR"),
-          phase (c, *strip.phase, "PHASE", theme::warn), bypass (c, *strip.fxBypass, "BYPASS", theme::mute),
-          chain (c, strip.plugins, theme::accentIn)
+    GateUnit (UiContext& c, InputStrip& s, int k, const juce::String& title)
+        : ctx (c), strip (s), fx (s.gates[(size_t) k]), section (title, theme::fxGate),
+          on (c, *fx.on, "ON", theme::fxGate), thr (c, *fx.thr, "THRESH", theme::fxGate),
+          state ([this] { return fx.on->isOn() ? juce::jmap (gainToDb (fx.dsp.shownGain.load()), -80.0f, 0.0f, 0.0f, 1.0f) : 0.0f; }, theme::fxGate, "OPEN")
     {
-        chain.onScanRequested = std::move (scan);
-        chain.onChainChanged = [this] { resized(); };
-        addAndMakeVisible (rack);
-        for (juce::Component* s : std::initializer_list<juce::Component*> { &corrSec, &eqSec, &gateSec, &dnSec, &compSec, &fxSec }) rack.content().addAndMakeVisible (s);
-        rack.content().over = [this] (juce::Graphics& g) { paintMode (g); };
-        for (juce::Component* k : std::initializer_list<juce::Component*> { &gateOn, &gateThr, &gateState }) gateSec.addAndMakeVisible (k);
-        for (juce::Component* k : std::initializer_list<juce::Component*> { &dnOn, &dnAmount }) dnSec.addAndMakeVisible (k);
-        for (juce::Component* k : std::initializer_list<juce::Component*> { &compOn, &compThr, &compRatio, &compGr }) compSec.addAndMakeVisible (k);
-        // Rarely used switches live in the header of the plugin section.
-        fxSec.addAndMakeVisible (phase);
-        fxSec.addAndMakeVisible (bypass);
-        phase.setTooltip ("Invert the polarity of this input");
-        bypass.setTooltip ("Bypass all plugins of this input");
-        fxSec.addAndMakeVisible (chain);
-
-        gateSec.enableGear ([this] { ctx.openPanel (std::make_unique<GatePanel> (ctx, strip), "Gate  -  " + strip.name, theme::accentIn); });
-        dnSec.enableGear   ([this] { ctx.openPanel (std::make_unique<DenoiserPanel> (ctx, strip), "Denoiser (RNNoise)  -  " + strip.name, theme::good); });
-        compSec.enableGear ([this] { ctx.openPanel (std::make_unique<CompPanel> (ctx, strip), "Compressor  -  " + strip.name, theme::accentIn); });
+        addAndMakeVisible (section);
+        for (juce::Component* k2 : std::initializer_list<juce::Component*> { &on, &thr, &state }) section.addAndMakeVisible (k2);
+        section.enableGear ([this, title] { ctx.openPanel (std::make_unique<GatePanel> (ctx, strip, fx), title + "  -  " + strip.name); });
     }
-
     void resized() override
     {
-        rack.setBounds (getLocalBounds());
-        rack.layout ({ &corrSec, &eqSec, &gateSec, &dnSec, &compSec, &fxSec }, { 210, 520, 150, 140, 200, 0 }, chain.getIdealWidth() + 24);
-
-        gateOn.setBounds (gateSec.headerSlot());
-        auto gc = gateSec.content();
-        gateState.setBounds (gc.removeFromRight (26));
-        gateThr.setBounds (gc.withSizeKeepingCentre (gc.getWidth(), 70));
-
-        dnOn.setBounds (dnSec.headerSlot());
-        auto dc = dnSec.content();
-        modeArea = dc.removeFromBottom (16).translated (dnSec.getX(), dnSec.getY());
-        dnAmount.setBounds (dc.withSizeKeepingCentre (dc.getWidth(), 70));
-
-        compOn.setBounds (compSec.headerSlot());
-        auto cc = compSec.content();
-        compGr.setBounds (cc.removeFromBottom (12));
-        rowLayout (cc.withSizeKeepingCentre (cc.getWidth(), 70), { &compThr, &compRatio });
-
-        auto fh = fxSec.getLocalBounds().reduced (10, 7).removeFromTop (20);
-        bypass.setBounds (fh.removeFromRight (64));
-        fh.removeFromRight (6);
-        phase.setBounds (fh.removeFromRight (60));
-        chain.setBounds (fxSec.content());
+        section.setBounds (getLocalBounds());
+        on.setBounds (section.headerSlot());
+        auto gc = section.content();
+        state.setBounds (gc.removeFromRight (26));
+        thr.setBounds (gc.withSizeKeepingCentre (gc.getWidth(), 70));
     }
 
-    void paintMode (juce::Graphics& g)
-    {
-        g.setColour (strip.denoiser->isSupported() ? theme::textFaint : theme::warn);
-        g.setFont (theme::font (10.0f));
-        g.drawText (strip.denoiser->isSupported() ? strip.dnMode->toText() : juce::String ("needs 48 kHz"), modeArea, juce::Justification::centred);
-    }
-
-    void updateMeters()
-    {
-        gateState.update();
-        compGr.update();
-        if (const auto v = strip.dnMode->getVersion(); v != modeVersion) { modeVersion = v; rack.content().repaint (modeArea); }
-    }
-
-private:
     UiContext& ctx;
     InputStrip& strip;
-    EffectRack rack;
-    EqSection eqSec;
-    CorrectionSection corrSec;
-    Section gateSec, dnSec, compSec, fxSec;
-    Toggle gateOn;
-    Knob gateThr;
-    LiveBar gateState;
-    Toggle dnOn;
-    Knob dnAmount;
-    Toggle compOn;
-    Knob compThr, compRatio;
-    LiveBar compGr;
-    Toggle phase, bypass;
-    PluginChainView chain;
+    GateFx& fx;
+    Section section;
+    Toggle on;
+    Knob thr;
+    LiveBar state;
+};
+
+class DenoiserUnit final : public juce::Component
+{
+public:
+    DenoiserUnit (UiContext& c, InputStrip& s, int k, const juce::String& title)
+        : ctx (c), strip (s), fx (s.denoisers[(size_t) k]), section (title, theme::good),
+          on (c, *fx.on, "ON", theme::good), amount (c, *fx.amount, "AMOUNT", theme::good)
+    {
+        addAndMakeVisible (section);
+        section.addAndMakeVisible (on);
+        section.addAndMakeVisible (amount);
+        section.enableGear ([this, title] { ctx.openPanel (std::make_unique<DenoiserPanel> (ctx, fx), title + " (RNNoise)  -  " + strip.name); });
+    }
+    void resized() override
+    {
+        section.setBounds (getLocalBounds());
+        on.setBounds (section.headerSlot());
+        auto dc = section.content();
+        modeArea = dc.removeFromBottom (16);
+        amount.setBounds (dc.withSizeKeepingCentre (dc.getWidth(), 70));
+    }
+    void paintOverChildren (juce::Graphics& g) override
+    {
+        g.setColour (theme::textFaint);
+        g.setFont (theme::font (10.0f));
+        g.drawText (fx.mode->toText(), modeArea, juce::Justification::centred);
+    }
+    void tick() { if (const auto v = fx.mode->getVersion(); v != modeVersion) { modeVersion = v; repaint (modeArea); } }
+
+    UiContext& ctx;
+    InputStrip& strip;
+    DenoiserFx& fx;
+    Section section;
+    Toggle on;
+    Knob amount;
     juce::Rectangle<int> modeArea;
     uint32_t modeVersion = 0;
 };
 
-//==============================================================================
-class BusDetail final : public juce::Component
+class CompUnit final : public juce::Component
 {
 public:
-    BusDetail (UiContext& c, int b, std::function<void()> scan)
-        : bus (c.engine.buses[(size_t) b]), colour (theme::busColour (b)),
-          eqSec (c, bus.eq, colour, kMaxInputs + b), corrSec (c, kMaxInputs + b, colour), limSec ("Limiter", colour),
-          fxSec ("VST3 Insert Chain", colour),
-          limOn (c, *bus.limOn, "ON", colour), ceiling (c, *bus.limCeil, "CEILING", colour),
-          bypass (c, *bus.fxBypass, "BYPASS", theme::mute),
-          chain (c, bus.plugins, colour)
+    /** channelName: the input's or output's name (it can be renamed), for the settings window's title. */
+    CompUnit (UiContext& c, CompFx& f, std::function<juce::String()> channelName, const juce::String& title)
+        : ctx (c), fx (f), section (title, theme::fxComp),
+          on (c, *fx.on, "ON", theme::fxComp), thr (c, *fx.thr, "THRESH", theme::fxComp),
+          ratio (c, *fx.ratio, "RATIO", theme::fxComp),
+          gr ([this] { return fx.gr.load() / 24.0f; }, theme::fxComp, "GR")
     {
-        chain.onScanRequested = std::move (scan);
-        chain.onChainChanged = [this] { resized(); };
-        addAndMakeVisible (rack);
-        for (juce::Component* s : std::initializer_list<juce::Component*> { &eqSec, &corrSec, &limSec, &fxSec }) rack.content().addAndMakeVisible (s);
-        limSec.addAndMakeVisible (limOn);
-        limSec.addAndMakeVisible (ceiling);
-        fxSec.addAndMakeVisible (bypass);
-        bypass.setTooltip ("Bypass all plugins of this bus");
-        fxSec.addAndMakeVisible (chain);
+        addAndMakeVisible (section);
+        for (juce::Component* k2 : std::initializer_list<juce::Component*> { &on, &thr, &ratio, &gr }) section.addAndMakeVisible (k2);
+        section.enableGear ([this, title, channelName] { ctx.openPanel (std::make_unique<CompPanel> (ctx, fx), title + "  -  " + channelName()); });
     }
-
     void resized() override
     {
-        rack.setBounds (getLocalBounds());
-        rack.layout ({ &eqSec, &corrSec, &limSec, &fxSec }, { 560, 210, 120, 0 }, chain.getIdealWidth() + 24);
+        section.setBounds (getLocalBounds());
+        on.setBounds (section.headerSlot());
+        auto cc = section.content();
+        gr.setBounds (cc.removeFromBottom (12));
+        rowLayout (cc.withSizeKeepingCentre (cc.getWidth(), 70), { &thr, &ratio });
+    }
 
-        limOn.setBounds (limSec.headerSlot());
-        ceiling.setBounds (limSec.content().withSizeKeepingCentre (76, 70));
-        bypass.setBounds (fxSec.getLocalBounds().reduced (10, 7).removeFromTop (20).removeFromRight (64));
-        chain.setBounds (fxSec.content());
+    UiContext& ctx;
+    CompFx& fx;
+    Section section;
+    Toggle on;
+    Knob thr, ratio;
+    LiveBar gr;
+};
+
+class LimiterUnit final : public juce::Component
+{
+public:
+    LimiterUnit (UiContext& c, LimiterFx& l, const juce::String& title)
+        : section (title, theme::fxLimiter), on (c, *l.on, "ON", theme::fxLimiter), ceiling (c, *l.ceiling, "CEILING", theme::fxLimiter)
+    {
+        addAndMakeVisible (section);
+        section.addAndMakeVisible (on);
+        section.addAndMakeVisible (ceiling);
+    }
+    void resized() override
+    {
+        section.setBounds (getLocalBounds());
+        on.setBounds (section.headerSlot());
+        ceiling.setBounds (section.content().withSizeKeepingCentre (76, 70));
+    }
+
+    Section section;
+    Toggle on;
+    Knob ceiling;
+};
+
+/** Polarity inversion of a channel as its own block (not in the chain unless added). */
+class PhaseUnit final : public juce::Component, private ParamPoller::Client
+{
+public:
+    PhaseUnit (UiContext& c, Param& p, const juce::String& title)
+        : param (p), section (title, theme::fxPhase), on (c, p, "ON", theme::fxPhase)
+    {
+        addAndMakeVisible (section);
+        section.addAndMakeVisible (on);
+        on.setTooltip ("Invert the polarity of this channel");
+        ParamPoller::attach (this);
+    }
+    ~PhaseUnit() override { ParamPoller::detach (this); }
+    Section& getSection() noexcept { return section; }
+    void resized() override
+    {
+        section.setBounds (getLocalBounds());
+        on.setBounds (section.headerSlot());
+    }
+    void paintOverChildren (juce::Graphics& g) override
+    {
+        auto r = section.content().toFloat();
+        const bool inv = param.isOn();
+        auto sym = r.removeFromTop (r.getHeight() - 18.0f).withSizeKeepingCentre (34.0f, 34.0f);
+        g.setColour (inv ? theme::fxPhase : theme::textFaint);
+        g.drawEllipse (sym.reduced (3.0f), 2.0f);
+        g.drawLine (sym.getX() + 4.0f, sym.getBottom() - 2.0f, sym.getRight() - 4.0f, sym.getY() + 2.0f, 2.0f);
+        g.setFont (theme::font (10.5f));
+        g.drawText (inv ? "inverted" : "normal", r, juce::Justification::centred);
     }
 
 private:
-    Bus& bus;
-    juce::Colour colour;
-    EffectRack rack;
-    EqSection eqSec;
-    CorrectionSection corrSec;
-    Section limSec, fxSec;
-    Toggle limOn;
-    Knob ceiling;
-    Toggle bypass;
-    PluginChainView chain;
+    void pollParams() override { if (param.getVersion() != seen) { seen = param.getVersion(); repaint(); } }
+    Param& param;
+    Section section;
+    Toggle on;
+    uint32_t seen = 0;
 };
+
+//==============================================================================
+/** A plugin in the effect chain: name, vendor, bypass / edit / remove; drag the card to move it. */
+class PluginCard final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    PluginCard (PluginSlot& s, juce::Colour a);
+    void refresh();
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    void mouseDown (const juce::MouseEvent& e) override;
+    void mouseDrag (const juce::MouseEvent& e) override;
+    void mouseUp (const juce::MouseEvent& e) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override { openEditor(); }
+    void openEditor();
+
+    std::function<void (const juce::MouseEvent&)> onDrag;
+    std::function<void()> onDrop, onRemove, onMenu;
+    bool dragging = false;
+
+private:
+    PluginSlot& slot;
+    juce::Colour accent;
+    juce::String name, vendor;
+    Chip bypass { "ON" }, edit { "EDIT" };
+    TrashButton remove;
+};
+
+/** The effect chain of a channel (inspector): plugins and built-in effects side by side in processing order.
+    Every block can be moved (drag its header / card); right-click a block: copy, cut, paste, duplicate,
+    delete; right-click the empty space: copy / paste the whole chain, add effects. The row scrolls sideways.
+    While the chain is bypassed (inspector header) the blocks are drawn dimmed. */
+class FxRack final : public juce::Component, private juce::Timer
+{
+public:
+    FxRack (UiContext& c, int ch, std::function<void()> scan)
+        : ctx (c), channel (ch), chain (c.engine.chainFor (ch)),
+          colour (ch < kMaxInputs ? theme::accentIn : theme::busColour (ch - kMaxInputs)),
+          bypass (ch < kMaxInputs ? *c.engine.inputs[(size_t) ch].fxBypass : *c.engine.buses[(size_t) (ch - kMaxInputs)].fxBypass),
+          onScan (std::move (scan))
+    {
+        view.setViewedComponent (&row, false);
+        view.setScrollBarsShown (false, true);
+        view.setScrollBarThickness (8);
+        view.setSingleStepSizes (40, 40);
+        addAndMakeVisible (view);
+        row.onMenu = [this] { showChainMenu(); };
+        plus.colour = colour;
+        plus.card = true;
+        plus.setTooltip ("Add an effect or a VST3 plugin at the end of the chain");
+        plus.onClick = [this] { showAddMenu (plus); };
+        row.addAndMakeVisible (plus);
+        addChip.showArrow = false;
+        addChip.centred = true;
+        addChip.onClick = [this] { showAddMenu (addChip); };
+        row.addAndMakeVisible (addChip);
+        row.addAndMakeVisible (emptyInfo);
+        emptyInfo.setText ("Effect chain\nEverything here runs pre-fader, left to right, with no added buffering. "
+                           "Add built-in effects (EQ, gate, compressor, phase, ...) as often as you like and VST3 plugins in any order; "
+                           "drag a header or a card to move it.\n\n"
+                           "Right-click a block: copy, cut, paste, duplicate, delete. Right-click the empty space: copy or paste the whole chain.");
+        rebuild();
+        startTimerHz (20);
+    }
+
+    ~FxRack() override { stopTimer(); }
+
+    void resized() override
+    {
+        view.setBounds (getLocalBounds());
+        layoutUnits();
+    }
+
+    void updateMeters() { for (auto& u : units) if (u.tick) u.tick(); }
+
+    void unitDragged (int index, int x)
+    {
+        auto& u = units[(size_t) index];
+        const int total = contentWidth (false);
+        animator.forget (*u.comp);
+        u.comp->setTopLeftPosition (juce::jlimit (0, juce::jmax (0, total - u.width), x), 0);
+        // Drop slot: the place whose position is nearest to the dragged block's left edge. (Comparing centres
+        // made the first place unreachable for a block wider than its neighbour: its centre can't get past it.)
+        const int left = u.comp->getX();
+        int target = 0, cx = 0, best = std::abs (left);
+        int slot = 0;
+        for (int i = 0; i < (int) units.size(); ++i)
+        {
+            if (i == index) continue;
+            cx += units[(size_t) i].width + kGap;
+            ++slot;
+            if (std::abs (left - cx) < best) { best = std::abs (left - cx); target = slot; }
+        }
+        if (dragIndex != index || dropIndex != target)
+        {
+            dragIndex = index;
+            dropIndex = target;
+            layoutUnits (true);
+        }
+        view.autoScroll (u.comp->getX() - view.getViewPositionX() + u.width / 2, 10, 30, 8);
+    }
+
+    void unitDropped (int index)
+    {
+        const int to = dropIndex;
+        const int droppedAt = juce::isPositiveAndBelow (index, (int) units.size()) ? units[(size_t) index].comp->getX() : 0;
+        dragIndex = dropIndex = -1;
+        if (to < 0 || to == index)
+        {
+            layoutUnits (true);
+            return;
+        }
+        // Rebuilding destroys the unit whose mouse handler called us: do it afterwards. The moved block
+        // then glides from where it was let go into its place.
+        later ([index, to, droppedAt] (FxRack& r) { r.chain.move (index, to); r.landAt = to; r.landFromX = droppedAt; });
+    }
+
+private:
+    struct Unit
+    {
+        std::unique_ptr<juce::Component> comp;
+        int width = 0;
+        int slot = 0;           // index in the chain
+        float alpha = 1.0f;     // dimmed while the block is off or the chain is bypassed
+        std::function<void()> tick;
+    };
+
+    /** The row behind the blocks: a right-click on empty space opens the chain menu. */
+    struct Row final : juce::Component
+    {
+        std::function<void()> onMenu;
+        void mouseDown (const juce::MouseEvent& e) override { if (e.mods.isPopupMenu() && onMenu) onMenu(); }
+    };
+
+    static constexpr int kGap = 0, kCardWidth = 190, kPlusWidth = 40;
+
+    /** Hooks a section header up to dragging / removing / the block menu of unit index i. */
+    void chainControls (Section& s, int i)
+    {
+        s.enableChainControls ([this, i] { later ([i] (FxRack& r) { clip::deleteBlock (r.ctx.engine, r.channel, i); }); });
+        s.onMenu = [this, i] { showBlockMenu (i); };
+        s.grip.onDown = [this, &s] (const juce::MouseEvent& e) { grabX = e.getEventRelativeTo (s.getParentComponent()).getMouseDownX(); };
+        s.grip.onDrag = [this, i] (const juce::MouseEvent& e) { unitDragged (i, e.getEventRelativeTo (&row).x - grabX); };
+        s.grip.onDrop = [this, i] { unitDropped (i); };
+    }
+
+    /** Runs an edit of the chain after the current mouse / menu handler and rebuilds the blocks. */
+    void later (std::function<void (FxRack&)> what)
+    {
+        juce::Component::SafePointer<FxRack> safe (this);
+        juce::MessageManager::callAsync ([safe, what] { if (safe != nullptr) { what (*safe); safe->rebuild(); } });
+    }
+
+    juce::String blockName (int i) const
+    {
+        auto* s = chain.getSlot (i);
+        if (s == nullptr) return {};
+        if (s->isPlugin()) return s->instance->getName();
+        return fxName (s->builtin) + (s->fxInstance > 0 ? " " + juce::String (s->fxInstance + 1) : juce::String());
+    }
+
+    void rebuild()
+    {
+        animator.clear();
+        units.clear();
+        dragIndex = dropIndex = -1;
+        seenVersion = chain.getVersion();
+        auto& e = ctx.engine;
+        const bool isInput = channel < kMaxInputs;
+        for (int i = 0; i < chain.size(); ++i)
+        {
+            auto* slot = chain.getSlot (i);
+            Unit u;
+            if (slot->isPlugin())
+            {
+                auto card = std::make_unique<PluginCard> (*slot, colour);
+                card->onDrag = [this, i] (const juce::MouseEvent& ev) { unitDragged (i, ev.getEventRelativeTo (&row).x - ev.getMouseDownX()); };
+                card->onDrop = [this, i] { unitDropped (i); };
+                card->onRemove = [this, i] { later ([i] (FxRack& r) { r.chain.remove (i); }); };
+                card->onMenu = [this, i] { showBlockMenu (i); };
+                u.width = kCardWidth;
+                u.comp = std::move (card);
+            }
+            else
+            {
+                const int k = slot->fxInstance;
+                const auto title = blockName (i);
+                Section* sec = nullptr;
+                switch (slot->builtin)
+                {
+                    case Fx::eq:
+                    {
+                        auto& eq = isInput ? e.inputs[(size_t) channel].eqs[(size_t) k] : e.buses[(size_t) (channel - kMaxInputs)].eqs[(size_t) k];
+                        auto unit = std::make_unique<EqSection> (ctx, eq, colour, channel, k, title);
+                        sec = &unit->getSection();
+                        u.width = isInput ? 520 : 560;
+                        u.comp = std::move (unit);
+                        break;
+                    }
+                    case Fx::gate:
+                    {
+                        auto g = std::make_unique<GateUnit> (ctx, e.inputs[(size_t) channel], k, title);
+                        sec = &g->section;
+                        u.width = 150;
+                        u.comp = std::move (g);
+                        break;
+                    }
+                    case Fx::denoiser:
+                    {
+                        auto d = std::make_unique<DenoiserUnit> (ctx, e.inputs[(size_t) channel], k, title);
+                        sec = &d->section;
+                        u.tick = [p = d.get()] { p->tick(); };
+                        u.width = 140;
+                        u.comp = std::move (d);
+                        break;
+                    }
+                    case Fx::comp:
+                    {
+                        auto channelName = [this]
+                        {
+                            return channel < kMaxInputs ? ctx.engine.inputs[(size_t) channel].name : ctx.engine.buses[(size_t) (channel - kMaxInputs)].name;
+                        };
+                        auto& comp = isInput ? e.inputs[(size_t) channel].comps[(size_t) k] : e.buses[(size_t) (channel - kMaxInputs)].comps[(size_t) k];
+                        auto c = std::make_unique<CompUnit> (ctx, comp, channelName, title);
+                        sec = &c->section;
+                        u.width = 200;
+                        u.comp = std::move (c);
+                        break;
+                    }
+                    case Fx::limiter:
+                    {
+                        auto& lim = isInput ? e.inputs[(size_t) channel].limiters[(size_t) k] : e.buses[(size_t) (channel - kMaxInputs)].limiters[(size_t) k];
+                        auto l = std::make_unique<LimiterUnit> (ctx, lim, title);
+                        sec = &l->section;
+                        u.width = 130;
+                        u.comp = std::move (l);
+                        break;
+                    }
+                    case Fx::phase:
+                    {
+                        auto& param = isInput ? *e.inputs[(size_t) channel].phases[(size_t) k] : *e.buses[(size_t) (channel - kMaxInputs)].phases[(size_t) k];
+                        auto p = std::make_unique<PhaseUnit> (ctx, param, title);
+                        sec = &p->getSection();
+                        u.width = 120;
+                        u.comp = std::move (p);
+                        break;
+                    }
+                    case Fx::correction:
+                    {
+                        auto c = std::make_unique<CorrectionSection> (ctx, channel, colour);
+                        sec = &c->getSection();
+                        u.width = 220;
+                        u.comp = std::move (c);
+                        break;
+                    }
+                    default: break;
+                }
+                if (u.comp == nullptr) continue;
+                chainControls (*sec, i);
+                u.width = juce::jmax (u.width, sec->minimumWidth());
+            }
+            u.slot = i;
+            row.addAndMakeVisible (*u.comp);
+            units.push_back (std::move (u));
+        }
+        const bool empty = units.empty();
+        plus.setVisible (! empty || theme::deep());   // Deep theme: the same button with and without blocks
+        addChip.setVisible (empty && ! theme::deep());
+        emptyInfo.setVisible (empty);
+        for (auto& u : units)
+        {
+            u.alpha = targetAlpha (u);
+            u.comp->setAlpha (u.alpha);
+        }
+        layoutUnits();
+        const int land = std::exchange (landAt, -1);
+        for (auto& u : units)
+            if (u.slot == land)
+            {
+                const auto target = u.comp->getBounds();
+                u.comp->setTopLeftPosition (landFromX, 0);
+                u.comp->toFront (false);
+                animator.moveTo (*u.comp, target);
+            }
+        row.repaint();
+    }
+
+    int contentWidth (bool withPlus) const
+    {
+        int w = 0;
+        for (auto& u : units) w += u.width + kGap;
+        return w + (withPlus ? kPlusWidth + 6 : 0);
+    }
+
+    /** animated: blocks glide to their places (making room while one is dragged); otherwise they are simply there. */
+    void layoutUnits (bool animated = false)
+    {
+        auto put = [this, animated] (juce::Component& c, juce::Rectangle<int> target)
+        {
+            if (animated) animator.moveTo (c, target);
+            else          animator.place (c, target);
+        };
+        // At least as wide as the view, so the empty space right of the blocks takes right-clicks too.
+        const int needed = units.empty() ? 420 : contentWidth (true);
+        const bool scrolls = needed > view.getWidth();
+        row.setSize (juce::jmax (needed, view.getWidth()), juce::jmax (40, view.getHeight() - (scrolls ? view.getScrollBarThickness() + 2 : 0)));
+        const int h = row.getHeight();
+        if (units.empty())
+        {
+            if (theme::deep())
+            {
+                plus.setBounds (3, 3, kPlusWidth, h - 6);
+                emptyInfo.setBounds (kPlusWidth + 11, h / 2 - 8, 16, 16);
+                return;
+            }
+            addChip.setBounds (6, h / 2 - 16, 150, 32);
+            emptyInfo.setBounds (162, h / 2 - 8, 16, 16);
+            return;
+        }
+        int x = 0, k = 0;
+        for (int i = 0; i < (int) units.size(); ++i)
+        {
+            if (i == dragIndex) continue;   // follows the mouse
+            if (k == dropIndex) x += units[(size_t) dragIndex].width + kGap;   // gap where it would land
+            put (*units[(size_t) i].comp, { x, 0, units[(size_t) i].width, h });
+            x += units[(size_t) i].width + kGap;
+            ++k;
+        }
+        if (dragIndex >= 0 && dropIndex >= k) x += units[(size_t) dragIndex].width + kGap;
+        // Deep theme: as high as the blocks (their cards are inset by 3 px).
+        if (theme::deep()) put (plus, { x + 3, 3, kPlusWidth, h - 6 });
+        else               put (plus, { x + 6, 6, kPlusWidth, h - 12 });
+    }
+
+    /** A block that is off, or any block of a bypassed chain, is dimmed (it stays usable). */
+    float targetAlpha (const Unit& u) const
+    {
+        bool off = bypass.isOn();
+        if (const auto* s = chain.getSlot (u.slot); s != nullptr && ! off)
+        {
+            if (s->isPlugin()) off = s->bypassed.load();
+            else if (auto* on = ctx.engine.fxOnParam (channel, s->builtin, s->fxInstance)) off = ! on->isOn();
+        }
+        return off ? 0.4f : 1.0f;
+    }
+
+    void updateDimming()
+    {
+        for (auto& u : units)
+            if (targetAlpha (u) != u.alpha) { fading = true; return; }
+    }
+
+    void fadeFrame (double)
+    {
+        if (! fading) return;
+        fading = false;
+        for (auto& u : units)
+        {
+            const float target = targetAlpha (u);
+            u.alpha += (target - u.alpha) * 0.25f;
+            if (std::abs (target - u.alpha) < 0.01f) u.alpha = target;
+            else fading = true;
+            u.comp->setAlpha (u.alpha);
+        }
+    }
+
+    //--------------------------------------------------------------------------
+    /** Built-in effects and VST3 plugins; chosen ones are inserted at index (-1 = end). */
+    juce::PopupMenu addMenu (int index)
+    {
+        juce::PopupMenu m;
+        juce::Component::SafePointer<FxRack> safe (this);
+        m.addSectionHeader ("Built-in effects");
+        for (auto f : ctx.engine.allowedFx (channel))
+        {
+            int used = 0;
+            for (int k = 0; k < Engine::maxInstances (f); ++k) used += chain.hasBuiltin (f, k) ? 1 : 0;
+            const bool full = used >= Engine::maxInstances (f);
+            m.addItem (fxName (f) + (full ? "   (" + juce::String (used) + " in the chain, the most possible)" : juce::String()), ! full, false,
+                       [safe, f, index]
+            {
+                if (safe == nullptr) return;
+                safe->ctx.engine.addBuiltin (safe->channel, f, index < 0 ? safe->chain.size() : index);
+                safe->rebuild();
+                if (index < 0) safe->view.setViewPosition (safe->row.getWidth(), 0);
+            });
+        }
+        m.addSeparator();
+        m.addSectionHeader ("VST3 plugins");
+        std::map<juce::String, juce::PopupMenu> byVendor;
+        for (auto& d : ctx.engine.pluginHost.known.getTypes())
+        {
+            if (d.isInstrument) continue;
+            byVendor[d.manufacturerName.isEmpty() ? juce::String ("Unknown") : d.manufacturerName]
+                .addItem (d.name, [safe, d, index]
+                {
+                    if (safe == nullptr) return;
+                    auto& eng = safe->ctx.engine;
+                    juce::String err;
+                    auto inst = eng.pluginHost.create (d, eng.getSampleRate(), eng.getBlockSize(), err);
+                    if (inst == nullptr)
+                    {
+                        dialog::message (safe.getComponent(), dialog::Kind::warning, "Plugin could not be loaded", d.name + "\n" + err);
+                        return;
+                    }
+                    const int at = index < 0 ? safe->chain.size() : index;
+                    safe->chain.add (std::move (inst), d, at);
+                    safe->rebuild();
+                    if (index < 0) safe->view.setViewPosition (safe->row.getWidth(), 0);
+                    if (juce::isPositiveAndBelow (at, (int) safe->units.size()))
+                        if (auto* card = dynamic_cast<PluginCard*> (safe->units[(size_t) at].comp.get())) card->openEditor();
+                });
+        }
+        for (auto& [vendor, sub] : byVendor)
+            m.addSubMenu (vendor, sub);
+        if (byVendor.empty())
+            m.addItem ("(no plugins found yet)", false, false, nullptr);
+        m.addItem ("Scan for VST3 plugins...", [safe] { if (safe != nullptr && safe->onScan) safe->onScan(); });
+        return m;
+    }
+
+    void showAddMenu (juce::Component& target)
+    {
+        addMenu (-1).showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target));
+    }
+
+    /** Right-click on a block: copy, cut, paste after it, paste its settings, duplicate, delete, on / off. */
+    void showBlockMenu (int i)
+    {
+        auto* slot = chain.getSlot (i);
+        if (slot == nullptr) return;
+        auto& e = ctx.engine;
+        const auto held = clip::fromClipboard();
+        const auto heldName = clip::describe (held.get());
+        const auto self = clip::copyBlock (e, channel, i);
+        const bool canDuplicate = slot->isPlugin() || clip::canInsertBlock (e, self.get(), channel);
+        const bool isOn = slot->isPlugin() ? ! slot->bypassed.load() : (e.fxOnParam (channel, slot->builtin, slot->fxInstance) != nullptr
+                                                                         && e.fxOnParam (channel, slot->builtin, slot->fxInstance)->isOn());
+        juce::PopupMenu m;
+        m.addSectionHeader (blockName (i));
+        m.addItem ("Copy", [this, i] { if (auto x = clip::copyBlock (ctx.engine, channel, i)) clip::toClipboard (*x); });
+        m.addItem ("Cut", [this, i]
+        {
+            if (auto x = clip::copyBlock (ctx.engine, channel, i)) clip::toClipboard (*x);
+            later ([i] (FxRack& r) { clip::deleteBlock (r.ctx.engine, r.channel, i); });
+        });
+        m.addItem ("Paste" + (clip::whatOf (held.get()) == clip::What::fx ? "  " + heldName + "  (after this)" : juce::String()),
+                   clip::canInsertBlock (e, held.get(), channel), false,
+                   [this, i] { later ([i] (FxRack& r) { if (auto x = clip::fromClipboard()) clip::insertBlock (r.ctx.engine, r.channel, *x, i + 1); }); });
+        if (clip::canPasteSettings (e, held.get(), channel, i))
+            m.addItem ("Paste settings from the copied " + heldName,
+                       [this, i] { later ([i] (FxRack& r) { if (auto x = clip::fromClipboard()) clip::pasteSettings (r.ctx.engine, r.channel, i, *x); }); });
+        m.addItem ("Duplicate", canDuplicate, false, [this, i] { later ([i] (FxRack& r) { clip::duplicateBlock (r.ctx.engine, r.channel, i); }); });
+        m.addItem ("Delete", [this, i] { later ([i] (FxRack& r) { clip::deleteBlock (r.ctx.engine, r.channel, i); }); });
+        m.addSeparator();
+        m.addItem (isOn ? "Switch off (bypass)" : "Switch on", [this, i, isOn]
+        {
+            auto* s = chain.getSlot (i);
+            if (s == nullptr) return;
+            if (s->isPlugin()) { s->bypassed = isOn; rebuild(); }
+            else if (auto* on = ctx.engine.fxOnParam (channel, s->builtin, s->fxInstance)) on->set (isOn ? 0.0f : 1.0f);
+        });
+        m.addSubMenu ("Insert after this", addMenu (i + 1));
+        m.showMenuAsync (juce::PopupMenu::Options().withMousePosition());
+    }
+
+    /** Right-click on the empty space: the whole chain. */
+    void showChainMenu()
+    {
+        auto& e = ctx.engine;
+        const auto held = clip::fromClipboard();
+        const auto w = clip::whatOf (held.get());
+        juce::PopupMenu m;
+        m.addSectionHeader ("Effect chain of " + channelCode (channel));
+        m.addItem ("Copy effect chain", chain.size() > 0, false, [this] { clip::toClipboard (*clip::copyChain (ctx.engine, channel)); });
+        m.addItem (w == clip::What::channel ? "Paste effect chain (from the copied channel)" : "Paste effect chain",
+                   w == clip::What::chain || w == clip::What::channel, false,
+                   [this] { later ([] (FxRack& r) { if (auto x = clip::fromClipboard()) clip::pasteChain (r.ctx.engine, r.channel, *x); }); });
+        if (w == clip::What::fx)
+            m.addItem ("Paste  " + clip::describe (held.get()) + "  (at the end)", clip::canInsertBlock (e, held.get(), channel), false,
+                       [this] { later ([] (FxRack& r) { if (auto x = clip::fromClipboard()) clip::insertBlock (r.ctx.engine, r.channel, *x, -1); }); });
+        m.addSeparator();
+        m.addSubMenu ("Add effect", addMenu (-1));
+        m.addItem ("Delete all effects", chain.size() > 0, false, [this]
+        {
+            later ([] (FxRack& r) { while (r.chain.size() > 0) clip::deleteBlock (r.ctx.engine, r.channel, r.chain.size() - 1); });
+        });
+        m.showMenuAsync (juce::PopupMenu::Options().withMousePosition());
+    }
+
+    void timerCallback() override
+    {
+        if (chain.getVersion() != seenVersion && dragIndex < 0) rebuild();   // e.g. pasted, undone, added by a scene
+        updateDimming();
+    }
+
+    UiContext& ctx;
+    int channel;
+    PluginChain& chain;
+    juce::Colour colour;
+    Param& bypass;
+    std::function<void()> onScan;
+    juce::Viewport view;
+    Row row;
+    std::vector<Unit> units;
+    PlusButton plus;
+    Chip addChip { "+  Add effect", theme::text };
+    InfoButton emptyInfo;
+    int dragIndex = -1, dropIndex = -1, grabX = 0;
+    int landAt = -1, landFromX = 0;   // block that was just dropped: glides from there to its place after the rebuild
+    bool fading = false;
+    uint32_t seenVersion = ~0u;
+    LayoutAnimator animator { *this };
+    juce::VBlankAttachment fadeVBlank { this, [this] (double t) { fadeFrame (t); } };
+};
+
+PluginCard::PluginCard (PluginSlot& s, juce::Colour a) : slot (s), accent (a)
+{
+    for (auto* b : { &bypass, &edit, (Chip*) &remove })
+    {
+        addAndMakeVisible (b);
+        b->showArrow = false;
+        b->centred = true;
+    }
+    bypass.onClick = [this] { slot.bypassed = ! slot.bypassed.load(); refresh(); };
+    edit.onClick   = [this] { openEditor(); };
+    remove.onClick = [this] { if (onRemove) onRemove(); };
+    bypass.setTooltip ("Bypass this plugin");
+    edit.setTooltip ("Open plugin editor");
+    remove.setTooltip ("Remove plugin");
+    setTooltip ("Drag to move it in the chain. Double-click: open the editor. Right-click: copy, cut, paste, duplicate, delete.");
+    setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+    refresh();
+}
+
+void PluginCard::refresh()
+{
+    name = slot.instance->getName();
+    vendor = slot.description.manufacturerName;
+    bypass.text = slot.bypassed ? "OFF" : "ON";
+    bypass.active = ! slot.bypassed;
+    bypass.colour = slot.bypassed ? theme::textDim : accent;
+    repaint();
+}
+
+void PluginCard::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat().reduced (3.0f);
+    if (dragging)
+        juce::DropShadow (juce::Colours::black.withAlpha (0.5f), 12, { 0, 3 }).drawForRectangle (g, r.toNearestInt());
+    const auto fill = dragging ? theme::raised.brighter (0.08f) : theme::panel2;
+    const auto line = dragging ? accent : bypass.active ? accent.withAlpha (0.45f) : theme::cardLine;
+    if (theme::deep())
+        theme::drawCard (g, r, fill, line, accent);
+    else
+    {
+        g.setColour (fill);
+        g.fillRoundedRectangle (r, 8.0f);
+        g.setColour (line);
+        g.drawRoundedRectangle (r, 8.0f, dragging ? 1.5f : 1.0f);
+    }
+
+    drawGrip (g, { r.getX() + 9.0f, r.getY() + 9.0f, 8.0f, 14.0f });
+    auto t = r.reduced (10.0f, 7.0f).withTrimmedLeft (14.0f);
+    g.setColour (theme::textFaint);
+    g.setFont (theme::font (11.0f, true));
+    g.drawText ("VST3", t.removeFromTop (16.0f), juce::Justification::centredLeft);
+    t.removeFromTop (4.0f);
+    g.setColour (theme::text);
+    g.setFont (theme::font (13.0f, true));
+    g.drawFittedText (name, t.removeFromTop (18.0f).toNearestInt(), juce::Justification::centredLeft, 1);
+    g.setColour (theme::textDim);
+    g.setFont (theme::font (11.0f));
+    g.drawFittedText (vendor, t.removeFromTop (15.0f).toNearestInt(), juce::Justification::centredLeft, 1);
+}
+
+void PluginCard::resized()
+{
+    auto r = getLocalBounds().reduced (12, 10).removeFromBottom (22);
+    remove.setBounds (r.removeFromRight (30));
+    r.removeFromRight (3);
+    rowLayout (r, { &bypass, &edit }, 3);
+}
+
+void PluginCard::mouseDown (const juce::MouseEvent& e)
+{
+    dragging = false;
+    if (e.mods.isPopupMenu() && onMenu) onMenu();
+}
+
+void PluginCard::mouseDrag (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu()) return;
+    if (! dragging)
+    {
+        if (e.getDistanceFromDragStart() < 6) return;
+        dragging = true;
+        toFront (false);
+        repaint();
+    }
+    if (onDrag) onDrag (e);
+}
+
+void PluginCard::mouseUp (const juce::MouseEvent&)
+{
+    if (! dragging) return;
+    dragging = false;
+    repaint();
+    if (onDrop) onDrop();
+}
+
+void PluginCard::openEditor()
+{
+    if (slot.editorWindow == nullptr)
+        slot.editorWindow = std::make_unique<PluginWindow> (slot);
+    else
+        slot.editorWindow->toFront (true);
+}
 
 //==============================================================================
 juce::String formatTime (double seconds)
@@ -1063,8 +1915,8 @@ private:
     int dragHandle = -1, hoverHandle = -1;
 };
 
-/** Recorder: left what is recorded (a B bus), in the middle the recording itself (transport, waveform,
-    file), on the right where playback goes (any A / B buses). */
+/** Recorder: left what is recorded (a V bus), in the middle the recording itself (transport, waveform,
+    file), on the right where playback goes (any A / V buses). */
 class RecorderDetail final : public juce::Component
 {
 public:
@@ -1087,17 +1939,17 @@ public:
         for (int b = 0; b < kMaxBuses; ++b)
         {
             if (! c.engine.isBusActive (b)) continue;
-            (isHwBus (b) ? hwOuts : virtOuts).push_back (std::make_unique<Toggle> (c, *rec.out[(size_t) b], busCode (b), theme::busColour (b)));
+            (isHwBus (b) ? hwOuts : virtOuts).push_back (std::make_unique<Toggle> (c, *rec.out[(size_t) b], busLabel (b), theme::busColour (b)));
             outSec.addAndMakeVisible (*(isHwBus (b) ? hwOuts : virtOuts).back());
         }
-        // Record source: the B buses as the same kind of buttons as Play To (one of them is lit).
+        // Record source: the V buses as the same kind of buttons as Play To (one of them is lit).
         for (int k = 0; k < kMaxVirtBuses; ++k)
         {
             const int b = virtBusIndex (k);
             if (! c.engine.isBusActive (b)) continue;
-            sources.push_back (std::make_unique<Toggle> (c, *rec.source, busCode (b), theme::busColour (b)));
+            sources.push_back (std::make_unique<Toggle> (c, *rec.source, busLabel (b), theme::busColour (b)));
             sources.back()->choiceValue = k;
-            sources.back()->setTooltip ("Record " + busCode (b) + " (" + c.engine.buses[(size_t) b].name + ")");
+            sources.back()->setTooltip ("Record " + busLabel (b) + " (" + c.engine.buses[(size_t) b].name + ")");
             sourceSec.addAndMakeVisible (*sources.back());
         }
         for (auto* chip : { &folderChip, &formatChip, &openChip, &lastChip, &showChip, &cutChip, &resetTrimChip })
@@ -1107,7 +1959,7 @@ public:
         }
         formatChip.showArrow = true;
 
-        recBtn.setTooltip ("Record the selected B bus to a WAV file (stop with a second click)");
+        recBtn.setTooltip ("Record the selected V bus to a WAV file (stop with a second click)");
         playBtn.setTooltip ("Play / pause the loaded file on the buses selected under Play To (starts at the marker in the waveform)");
         stopBtn.setTooltip ("Stop recording / playback and go back to the start");
         loopBtn.setTooltip ("Repeat the file");
@@ -1147,7 +1999,7 @@ public:
         // Source and outputs take what they need, the recording gets the rest.
         auto r = getLocalBounds();
         const int most = (int) juce::jmax (hwOuts.size(), virtOuts.size());
-        const int perRow = most == 5 ? 5 : 4;   // 5 A buses in one row, otherwise rows of four
+        const int perRow = most == 5 ? 5 : 4;   // 5 H buses in one row, otherwise rows of four
         sourceSec.setBounds (r.removeFromLeft (juce::jmax (210, 24 + perRow * 40 + 8)));
         outSec.setBounds (r.removeFromRight (24 + perRow * 40 + 8 + 70));
         takeSec.setBounds (r);
@@ -1172,7 +2024,7 @@ public:
             area.removeFromTop (4);
         };
 
-        // Source: B bus, what it records, folder / format
+        // Source: V bus, what it records, folder / format
         auto s = sourceSec.content();
         group (s, sources, sourceLabel, sourceSec.getPosition());
         s.removeFromTop (2);
@@ -1213,7 +2065,7 @@ public:
         fileRow.removeFromRight (10);
         fileArea = fileRow.translated (takeSec.getX(), takeSec.getY());
 
-        // Play to: A buses, then B buses (own rows), level knob on the right
+        // Play to: H buses, then V buses (own rows), level knob on the right
         auto o = outSec.content();
         level.setBounds (o.removeFromRight (64).withSizeKeepingCentre (64, 74));
         o.removeFromRight (8);
@@ -1271,13 +2123,13 @@ private:
     void refreshTexts()
     {
         const bool recording = rec.isRecording(), playing = rec.isPlaying();
-        if (recording)    stateText = "Recording " + busCode (rec.getRecordSourceBus()) + "  ->  " + rec.getRecordingFile().getFileName();
+        if (recording)    stateText = "Recording " + busLabel (rec.getRecordSourceBus()) + "  ->  " + rec.getRecordingFile().getFileName();
         else if (playing) stateText = "Playing";
         else if (rec.getLastError().isNotEmpty()) stateText = rec.getLastError();
         else              stateText = "Stopped";
 
-        sourceText = sources.empty() ? juce::String ("No virtual output (B bus) in use - add one to record.")
-                                     : "Records " + busCode (rec.getRecordSourceBus()) + " after its fader and limiter into  "
+        sourceText = sources.empty() ? juce::String ("No virtual output (V bus) in use - add one to record.")
+                                     : "Records " + busLabel (rec.getRecordSourceBus()) + " after its fader and limiter into  "
                                            + rec.getFolder().getFileName();
         folderChip.text = "Folder...";
         formatChip.text = rec.bitDepth >= 32 ? "WAV 32f" : "WAV " + juce::String (rec.bitDepth);
@@ -1390,277 +2242,6 @@ private:
     uint64_t seenVersion = 0;
 };
 } // namespace
-
-//==============================================================================
-struct PluginChainView::Card : juce::Component, juce::SettableTooltipClient
-{
-    Card (PluginChainView& o, int i) : owner (o), index (i)
-    {
-        for (auto* b : { &bypass, &edit, (Chip*) &remove })
-        {
-            addAndMakeVisible (b);
-            b->showArrow = false;
-            b->centred = true;
-        }
-        bypass.onClick = [this]
-        {
-            if (auto* s = owner.chain.getSlot (index)) { s->bypassed = ! s->bypassed.load(); refresh(); }
-        };
-        edit.onClick   = [this] { owner.openEditor (index); };
-        // Chain edits rebuild the cards, so defer them until this click handler has returned.
-        remove.onClick = [this]
-        {
-            juce::Component::SafePointer<PluginChainView> o (&owner);
-            const int ix = index;
-            juce::MessageManager::callAsync ([o, ix] { if (o != nullptr) { o->chain.remove (ix); o->refresh(); } });
-        };
-        bypass.setTooltip ("Bypass this plugin");
-        edit.setTooltip ("Open plugin editor");
-        remove.setTooltip ("Remove plugin");
-        setTooltip ("Drag to change the order. Double-click: open the editor.");
-        setMouseCursor (juce::MouseCursor::DraggingHandCursor);
-        refresh();
-    }
-
-    void refresh()
-    {
-        auto* s = owner.chain.getSlot (index);
-        if (s == nullptr) return;
-        name = s->instance->getName();
-        vendor = s->description.manufacturerName;
-        bypass.text = s->bypassed ? "OFF" : "ON";
-        bypass.active = ! s->bypassed;
-        bypass.colour = s->bypassed ? theme::textDim : owner.accent;
-        repaint();
-    }
-
-    void paint (juce::Graphics& g) override
-    {
-        auto r = getLocalBounds().toFloat().reduced (2.0f);
-        if (dragging)
-            juce::DropShadow (juce::Colours::black.withAlpha (0.5f), 12, { 0, 3 }).drawForRectangle (g, r.toNearestInt());
-        g.setColour (dragging ? theme::raised.brighter (0.08f) : theme::raised);
-        g.fillRoundedRectangle (r, 7.0f);
-        g.setColour (dragging ? owner.accent : bypass.active ? owner.accent.withAlpha (0.6f) : theme::outline);
-        g.drawRoundedRectangle (r, 7.0f, dragging ? 1.5f : 1.0f);
-
-        // Grip (drag handle) at the top right
-        g.setColour (theme::textFaint);
-        for (int row = 0; row < 3; ++row)
-            for (int col = 0; col < 2; ++col)
-                g.fillEllipse (r.getRight() - 16.0f + (float) col * 5.0f, r.getY() + 9.0f + (float) row * 5.0f, 2.2f, 2.2f);
-
-        auto t = r.reduced (10.0f, 8.0f).withTrimmedRight (12.0f);
-        g.setColour (theme::text);
-        g.setFont (theme::font (13.0f, true));
-        g.drawFittedText (name, t.removeFromTop (18.0f).toNearestInt(), juce::Justification::centredLeft, 1);
-        g.setColour (theme::textDim);
-        g.setFont (theme::font (11.0f));
-        g.drawFittedText (vendor, t.removeFromTop (15.0f).toNearestInt(), juce::Justification::centredLeft, 1);
-    }
-
-    void resized() override
-    {
-        auto r = getLocalBounds().reduced (8).removeFromBottom (22);
-        remove.setBounds (r.removeFromRight (30));
-        r.removeFromRight (3);
-        rowLayout (r, { &bypass, &edit }, 3);
-    }
-
-    void mouseDown (const juce::MouseEvent& e) override
-    {
-        dragging = false;
-        grabX = e.getMouseDownX();
-    }
-
-    void mouseDrag (const juce::MouseEvent& e) override
-    {
-        if (! dragging)
-        {
-            if (e.getDistanceFromDragStart() < 6) return;
-            dragging = true;
-            toFront (false);
-            repaint();
-        }
-        owner.cardDragged (index, e.getEventRelativeTo (getParentComponent()).x - grabX);
-    }
-
-    void mouseUp (const juce::MouseEvent&) override
-    {
-        if (! dragging) return;
-        dragging = false;
-        repaint();
-        owner.cardDropped (index);
-    }
-
-    void mouseDoubleClick (const juce::MouseEvent&) override { owner.openEditor (index); }
-
-    PluginChainView& owner;
-    int index;
-    bool dragging = false;
-    int grabX = 0;
-    juce::String name, vendor;
-    Chip bypass { "ON" }, edit { "EDIT" };
-    TrashButton remove;
-};
-
-PluginChainView::PluginChainView (UiContext& c, PluginChain& ch, juce::Colour a) : ctx (c), chain (ch), accent (a)
-{
-    addAndMakeVisible (addButton);
-    addButton.showArrow = false;
-    addButton.centred = true;
-    addButton.onClick = [this] { showAddMenu (addButton); };
-    plusCard.colour = accent;
-    plusCard.setTooltip ("Add a VST3 plugin at the end of the chain");
-    plusCard.onClick = [this] { showAddMenu (plusCard); };
-    viewport.setViewedComponent (&row, false);
-    viewport.setScrollBarsShown (false, true);
-    viewport.setScrollBarThickness (8);
-    addAndMakeVisible (viewport);
-    row.addAndMakeVisible (plusCard);
-    refresh();
-}
-
-void PluginChainView::refresh()
-{
-    cards.clear();
-    dragIndex = dropIndex = -1;
-    for (int i = 0; i < chain.size(); ++i)
-    {
-        cards.push_back (std::make_unique<Card> (*this, i));
-        row.addAndMakeVisible (*cards.back());
-    }
-    resized();
-    repaint();
-    if (onChainChanged) onChainChanged();
-}
-
-void PluginChainView::paint (juce::Graphics& g)
-{
-    if (cards.empty())
-    {
-        g.setColour (theme::textFaint);
-        g.setFont (theme::font (12.0f));
-        g.drawText ("No plugins. Inserts run pre-fader, in order, with zero added buffering.",
-                    getLocalBounds().withTrimmedLeft (190), juce::Justification::centredLeft);
-    }
-}
-
-void PluginChainView::resized()
-{
-    // Empty chain: a labelled "Add" button. With plugins: their cards and a "+" after the last one.
-    const bool empty = cards.empty();
-    addButton.setVisible (empty);
-    viewport.setVisible (! empty);
-    if (empty)
-    {
-        addButton.setBounds (getLocalBounds().removeFromLeft (170).withSizeKeepingCentre (170, 32));
-        return;
-    }
-    viewport.setBounds (getLocalBounds());
-    const int n = (int) cards.size();
-    cardWidth = juce::jlimit (kMinCardWidth, kMaxCardWidth, (getWidth() - kPlusWidth) / n - kCardGap);
-    const int needed = n * (cardWidth + kCardGap) + kPlusWidth;
-    const int h = needed > getWidth() ? getHeight() - viewport.getScrollBarThickness() : getHeight();
-    row.setSize (juce::jmax (needed, getWidth()), juce::jmax (40, h));
-    layoutCards();
-}
-
-int PluginChainView::getIdealWidth() const
-{
-    if (cards.empty()) return 420;   // add button + hint
-    return (int) cards.size() * (kMaxCardWidth + kCardGap) + kPlusWidth;
-}
-
-void PluginChainView::layoutCards()
-{
-    const int h = row.getHeight();
-    int slot = 0;
-    for (int i = 0; i < (int) cards.size(); ++i)
-    {
-        if (i == dragIndex) continue;            // follows the mouse
-        if (slot == dropIndex) ++slot;           // gap where the dragged card would land
-        cards[(size_t) i]->setBounds (slot * (cardWidth + kCardGap), 0, cardWidth, h);
-        ++slot;
-    }
-    plusCard.setBounds ((int) cards.size() * (cardWidth + kCardGap), 0, kPlusWidth, h);
-}
-
-void PluginChainView::cardDragged (int index, int x)
-{
-    auto& card = *cards[(size_t) index];
-    const int n = (int) cards.size();
-    const int maxX = (n - 1) * (cardWidth + kCardGap);
-    card.setTopLeftPosition (juce::jlimit (0, juce::jmax (0, maxX), x), 0);
-    const int target = juce::jlimit (0, n - 1, (card.getX() + cardWidth / 2) / (cardWidth + kCardGap));
-    if (dragIndex != index || dropIndex != target)
-    {
-        dragIndex = index;
-        dropIndex = target;
-        layoutCards();
-    }
-    viewport.autoScroll (card.getX() - viewport.getViewPositionX() + cardWidth / 2, 10, 30, 8);
-}
-
-void PluginChainView::cardDropped (int index)
-{
-    const int to = dropIndex;
-    dragIndex = dropIndex = -1;
-    if (to < 0 || to == index) { layoutCards(); return; }
-    // Rebuilding the cards destroys the one that called us: do it after its mouse handler returned.
-    juce::Component::SafePointer<PluginChainView> safe (this);
-    juce::MessageManager::callAsync ([safe, index, to]
-    {
-        if (safe == nullptr) return;
-        safe->chain.move (index, to);
-        safe->refresh();
-    });
-}
-
-void PluginChainView::showAddMenu (juce::Component& target)
-{
-    auto types = ctx.engine.pluginHost.known.getTypes();
-    juce::PopupMenu m;
-    std::map<juce::String, juce::PopupMenu> byVendor;
-    for (auto& d : types)
-    {
-        if (d.isInstrument) continue;
-        juce::Component::SafePointer<PluginChainView> safe (this);
-        byVendor[d.manufacturerName.isEmpty() ? juce::String ("Unknown") : d.manufacturerName]
-            .addItem (d.name, [safe, d]
-            {
-                if (safe == nullptr) return;
-                auto& eng = safe->ctx.engine;
-                juce::String err;
-                auto inst = eng.pluginHost.create (d, eng.getSampleRate(), eng.getBlockSize(), err);
-                if (inst == nullptr)
-                {
-                    dialog::message (safe.getComponent(), dialog::Kind::warning, "Plugin could not be loaded", d.name + "\n" + err);
-                    return;
-                }
-                safe->chain.add (std::move (inst), d);
-                safe->refresh();
-                safe->openEditor (safe->chain.size() - 1);
-            });
-    }
-    for (auto& [vendor, sub] : byVendor)
-        m.addSubMenu (vendor, sub);
-    if (byVendor.empty())
-        m.addItem ("(no plugins found yet)", false, false, nullptr);
-    m.addSeparator();
-    m.addItem ("Scan for VST3 plugins...", [this] { if (onScanRequested) onScanRequested(); });
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target));
-}
-
-void PluginChainView::openEditor (int index)
-{
-    auto* s = chain.getSlot (index);
-    if (s == nullptr) return;
-    if (s->editorWindow == nullptr)
-        s->editorWindow = std::make_unique<PluginWindow> (*s);
-    else
-        s->editorWindow->toFront (true);
-}
 
 //==============================================================================
 EqGraph::EqGraph (UiContext& c, ParamEq& e, juce::Colour col, bool lg) : ctx (c), eq (e), colour (col), large (lg)
@@ -1785,7 +2366,10 @@ void EqGraph::setSpectrum (const std::vector<float>& cols)
 void EqGraph::paint (juce::Graphics& g)
 {
     const auto r = getLocalBounds().toFloat();
-    g.setColour (theme::bg);
+    // The graph keeps the Legacy colours in every theme.
+    const juce::Colour graphBg (0xff0d0f13), graphLine (0xff2a313e), graphDim (0xff8b94a5);
+    const auto accent = colour == theme::accentHw ? juce::Colour (0xff8d6cff) : colour;
+    g.setColour (graphBg);
     g.fillRoundedRectangle (r, 6.0f);
 
     // Grid + scales
@@ -1795,7 +2379,7 @@ void EqGraph::paint (juce::Graphics& g)
         const float x = freqToX (f);
         if (f > 20.0f && f < 20000.0f)
         {
-            g.setColour (theme::outline.withAlpha (0.5f));
+            g.setColour (graphLine.withAlpha (0.5f));
             g.fillRect (x, plot.getY(), 1.0f, plot.getHeight());
         }
         else if (! large) continue;
@@ -1809,11 +2393,11 @@ void EqGraph::paint (juce::Graphics& g)
     for (float db = -18.0f; db <= 18.0f; db += 6.0f)
     {
         const float y = dbToY (db);
-        g.setColour (db == 0.0f ? theme::outline : theme::outline.withAlpha (0.4f));
+        g.setColour (db == 0.0f ? graphLine : graphLine.withAlpha (0.4f));
         g.fillRect (plot.getX(), y, plot.getWidth(), 1.0f);
         if (large)
         {
-            g.setColour (db == 0.0f ? theme::textDim : theme::textFaint);
+            g.setColour (db == 0.0f ? graphDim : theme::textFaint);
             g.drawText ((db > 0 ? "+" : "") + juce::String ((int) db), juce::Rectangle<float> (0.0f, y - 7.0f, plot.getX() - 6.0f, 14.0f),
                         juce::Justification::centredRight);
         }
@@ -1821,7 +2405,7 @@ void EqGraph::paint (juce::Graphics& g)
     if (large && ! spectrum.isEmpty())
     {
         // Spectrum level scale (dBFS) on the right
-        g.setColour (colour.withAlpha (0.55f));
+        g.setColour (accent.withAlpha (0.55f));
         for (float db = kSpecTopDb; db >= kSpecBottomDb; db -= 24.0f)
             g.drawText (juce::String ((int) db), juce::Rectangle<float> (plot.getRight() + 6.0f, specToY (db) - 7.0f, r.getRight() - plot.getRight() - 8.0f, 14.0f),
                         juce::Justification::centredLeft);
@@ -1833,18 +2417,18 @@ void EqGraph::paint (juce::Graphics& g)
 
         if (! spectrum.isEmpty())
         {
-            g.setGradientFill (juce::ColourGradient (colour.withAlpha (0.28f), 0.0f, plot.getY(),
-                                                     colour.withAlpha (0.03f), 0.0f, plot.getBottom(), false));
+            g.setGradientFill (juce::ColourGradient (accent.withAlpha (0.28f), 0.0f, plot.getY(),
+                                                     accent.withAlpha (0.03f), 0.0f, plot.getBottom(), false));
             g.fillPath (spectrum);
-            g.setColour (colour.withAlpha (0.5f));
+            g.setColour (accent.withAlpha (0.5f));
             g.strokePath (spectrum, juce::PathStrokeType (1.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
 
         const bool on = eq.on->isOn();
         for (int k = 0; k < ParamEq::kBands; ++k)
         {
-            if (bandCurves[(size_t) k].isEmpty()) continue;
-            const auto bc = on ? theme::bandColour (k) : theme::textDim;
+            if (bandCurves[(size_t) k].isEmpty() || ! eq.enabled[(size_t) k]->isOn()) continue;
+            const auto bc = on ? theme::bandColour (k) : graphDim;
             const bool emphasise = k == selected || k == hovered;
             g.setColour (bc.withAlpha (emphasise ? 0.22f : 0.10f));
             g.fillPath (bandCurves[(size_t) k]);
@@ -1866,21 +2450,32 @@ void EqGraph::paint (juce::Graphics& g)
         if (! eq.bandOn[(size_t) k]->isOn()) continue;
         any = true;
         const auto p = nodePos (k);
-        const auto bc = eq.on->isOn() ? theme::bandColour (k) : theme::textDim;
+        const bool bandEnabled = eq.enabled[(size_t) k]->isOn();
+        const auto bc = eq.on->isOn() ? theme::bandColour (k) : graphDim;
         auto node = juce::Rectangle<float> (p.x - rad, p.y - rad, rad * 2.0f, rad * 2.0f);
         if (k == selected || k == hovered)
         {
             g.setColour (bc.withAlpha (k == selected ? 0.3f : 0.18f));
             g.fillEllipse (node.expanded (5.0f));
         }
-        g.setColour (bc);
-        g.fillEllipse (node);
+        if (bandEnabled)
+        {
+            g.setColour (bc);
+            g.fillEllipse (node);
+        }
+        else   // switched off: hollow
+        {
+            g.setColour (graphBg);
+            g.fillEllipse (node);
+            g.setColour (bc.withAlpha (0.7f));
+            g.drawEllipse (node.reduced (0.75f), 1.5f);
+        }
         if (k == selected)
         {
             g.setColour (theme::text);
             g.drawEllipse (node.expanded (1.5f), 1.5f);
         }
-        g.setColour (theme::bg);
+        g.setColour (bandEnabled ? graphBg : bc);
         g.setFont (theme::font (large ? 10.5f : 9.5f, true));
         g.drawText (juce::String (k + 1), node, juce::Justification::centred);
     }
@@ -1926,6 +2521,7 @@ int EqGraph::addBand (float f, float gainDb)
         eq.q[i]->set (1.0f);
         eq.freq[i]->set (f);
         eq.gain[i]->set (std::round (gainDb * 10.0f) / 10.0f);
+        eq.enabled[i]->set (1.0f);
         eq.bandOn[i]->set (1.0f);
         if (! eq.on->isOn()) eq.on->set (1.0f);
         return k;
@@ -1937,7 +2533,7 @@ void EqGraph::removeBand (int k)
 {
     const auto i = (size_t) k;
     eq.bandOn[i]->set (0.0f);
-    for (auto* p : { eq.type[i], eq.gain[i], eq.freq[i], eq.q[i] }) p->reset();
+    for (auto* p : { eq.type[i], eq.gain[i], eq.freq[i], eq.q[i], eq.enabled[i] }) p->reset();
     if (hovered == k) hovered = -1;
     if (selected == k)
         for (int j = 0; j < ParamEq::kBands; ++j)
@@ -1955,6 +2551,8 @@ void EqGraph::showBandMenu (int k)
     for (int t = 0; t < names.size(); ++t)
         m.addItem (names[t], true, t == cur, [safe, k, t] { if (safe != nullptr) safe->eq.type[(size_t) k]->set ((float) t); });
     m.addSeparator();
+    const bool en = eq.enabled[(size_t) k]->isOn();
+    m.addItem (en ? "Switch band off" : "Switch band on", [safe, k, en] { if (safe != nullptr) safe->eq.enabled[(size_t) k]->set (en ? 0.0f : 1.0f); });
     m.addItem ("Remove band", [safe, k] { if (safe != nullptr) safe->removeBand (k); });
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
 }
@@ -2064,10 +2662,13 @@ struct EqEditor::BandColumn final : public juce::Component, private ParamPoller:
           typeBar (o.ctx, *o.eq.type[(size_t) k], colour),
           gain (o.ctx, *o.eq.gain[(size_t) k], "GAIN", colour),
           freq (o.ctx, *o.eq.freq[(size_t) k], "FREQ", colour),
-          q (o.ctx, *o.eq.q[(size_t) k], "Q", colour)
+          q (o.ctx, *o.eq.q[(size_t) k], "Q", colour),
+          enabled (o.ctx, *o.eq.enabled[(size_t) k], "ON", colour)
     {
-        for (juce::Component* c : std::initializer_list<juce::Component*> { &typeBar, &removeChip, &gain, &freq, &q })
+        for (juce::Component* c : std::initializer_list<juce::Component*> { &typeBar, &removeChip, &gain, &freq, &q, &enabled })
             addAndMakeVisible (c);
+        for (auto* kn : { &gain, &freq, &q }) kn->alwaysShowValue = true;
+        enabled.setTooltip ("Switch this band on or off (off keeps its settings)");
         removeChip.showArrow = false;
         removeChip.centred = true;
         removeChip.setTooltip ("Remove this band");
@@ -2099,13 +2700,21 @@ struct EqEditor::BandColumn final : public juce::Component, private ParamPoller:
     {
         const auto k = (size_t) band;
         const auto v = owner.eq.type[k]->getVersion() + owner.eq.gain[k]->getVersion() + owner.eq.freq[k]->getVersion()
-                     + owner.eq.q[k]->getVersion() + owner.eq.bandOn[k]->getVersion();
+                     + owner.eq.q[k]->getVersion() + owner.eq.bandOn[k]->getVersion() + owner.eq.enabled[k]->getVersion();
         if (v == seen) return;
         seen = v;
         const bool use = inUse();
-        for (juce::Component* c : std::initializer_list<juce::Component*> { &typeBar, &removeChip, &gain, &freq, &q })
+        for (juce::Component* c : std::initializer_list<juce::Component*> { &typeBar, &removeChip, &gain, &freq, &q, &enabled })
             c->setVisible (use);
-        gain.setAlpha (ParamEq::typeUsesGain (juce::roundToInt (owner.eq.type[k]->get())) ? 1.0f : 0.35f);
+        if ((use ? 1 : 0) != shownUse)
+        {
+            const bool first = shownUse < 0;
+            shownUse = use ? 1 : 0;
+            if (! first) owner.layoutBands();   // added / removed: only the bands in use have a column
+        }
+        const float dim = owner.eq.enabled[k]->isOn() ? 1.0f : 0.45f;
+        for (juce::Component* c : std::initializer_list<juce::Component*> { &typeBar, &freq, &q }) c->setAlpha (dim);
+        gain.setAlpha (dim * (ParamEq::typeUsesGain (juce::roundToInt (owner.eq.type[k]->get())) ? 1.0f : 0.35f));
         setMouseCursor (use ? juce::MouseCursor::NormalCursor : juce::MouseCursor::PointingHandCursor);
         repaint();
     }
@@ -2136,28 +2745,22 @@ struct EqEditor::BandColumn final : public juce::Component, private ParamPoller:
         }
         g.setColour (theme::textDim);
         g.setFont (theme::font (11.5f));
-        g.drawText (owner.eq.type[(size_t) band]->toText(), head.withTrimmedLeft (58).withTrimmedRight (70), juce::Justification::centredLeft);
-
-        // Values stay visible under the knobs (not only on hover).
-        g.setFont (theme::mono (11.0f));
-        g.setColour (theme::text);
-        const auto k = (size_t) band;
-        const Param* ps[] = { owner.eq.gain[k], owner.eq.freq[k], owner.eq.q[k] };
-        const Knob* ks[] = { &gain, &freq, &q };
-        for (int i = 0; i < 3; ++i)
-            g.drawText (ps[i]->toText(), ks[i]->getBounds().withY (ks[i]->getBottom() + 2).withHeight (14), juce::Justification::centred);
+        g.drawText (owner.eq.type[(size_t) band]->toText(), head.withTrimmedLeft (58).withTrimmedRight (110), juce::Justification::centredLeft);
     }
 
     void resized() override
     {
         auto r = getLocalBounds().reduced (12, 8);
         auto head = r.removeFromTop (22);
-        removeChip.setBounds (head.removeFromRight (66));
+        removeChip.setBounds (head.removeFromRight (30));
+        head.removeFromRight (4);
+        enabled.setBounds (head.removeFromRight (42));
         r.removeFromTop (8);
         typeBar.setBounds (r.removeFromLeft (36));
         r.removeFromLeft (8);
-        auto knobs = r.withSizeKeepingCentre (r.getWidth(), juce::jmin (r.getHeight() - 16, 84)).translated (0, -8);
-        const int w = knobs.getWidth() / 3;
+        // Knob size and spacing in the proportions of the small EQ, centred when the column is wider.
+        const int w = juce::jmin (r.getWidth() / 3, 68);
+        auto knobs = r.withSizeKeepingCentre (w * 3, juce::jmin (r.getHeight(), 96));
         gain.setBounds (knobs.removeFromLeft (w));
         freq.setBounds (knobs.removeFromLeft (w));
         q.setBounds (knobs);
@@ -2167,16 +2770,18 @@ struct EqEditor::BandColumn final : public juce::Component, private ParamPoller:
     int band;
     juce::Colour colour;
     EqTypeBar typeBar;
-    Chip removeChip { "Remove", theme::textDim };
+    TrashButton removeChip;
     Knob gain, freq, q;
+    Toggle enabled;
     uint64_t seen = ~0ull;
+    int shownUse = -1;
 };
 
-EqEditor::EqEditor (UiContext& c, int sel)
-    : ctx (c), selectIndex (sel),
-      eq (sel < kMaxInputs ? c.engine.inputs[(size_t) sel].eq : c.engine.buses[(size_t) (sel - kMaxInputs)].eq),
+EqEditor::EqEditor (UiContext& c, int sel, int k)
+    : ctx (c), selectIndex (sel), instance (k),
+      eq (sel < kMaxInputs ? c.engine.inputs[(size_t) sel].eqs[(size_t) k] : c.engine.buses[(size_t) (sel - kMaxInputs)].eqs[(size_t) k]),
       colour (sel < kMaxInputs ? theme::accentIn : theme::busColour (sel - kMaxInputs)),
-      onToggle (c, *eq.on, "EQ ON", colour), graph (c, eq, colour, true),
+      onToggle (c, *eq.on, "EQ ON", theme::fxEq), graph (c, eq, colour, true),
       tap (sel < kMaxInputs ? c.engine.inputs[(size_t) sel].spectrum : c.engine.buses[(size_t) (sel - kMaxInputs)].spectrum),
       fft (std::make_unique<juce::dsp::FFT> (kFftOrder))
 {
@@ -2185,13 +2790,25 @@ EqEditor::EqEditor (UiContext& c, int sel)
     window.resize (kFftSize);
     for (int i = 0; i < kFftSize; ++i) // Hann
         window[(size_t) i] = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * (float) i / (float) (kFftSize - 1));
+    tap.eqInstance.store (k);
     tap.ring.skip (tap.ring.available()); // stale audio from an earlier view
     tap.users.fetch_add (1);
 
     title = sel < kMaxInputs ? "IN " + juce::String (sel + 1) + "   " + c.engine.inputs[(size_t) sel].name
-                             : busCode (sel - kMaxInputs) + "   " + c.engine.buses[(size_t) (sel - kMaxInputs)].name;
+                             : busLabel (sel - kMaxInputs) + "   " + c.engine.buses[(size_t) (sel - kMaxInputs)].name;
+    if (k > 0) title << "   -   EQ " << (k + 1);
     addAndMakeVisible (onToggle);
     addAndMakeVisible (graph);
+    addAndMakeVisible (menu);
+    addAndMakeVisible (info);
+    menu.showArrow = false;
+    menu.centred = true;
+    menu.setTooltip ("Import or export this EQ, remove all bands");
+    menu.onClick = [this] { showEqMenu (ctx, selectIndex, instance, menu); };
+    info.setText ("Using the EQ\nClick: add a band.  Drag a point: frequency / gain.  Mouse wheel: Q.\n"
+                  "Double-click a point: remove it.  Right-click: type, switch off, remove.\n"
+                  "Click a value under a knob to type it (e.g. 2.5k, -3).  Ctrl+Z / Ctrl+Y: undo / redo.\n\n"
+                  "Background: live spectrum after the EQ (dBFS scale on the right).");
     for (int k = 0; k < ParamEq::kBands; ++k)
     {
         bands.push_back (std::make_unique<BandColumn> (*this, k));
@@ -2300,11 +2917,6 @@ void EqEditor::paint (juce::Graphics& g)
     g.setColour (colour);
     g.setFont (theme::font (15.0f, true));
     g.drawText (title, head, juce::Justification::centredLeft);
-    g.setColour (theme::textFaint);
-    g.setFont (theme::font (11.5f));
-    g.drawText ("Click: add band.  Drag: frequency / gain.  Wheel: Q.  Double-click / right-click a point: remove, type.  "
-                "Ctrl+Z / Ctrl+Y: undo / redo.  Background: live spectrum after the EQ (dBFS on the right).",
-                head.withTrimmedLeft (260).withTrimmedRight (120), juce::Justification::centredLeft);
 }
 
 void EqEditor::resized()
@@ -2312,16 +2924,47 @@ void EqEditor::resized()
     auto r = getLocalBounds().reduced (14, 0);
     auto head = r.removeFromTop (44);
     onToggle.setBounds (head.removeFromRight (96).withSizeKeepingCentre (96, 26));
-    // All bands in one row on wide windows, otherwise two rows of four.
-    const int perRow = r.getWidth() / ParamEq::kBands >= 210 ? ParamEq::kBands : ParamEq::kBands / 2;
-    const int rows = ParamEq::kBands / perRow;
-    const int rowH = juce::jlimit (150, 220, r.getHeight() / (rows == 1 ? 3 : 4));
+    head.removeFromRight (8);
+    menu.setBounds (head.removeFromRight (90).withSizeKeepingCentre (90, 26));
+    head.removeFromRight (10);
+    info.setBounds (head.removeFromRight (InfoButton::kSize).withSizeKeepingCentre (InfoButton::kSize, InfoButton::kSize));
+    layoutBands();
+}
+
+void EqEditor::layoutBands()
+{
+    // Only the bands in use get a column (16 would not fit), plus one "+ Add band" column while a band is free.
+    // As many side by side as fit (at most 8), further rows below; the curve takes the rest. They glide there.
+    auto r = getLocalBounds().reduced (14, 0).withTrimmedTop (44);
+    std::vector<BandColumn*> shown;
+    bool addShown = false;
+    for (auto& b : bands)
+    {
+        const bool use = b->inUse();
+        const bool show = use || ! addShown;
+        if (! use && show) addShown = true;
+        if (show) shown.push_back (b.get());
+        else { animator.forget (*b); b->setVisible (false); }
+    }
+    const int n = juce::jmax (1, (int) shown.size());
+    const int fullRow = juce::jlimit (1, 8, r.getWidth() / 190);
+    const int perRow = juce::jmin (fullRow, n);
+    const int rows = (n + perRow - 1) / perRow;
+    const int rowH = juce::jlimit (140, 230, r.getHeight() / (rows + 2));
     auto bottom = r.removeFromBottom (rowH * rows + 10).withTrimmedBottom (10);
     r.removeFromBottom (8);
-    graph.setBounds (r);
-    const int w = bottom.getWidth() / perRow;
-    for (int k = 0; k < (int) bands.size(); ++k)
-        bands[(size_t) k]->setBounds (bottom.getX() + (k % perRow) * w, bottom.getY() + (k / perRow) * rowH, w, rowH);
+    animator.moveTo (graph, r);
+    // Columns keep the width they would have in a full row, so they do not change size as bands come and go.
+    const int w = bottom.getWidth() / fullRow;
+    for (int k = 0; k < (int) shown.size(); ++k)
+    {
+        auto* c = shown[(size_t) k];
+        const int inRow = juce::jmin (perRow, n - (k / perRow) * perRow);
+        const int x0 = bottom.getX() + (bottom.getWidth() - inRow * w) / 2;   // a row centred
+        const juce::Rectangle<int> target (x0 + (k % perRow) * w, bottom.getY() + (k / perRow) * rowH, w, rowH);
+        if (! c->isVisible() || c->getBounds().isEmpty()) { animator.place (*c, target); c->setVisible (true); }
+        else animator.moveTo (*c, target);
+    }
 }
 
 //==============================================================================
@@ -2333,12 +2976,40 @@ void Inspector::showChannel (int sel)
     if (sel == current && content != nullptr) return;
     current = sel;
     auto scan = [this] { if (onScanRequested) onScanRequested(); };
+    bypass.reset();
     if (sel == kRecorderSelect) content = std::make_unique<RecorderDetail> (ctx);
-    else if (sel < kMaxInputs)  content = std::make_unique<InputDetail> (ctx, sel, scan);
-    else                        content = std::make_unique<BusDetail> (ctx, sel - kMaxInputs, scan);
+    else
+    {
+        content = std::make_unique<FxRack> (ctx, sel, scan);
+        auto& p = sel < kMaxInputs ? *ctx.engine.inputs[(size_t) sel].fxBypass : *ctx.engine.buses[(size_t) (sel - kMaxInputs)].fxBypass;
+        bypass = std::make_unique<Toggle> (ctx, p, "BYPASS", theme::mute);
+        bypass->setTooltip ("Bypass the whole effect chain of this channel (the blocks are dimmed meanwhile)");
+        addAndMakeVisible (*bypass);
+    }
     addAndMakeVisible (*content);
     resized();
     repaint();
+}
+
+juce::String Inspector::shownName() const
+{
+    if (current < 0 || current >= kRecorderSelect) return {};
+    return current < kMaxInputs ? ctx.engine.inputs[(size_t) current].name : ctx.engine.buses[(size_t) (current - kMaxInputs)].name;
+}
+
+void Inspector::layoutHeader()
+{
+    if (bypass == nullptr) return;
+    // Right after the channel's name (it can be renamed, so this follows it).
+    auto title = getLocalBounds().reduced (14, 8).removeFromTop (20);
+    const int nameW = juce::jmin (300, juce::GlyphArrangement::getStringWidthInt (theme::font (13.0f, true), shownName()));
+    bypass->setBounds (title.getX() + codeWidth() + nameW + 14, title.getY(), 74, title.getHeight());
+}
+
+int Inspector::codeWidth() const
+{
+    // The channel's code ("IN 3", "A2"), then the name right after it.
+    return juce::GlyphArrangement::getStringWidthInt (theme::font (13.0f, true), channelCode (current)) + 8;
 }
 
 void Inspector::paint (juce::Graphics& g)
@@ -2361,21 +3032,22 @@ void Inspector::paint (juce::Graphics& g)
     const auto name = isBus ? ctx.engine.buses[(size_t) idx].name : ctx.engine.inputs[(size_t) idx].name;
     g.setColour (colour);
     g.setFont (theme::font (13.0f, true));
-    const auto code = isBus ? busCode (idx) : "IN " + juce::String (idx + 1);
-    g.drawText (code, title.removeFromLeft (50), juce::Justification::centredLeft);
+    g.drawText (channelCode (current), title.removeFromLeft (codeWidth()), juce::Justification::centredLeft);
     g.setColour (theme::text);
     g.drawText (name, title.removeFromLeft (300), juce::Justification::centredLeft);
 }
 
 void Inspector::resized()
 {
+    layoutHeader();
     if (content != nullptr)
         content->setBounds (getLocalBounds().reduced (8, 6).withTrimmedTop (24));
 }
 
 void Inspector::updateMeters()
 {
-    if (auto* d = dynamic_cast<InputDetail*> (content.get()))
+    layoutHeader();
+    if (auto* d = dynamic_cast<FxRack*> (content.get()))
         d->updateMeters();
     else if (auto* rd = dynamic_cast<RecorderDetail*> (content.get()))
         rd->updateMeters();

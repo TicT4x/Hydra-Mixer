@@ -8,7 +8,8 @@ namespace hydra
     Registered as a Task Scheduler task (logon trigger, no delay, high process priority, no time limit),
     which starts earlier than the "Run" registry key: Windows delays Run entries and starts them with
     normal priority after the desktop is up. If the task cannot be created, the Run key is used instead.
-    The app is started with kArgument so it knows it was started with Windows. Message thread. */
+    The app is started with kArgument so it knows it was started with Windows. Each call runs schtasks.exe and
+    waits for it (up to seconds on a busy system): call from a background thread, not the message thread. */
 namespace Autostart
 {
     constexpr const char* kArgument = "--autostart";

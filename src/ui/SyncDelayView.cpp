@@ -22,7 +22,7 @@ juce::String titleOf (const Engine& e, int ch)
     }
     const int b = ch - kMaxInputs;
     const auto& n = e.buses[(size_t) b].name;
-    return n.isEmpty() || n == busCode (b) ? busCode (b) : busCode (b) + "  " + n;
+    return n.isEmpty() || n == busLabel (b) ? busLabel (b) : busLabel (b) + "  " + n;
 }
 
 const IoTarget& ioOf (const Engine& e, int ch)
@@ -247,7 +247,17 @@ private:
 class SyncDelayView::Content final : public juce::Component
 {
 public:
-    explicit Content (UiContext& c) : ctx (c) {}
+    explicit Content (UiContext& c) : ctx (c)
+    {
+        addAndMakeVisible (info);
+        info.setText ("Sync Delay\nDevices have different latencies, so e.g. two microphones on two interfaces reach the mix at "
+                      "slightly different times. Switch on Auto sync for the channels that belong together: Hydra delays the "
+                      "faster ones so all of them line up with the slowest, following the live latency.\n\n"
+                      "A manual delay is added on top. Hover a row to see where its latency comes from.");
+    }
+
+    static constexpr const char* kIntroText = "Line up channels that belong together";
+    InfoButton info;
 
     struct Section
     {
@@ -300,7 +310,7 @@ public:
         add ("Virtual Outputs", theme::accentVirt, Engine::Group::virtBuses, virt);
     }
 
-    static constexpr int kIntroH = 70;
+    static constexpr int kIntroH = 40;
 
     int neededHeight() const
     {
@@ -357,11 +367,7 @@ public:
         auto intro = juce::Rectangle<int> (kPad, 6, getWidth() - 2 * kPad, kIntroH - 14);
         g.setColour (theme::textDim);
         g.setFont (theme::font (12.5f));
-        g.drawFittedText ("Devices have different latencies, so e.g. two microphones on two interfaces reach the mix at slightly "
-                          "different times. Switch on Auto sync for the channels that belong together: Hydra delays the faster "
-                          "ones so all of them line up with the slowest, following the live latency. A manual delay is added on "
-                          "top. Hover a row to see where its latency comes from.",
-                          intro, juce::Justification::topLeft, 3, 0.9f);
+        g.drawText (kIntroText, intro, juce::Justification::centredLeft, true);
 
         for (auto& s : sections)
         {
@@ -405,6 +411,8 @@ public:
 
     void resized() override
     {
+        info.setBounds (kPad + juce::GlyphArrangement::getStringWidthInt (theme::font (12.5f), kIntroText) + 8,
+                        6 + (kIntroH - 14 - InfoButton::kSize) / 2, InfoButton::kSize, InfoButton::kSize);
         int y = kIntroH;
         for (auto& s : sections)
         {

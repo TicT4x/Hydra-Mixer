@@ -1,6 +1,5 @@
 #pragma once
-#include "Theme.h"
-#include "Dialog.h"
+#include "Controls.h"
 #include "engine/Engine.h"
 #include "midi/MidiMapper.h"
 #include "midi/Hotkeys.h"
@@ -19,7 +18,7 @@ constexpr int busSelectIndex (int bus) noexcept { return kMaxInputs + bus; }
 /** "IN 3", "A2", "B1" for a selection index. */
 inline juce::String channelCode (int selectIndex)
 {
-    return selectIndex < kMaxInputs ? "IN " + juce::String (selectIndex + 1) : busCode (selectIndex - kMaxInputs);
+    return selectIndex < kMaxInputs ? "IN " + juce::String (selectIndex + 1) : busLabel (selectIndex - kMaxInputs);
 }
 
 /** Shared UI state handed to every widget. */
@@ -32,6 +31,8 @@ struct UiContext
     UndoHistory* undo = nullptr;   // undo / redo of all parameter changes (Ctrl+Z / Ctrl+Y)
     bool learnMode = false;
     std::function<void()> learnModeChanged;
+    /** The window glides to a new size: layouts follow directly instead of animating on their own. */
+    bool instantLayout = false;
 
     /** Selected channel for the inspector (see busSelectIndex / kRecorderSelect). */
     int selected = 0;
@@ -41,13 +42,14 @@ struct UiContext
     std::function<void (Param&)> armHotkey;
 
     /** Opens a floating sub-panel (advanced settings) above the inspector. */
-    std::function<void (std::unique_ptr<juce::Component>, juce::String title, juce::Colour)> openPanel;
+    std::function<void (std::unique_ptr<juce::Component>, juce::String title)> openPanel;
 
-    /** Opens the large EQ editor window for a channel (same index scheme as 'selected'). */
-    std::function<void (int)> openEqWindow;
+    /** Opens the large EQ editor window for EQ instance k of a channel (same index scheme as 'selected'). */
+    std::function<void (int, int)> openEqWindow;
 
     /** Opens the device selection window of a channel (same index scheme): input source / bus output. */
     std::function<void (int)> openDevicePicker;
+    std::function<void()> openCableManager;   // Virtual Audio Cable: add / edit / remove cables
 
     /** Application preferences in session->prefs were changed (tray icon etc.). */
     std::function<void()> prefsChanged;
@@ -61,8 +63,19 @@ struct UiContext
     /** Adds a channel: 0 = input, 1 = hardware output (A), 2 = virtual output (B). */
     std::function<void (int)> addChannel;
 
-    /** Opens Tools > Room Measurement. */
-    std::function<void()> openRoomMeasurement;
+    /** Copies the channel to the clipboard and removes it (no question: it can be pasted back). */
+    std::function<void (int)> cutChannel;
+    /** Adds a copy of the channel (settings, effect chain, name, device) right after it. */
+    std::function<void (int)> duplicateChannel;
+    /** Pastes a copied channel as a new channel of the group (0 inputs, 1 hardware, 2 virtual outputs). */
+    std::function<void (int)> pasteNewChannel;
+
+    /** Opens Tools > Room Measurement; with a hardware output (selection index) it is preset as the speaker
+        and as the channel the correction goes to (-1 = keep the window's choice). */
+    std::function<void (int)> openRoomMeasurement;
+
+    /** Opens the Correction window of a hardware output (selection index). */
+    std::function<void (int)> openCorrectionWindow;
 
     /** Enters Change Order mode (drag the strips into a new order). */
     std::function<void()> changeOrder;
@@ -78,6 +91,8 @@ struct UiContext
         Returns true if the key was one of them; message describes what was undone / redone. */
     bool handleUndoKey (const juce::KeyPress& key, juce::String* message = nullptr);
 };
+
+
 
 //==============================================================================
 /** Parses typed text ("-6", "2.5k", "120 ms", "-inf") into a parameter value. Returns false if unusable. */
@@ -103,6 +118,14 @@ public:
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
+    /** Tooltip made when it is shown (names that change, icons::routeTip); the keyboard shortcut is appended. */
+    std::function<juce::String()> tooltipText;
+    juce::String getTooltip() override;
+
+    /** The mouse wheel scrolled a pane of channels (strips, effect rack): controls under the mouse leave the
+        wheel to the pane for a moment (see mouseWheelMove). */
+    static void notePaneScrolled();
+
 protected:
     virtual void press (const juce::MouseEvent&) {}
     virtual void drag (const juce::MouseEvent&) {}
@@ -125,6 +148,16 @@ private:
     std::unique_ptr<juce::TextEditor> valueEditor;
     juce::Rectangle<int> valueEditorArea;
     juce::String baseTooltip;
+    /** Where the mouse really moved onto this control (content scrolled under a resting mouse does not count). */
+    struct HoverClock final : juce::MouseListener
+    {
+        void mouseEnter (const juce::MouseEvent& e) override { track (e); }
+        void mouseMove (const juce::MouseEvent& e) override  { track (e); }
+        void mouseExit (const juce::MouseEvent&) override    { since = 0.0; }
+        void track (const juce::MouseEvent& e);
+        double since = 0.0;   // ms (hi-res counter) of the first real movement inside; 0 = not yet
+    } hoverClock;
+    bool takesWheel (const juce::MouseEvent&);
     uint32_t seenVersion = 0, seenMapVersion = ~0u, seenHotkeyVersion = ~0u;
     bool armed = false, mapped = false, learnShown = false, swallowGesture = false;
 };
@@ -136,6 +169,8 @@ public:
     Fader (UiContext& c, Param& p, juce::Colour accent);
     void paint (juce::Graphics&) override;
     void pollParams() override;
+    /** Sideways fader (horizontal channel rows): low values at the left, the scale below the track. */
+    bool horizontal = false;
 
 private:
     void press (const juce::MouseEvent&) override;
@@ -143,6 +178,7 @@ private:
     float wheelStep() const override { return 0.01f; }
     juce::Rectangle<float> track() const;
     void frame (double timestamp);
+    void paintHorizontal (juce::Graphics&);
 
     juce::Colour accent;
     float dragStartNorm = 0;
@@ -161,11 +197,14 @@ public:
     void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
     void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
 
+    /** Label above the knob and the value always shown below it (click it to type a value). */
+    bool alwaysShowValue = false;
+
 private:
     void press (const juce::MouseEvent&) override;
     void drag (const juce::MouseEvent&) override;
     void release (const juce::MouseEvent&) override { dragging = false; repaint(); }
-    juce::Rectangle<int> valueArea() const { return getLocalBounds().removeFromBottom (14); }
+    juce::Rectangle<int> valueArea() const { return getLocalBounds().removeFromBottom (alwaysShowValue ? 16 : 14); }
 
     juce::String label;
     juce::Colour accent;
@@ -174,7 +213,7 @@ private:
 };
 
 //==============================================================================
-class Toggle final : public ParamControl
+class Toggle final : public ParamControl, private juce::Timer
 {
 public:
     /** Symbol drawn instead of the text (transport buttons). playPause shows pause while the parameter is on. */
@@ -182,15 +221,18 @@ public:
 
     Toggle (UiContext& c, Param& p, juce::String text, juce::Colour onColour, Icon icon = Icon::none);
     void paint (juce::Graphics&) override;
+    void pollParams() override;
     static void drawIcon (juce::Graphics&, Icon, bool on, juce::Rectangle<float> area, juce::Colour);
     void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
     void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
     void mouseDoubleClick (const juce::MouseEvent&) override {}
 
     juce::String text;
+    juce::String glyph;   // ui/ChannelIcons.h id: drawn instead of the text (routing buttons of buses with an icon)
     juce::Colour onColour;
     /** -1: on/off parameter. Otherwise one value of a choice parameter: lit while the parameter has this
         value, a click selects it (a row of such toggles works like radio buttons). */
+    bool soft = false;      // Deep theme: "on" is a strong tint with a frame and white text instead of a full colour (routing, LIM)
     int choiceValue = -1;
     Icon icon;
 
@@ -200,25 +242,31 @@ private:
         if (choiceValue >= 0) param.set ((float) choiceValue);
         else                  param.toggle();
     }
+    bool isLit() const { return choiceValue >= 0 ? juce::roundToInt (param.get()) == choiceValue : param.isOn(); }
+    void timerCallback() override;
     bool hover = false;
+    float shown = -1.0f;   // 0 = off .. 1 = on: glides for ~100 ms after a change (timer only runs meanwhile)
 };
 
 //==============================================================================
 /** On/off parameter shown as an oval switch with a label to its right. */
-class Switch final : public ParamControl
+class Switch final : public ParamControl, private juce::Timer
 {
 public:
     Switch (UiContext& c, Param& p, juce::String text, juce::Colour onColour);
     void paint (juce::Graphics&) override;
+    void pollParams() override;
     void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
     void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
     void mouseDoubleClick (const juce::MouseEvent&) override {}
 
 private:
     void press (const juce::MouseEvent&) override { param.toggle(); }
+    void timerCallback() override;
     juce::String text;
     juce::Colour onColour;
     bool hover = false;
+    float shown = -1.0f;   // see Toggle
 };
 
 //==============================================================================
@@ -285,6 +333,8 @@ public:
 
     void update (float dtSeconds);
     void paint (juce::Graphics&) override;
+    /** Bars from left to right (one above the other) instead of bottom to top. */
+    bool horizontal = false;
 
 private:
     static float toPos (float db) noexcept { return juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 66.0f); }
@@ -296,70 +346,4 @@ private:
     bool dimmed = false; // channel muted: level drawn grey
 };
 
-//==============================================================================
-/** Clickable text chip (source/output selectors, header buttons). */
-class Chip : public juce::Component, public juce::SettableTooltipClient
-{
-public:
-    Chip (juce::String t = {}, juce::Colour c = theme::textDim) : text (std::move (t)), colour (c) {}
-    std::function<void()> onClick;
-    juce::String text;
-    juce::Colour colour;
-    bool active = false, showArrow = true, centred = false;
-
-    /** Symbol drawn left of the text (or alone, centred, when the text is empty). */
-    enum class Icon { none, save, revert };
-    Icon icon = Icon::none;
-    static void drawIcon (juce::Graphics&, Icon, juce::Rectangle<float> area, juce::Colour);
-
-    /** Status dots left of the name (device problems): red = offline, yellow = dropouts or something that
-        needs attention. Problems of the same colour share one dot. The chip's tooltip starts with what the
-        dots mean (dropouts: how many and when). */
-    enum class Marker { attention, offline, dropouts };
-    struct Status { Marker kind; juce::String tip; };
-    /** Replaces the status dots; repaints only if they changed. */
-    void setStatus (std::vector<Status>);
-    const std::vector<Status>& getStatus() const noexcept { return status; }
-    static void drawMarker (juce::Graphics&, Marker, juce::Rectangle<float> area);
-
-    void paint (juce::Graphics&) override;
-    juce::String getTooltip() override;
-    void mouseUp (const juce::MouseEvent& e) override { if (e.mouseWasClicked() && onClick) onClick(); }
-    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
-    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
-
-protected:
-    bool hover = false;
-
-private:
-    std::vector<Status> status;
-    std::vector<juce::Rectangle<float>> markerAreas;   // where each status symbol was drawn
-};
-
-/** Chip with a trash-can icon (remove a plugin, delete a recording); turns red on hover, dimmed when disabled. */
-class TrashButton final : public Chip
-{
-public:
-    TrashButton() { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
-    void paint (juce::Graphics&) override;
-    static void drawIcon (juce::Graphics&, juce::Rectangle<float> area, juce::Colour);
-};
-
-//==============================================================================
-/** Round-cornered "+" button (add a channel, add a plugin). */
-class PlusButton final : public juce::Component, public juce::SettableTooltipClient
-{
-public:
-    explicit PlusButton (juce::Colour c = theme::textDim) : colour (c) { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
-    std::function<void()> onClick;
-    juce::Colour colour;
-
-    void paint (juce::Graphics&) override;
-    void mouseUp (const juce::MouseEvent& e) override { if (e.mouseWasClicked() && onClick) onClick(); }
-    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
-    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
-
-private:
-    bool hover = false;
-};
 } // namespace hydra

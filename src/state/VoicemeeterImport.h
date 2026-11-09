@@ -18,7 +18,8 @@ struct VoicemeeterImport
     /** applyDevices=false only reads and maps parameters (used by tests / dry runs). */
     static Result run (const juce::File& vmXml, Engine& engine, MidiMapper& midi, bool applyDevices = true);
 
-    /** Finds Voicemeeter settings files in the user's Documents folder (newest first). */
+    /** Finds Voicemeeter settings files in the user's Documents folder (newest first). Reads only the first bytes
+        of each XML and skips files that are only in the cloud (OneDrive). Any thread. */
     static juce::Array<juce::File> findCandidates();
 };
 } // namespace hydra

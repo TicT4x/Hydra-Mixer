@@ -79,6 +79,45 @@ std::unique_ptr<juce::AudioPluginInstance> PluginHost::create (const juce::Plugi
 }
 
 //==============================================================================
+namespace
+{
+const char* const kFxIds[]   = { "denoiser", "eq", "gate", "comp", "correction", "limiter", "phase" };
+const char* const kFxNames[] = { "Denoiser", "Equalizer", "Gate", "Compressor", "Correction", "Limiter", "Phase" };
+} // namespace
+
+juce::String fxId (Fx f)   { return f == Fx::plugin ? juce::String ("plugin") : juce::String (kFxIds[(int) f]); }
+juce::String fxName (Fx f) { return f == Fx::plugin ? juce::String ("Plugin") : juce::String (kFxNames[(int) f]); }
+Fx fxFromId (const juce::String& id)
+{
+    for (int i = 0; i < (int) Fx::numBuiltins; ++i)
+        if (id == kFxIds[i]) return (Fx) i;
+    return Fx::plugin;
+}
+
+//==============================================================================
+void PluginChain::changed() noexcept
+{
+    uint32_t mask = 0;
+    for (auto& s : slots)
+        if (! s->isPlugin()) mask |= 1u << ((int) s->builtin * kFxInstances + s->fxInstance);
+    builtinMask.store (mask, std::memory_order_relaxed);
+    version.fetch_add (1, std::memory_order_relaxed);
+}
+
+int PluginChain::indexOf (Fx f, int k) const noexcept
+{
+    for (size_t i = 0; i < slots.size(); ++i)
+        if (slots[i]->builtin == f && slots[i]->fxInstance == k) return (int) i;
+    return -1;
+}
+
+int PluginChain::numPlugins() const noexcept
+{
+    int n = 0;
+    for (auto& s : slots) n += s->isPlugin() ? 1 : 0;
+    return n;
+}
+
 void PluginChain::preparePlugin (juce::AudioPluginInstance& p)
 {
     // Prefer a plain stereo in / stereo out layout, disable sidechains.
@@ -104,6 +143,7 @@ void PluginChain::prepare (double sampleRate, int maxBlock)
     int maxCh = 2;
     for (auto& s : slots)
     {
+        if (! s->isPlugin()) continue;
         if (prepared) s->instance->releaseResources();
         preparePlugin (*s->instance);
         maxCh = juce::jmax (maxCh, s->instance->getTotalNumInputChannels(), s->instance->getTotalNumOutputChannels());
@@ -119,55 +159,48 @@ void PluginChain::release()
     const juce::SpinLock::ScopedLockType sl (lock);
     if (prepared)
         for (auto& s : slots)
-            s->instance->releaseResources();
+            if (s->isPlugin()) s->instance->releaseResources();
     prepared = false;
 }
 
-void PluginChain::process (float* l, float* r, int n, bool timed) noexcept
+void PluginChain::processPlugin (PluginSlot& s, float* l, float* r, int n, bool timed) noexcept
 {
-    const juce::SpinLock::ScopedTryLockType tl (lock);
-    if (! tl.isLocked() || ! prepared || slots.empty())
+    if (s.bypassed.load (std::memory_order_relaxed))
         return;
 
-    for (auto& s : slots)
+    auto& p = *s.instance;
+    const int ins = p.getTotalNumInputChannels();
+    const int outs = p.getTotalNumOutputChannels();
+    const int chans = juce::jmax (ins, outs, 1);
+    if (chans > work.getNumChannels() || n > work.getNumSamples())
+        return; // layout changed behind our back; skip rather than allocate
+
+    juce::AudioBuffer<float> buf (work.getArrayOfWritePointers(), chans, n);
+    if (ins == 1)
     {
-        if (s->bypassed.load (std::memory_order_relaxed))
-            continue;
-
-        auto& p = *s->instance;
-        const int ins = p.getTotalNumInputChannels();
-        const int outs = p.getTotalNumOutputChannels();
-        const int chans = juce::jmax (ins, outs, 1);
-        if (chans > work.getNumChannels() || n > work.getNumSamples())
-            continue; // layout changed behind our back; skip rather than allocate
-
-        juce::AudioBuffer<float> buf (work.getArrayOfWritePointers(), chans, n);
-        if (ins == 1)
-        {
-            float* d = buf.getWritePointer (0);
-            for (int i = 0; i < n; ++i) d[i] = 0.5f * (l[i] + r[i]);
-        }
-        else
-        {
-            buf.copyFrom (0, 0, l, n);
-            if (chans > 1) buf.copyFrom (1, 0, r, n);
-        }
-        for (int c = juce::jmax (2, ins); c < chans; ++c)
-            buf.clear (c, 0, n);
-
-        midi.clear();
-        const auto t0 = timed ? juce::Time::getHighResolutionTicks() : 0;
-        p.processBlock (buf, midi);
-        if (timed)
-            s->dspTicks.store (s->dspTicks.load (std::memory_order_relaxed) + (uint64_t) juce::jmax ((juce::int64) 0, juce::Time::getHighResolutionTicks() - t0),
-                               std::memory_order_relaxed);
-
-        std::memcpy (l, buf.getReadPointer (0), (size_t) n * sizeof (float));
-        std::memcpy (r, buf.getReadPointer (outs > 1 ? 1 : 0), (size_t) n * sizeof (float));
+        float* d = buf.getWritePointer (0);
+        for (int i = 0; i < n; ++i) d[i] = 0.5f * (l[i] + r[i]);
     }
+    else
+    {
+        buf.copyFrom (0, 0, l, n);
+        if (chans > 1) buf.copyFrom (1, 0, r, n);
+    }
+    for (int c = juce::jmax (2, ins); c < chans; ++c)
+        buf.clear (c, 0, n);
+
+    midi.clear();
+    const auto t0 = timed ? juce::Time::getHighResolutionTicks() : 0;
+    p.processBlock (buf, midi);
+    if (timed)
+        s.dspTicks.store (s.dspTicks.load (std::memory_order_relaxed) + (uint64_t) juce::jmax ((juce::int64) 0, juce::Time::getHighResolutionTicks() - t0),
+                          std::memory_order_relaxed);
+
+    std::memcpy (l, buf.getReadPointer (0), (size_t) n * sizeof (float));
+    std::memcpy (r, buf.getReadPointer (outs > 1 ? 1 : 0), (size_t) n * sizeof (float));
 }
 
-void PluginChain::add (std::unique_ptr<juce::AudioPluginInstance> p, const juce::PluginDescription& d)
+void PluginChain::add (std::unique_ptr<juce::AudioPluginInstance> p, const juce::PluginDescription& d, int index)
 {
     auto slot = std::make_unique<PluginSlot>();
     preparePlugin (*p);
@@ -182,7 +215,19 @@ void PluginChain::add (std::unique_ptr<juce::AudioPluginInstance> p, const juce:
     const juce::SpinLock::ScopedLockType sl (lock);
     if (bigger.getNumChannels() > 0)
         std::swap (work, bigger);
-    slots.push_back (std::move (slot));
+    slots.insert (juce::isPositiveAndBelow (index, (int) slots.size()) ? slots.begin() + index : slots.end(), std::move (slot));
+    changed();
+}
+
+void PluginChain::addBuiltin (Fx f, int k, int index)
+{
+    if (f == Fx::plugin || ! juce::isPositiveAndBelow (k, kFxInstances) || indexOf (f, k) >= 0) return;
+    auto slot = std::make_unique<PluginSlot>();
+    slot->builtin = f;
+    slot->fxInstance = k;
+    const juce::SpinLock::ScopedLockType sl (lock);
+    slots.insert (juce::isPositiveAndBelow (index, (int) slots.size()) ? slots.begin() + index : slots.end(), std::move (slot));
+    changed();
 }
 
 void PluginChain::remove (int index)
@@ -193,9 +238,10 @@ void PluginChain::remove (int index)
         if (! juce::isPositiveAndBelow (index, (int) slots.size())) return;
         dead = std::move (slots[(size_t) index]);
         slots.erase (slots.begin() + index);
+        changed();
     }
     dead->editorWindow.reset();
-    dead->instance->releaseResources();
+    if (dead->instance != nullptr) dead->instance->releaseResources();
 }
 
 void PluginChain::move (int from, int to)
@@ -206,6 +252,7 @@ void PluginChain::move (int from, int to)
     auto s = std::move (slots[(size_t) from]);
     slots.erase (slots.begin() + from);
     slots.insert (slots.begin() + to, std::move (s));
+    changed();
 }
 
 std::vector<std::unique_ptr<PluginSlot>> PluginChain::takeAll()
@@ -213,6 +260,7 @@ std::vector<std::unique_ptr<PluginSlot>> PluginChain::takeAll()
     std::vector<std::unique_ptr<PluginSlot>> out;
     const juce::SpinLock::ScopedLockType sl (lock);
     std::swap (out, slots);
+    changed();
     return out;
 }
 
@@ -220,7 +268,8 @@ void PluginChain::putAll (std::vector<std::unique_ptr<PluginSlot>> plugins)
 {
     int chans = 8;
     for (auto& s : plugins)
-        chans = juce::jmax (chans, s->instance->getTotalNumInputChannels(), s->instance->getTotalNumOutputChannels());
+        if (s->isPlugin())
+            chans = juce::jmax (chans, s->instance->getTotalNumInputChannels(), s->instance->getTotalNumOutputChannels());
     juce::AudioBuffer<float> bigger;
     if (chans > work.getNumChannels() || work.getNumSamples() < block)
         bigger.setSize (chans, block, false, true, false);
@@ -230,6 +279,7 @@ void PluginChain::putAll (std::vector<std::unique_ptr<PluginSlot>> plugins)
         std::swap (work, bigger);
     for (auto& s : plugins)
         slots.push_back (std::move (s));
+    changed();
 }
 
 void PluginChain::clear()
@@ -242,24 +292,61 @@ int PluginChain::getTotalLatency() const
 {
     int total = 0;
     for (auto& s : slots)
-        if (! s->bypassed) total += s->instance->getLatencySamples();
+        if (s->isPlugin() && ! s->bypassed) total += s->instance->getLatencySamples();
     return total;
+}
+
+std::unique_ptr<juce::XmlElement> PluginChain::slotToXml (int index) const
+{
+    auto* s = getSlot (index);
+    if (s == nullptr) return nullptr;
+    auto e = std::make_unique<juce::XmlElement> ("SLOT");
+    if (! s->isPlugin())
+    {
+        e->setAttribute ("builtin", fxId (s->builtin));
+        if (s->fxInstance > 0) e->setAttribute ("instance", s->fxInstance);
+        return e;
+    }
+    e->setAttribute ("bypass", s->bypassed.load());
+    if (auto d = s->description.createXml())
+        e->addChildElement (d.release());
+    juce::MemoryBlock state;
+    s->instance->getStateInformation (state);
+    e->createNewChildElement ("STATE")->addTextElement (state.toBase64Encoding());
+    return e;
 }
 
 std::unique_ptr<juce::XmlElement> PluginChain::toXml() const
 {
     auto xml = std::make_unique<juce::XmlElement> ("CHAIN");
-    for (auto& s : slots)
-    {
-        auto* e = xml->createNewChildElement ("SLOT");
-        e->setAttribute ("bypass", s->bypassed.load());
-        if (auto d = s->description.createXml())
-            e->addChildElement (d.release());
-        juce::MemoryBlock state;
-        s->instance->getStateInformation (state);
-        e->createNewChildElement ("STATE")->addTextElement (state.toBase64Encoding());
-    }
+    for (int i = 0; i < size(); ++i)
+        xml->addChildElement (slotToXml (i).release());
     return xml;
+}
+
+bool PluginChain::insertPluginFromXml (const juce::XmlElement& e, PluginHost& host, int index)
+{
+    juce::PluginDescription d;
+    auto* de = e.getChildByName ("PLUGIN");
+    if (de == nullptr || ! d.loadFromXml (*de))
+        return false;
+
+    juce::String err;
+    auto inst = host.create (d, sr, block, err);
+    if (inst == nullptr)
+        return false;
+
+    if (auto* st = e.getChildByName ("STATE"))
+    {
+        juce::MemoryBlock state;
+        if (state.fromBase64Encoding (st->getAllSubText()))
+            inst->setStateInformation (state.getData(), (int) state.getSize());
+    }
+
+    const int at = juce::isPositiveAndBelow (index, size()) ? index : size();
+    add (std::move (inst), d, at);
+    slots[(size_t) at]->bypassed = e.getBoolAttribute ("bypass");
+    return true;
 }
 
 void PluginChain::fromXml (const juce::XmlElement& xml, PluginHost& host)
@@ -267,25 +354,10 @@ void PluginChain::fromXml (const juce::XmlElement& xml, PluginHost& host)
     clear();
     for (auto* e : xml.getChildWithTagNameIterator ("SLOT"))
     {
-        juce::PluginDescription d;
-        auto* de = e->getChildByName ("PLUGIN");
-        if (de == nullptr || ! d.loadFromXml (*de))
-            continue;
-
-        juce::String err;
-        auto inst = host.create (d, sr, block, err);
-        if (inst == nullptr)
-            continue;
-
-        if (auto* st = e->getChildByName ("STATE"))
-        {
-            juce::MemoryBlock state;
-            if (state.fromBase64Encoding (st->getAllSubText()))
-                inst->setStateInformation (state.getData(), (int) state.getSize());
-        }
-
-        add (std::move (inst), d);
-        slots.back()->bypassed = e->getBoolAttribute ("bypass");
+        if (e->hasAttribute ("builtin"))
+            addBuiltin (fxFromId (e->getStringAttribute ("builtin")), e->getIntAttribute ("instance", 0));
+        else
+            insertPluginFromXml (*e, host);
     }
 }
 } // namespace hydra

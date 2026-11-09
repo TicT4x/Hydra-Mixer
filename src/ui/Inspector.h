@@ -5,43 +5,6 @@ namespace juce::dsp { class FFT; }
 
 namespace hydra
 {
-/** Horizontal list of plugin "cards" for a chain: bypass / edit / remove per card, reorder by dragging
-    a card, "+" after the last card adds a plugin (an empty chain shows a labelled add button). */
-class PluginChainView final : public juce::Component
-{
-public:
-    PluginChainView (UiContext& c, PluginChain& chain, juce::Colour accent);
-    void refresh();
-    void paint (juce::Graphics&) override;
-    void resized() override;
-    /** Width that shows every card at full size plus the "+" (the effect rack scrolls instead). */
-    int getIdealWidth() const;
-
-    std::function<void()> onScanRequested;
-    std::function<void()> onChainChanged;
-
-private:
-    struct Card;
-    void showAddMenu (juce::Component& target);
-    void openEditor (int index);
-    void layoutCards();
-    void cardDragged (int index, int x);   // x: wanted left edge of the card in the row
-    void cardDropped (int index);
-
-    static constexpr int kMaxCardWidth = 190, kMinCardWidth = 130, kCardGap = 6, kPlusWidth = 40;
-    int cardWidth = kMaxCardWidth;   // cards shrink so the "+" stays visible, then the row scrolls
-
-    UiContext& ctx;
-    PluginChain& chain;
-    juce::Colour accent;
-    juce::Viewport viewport;
-    juce::Component row;                      // cards + plus, scrolls when the chain is long
-    std::vector<std::unique_ptr<Card>> cards;
-    int dragIndex = -1, dropIndex = -1;
-    Chip addButton { "+  Add VST3 Plugin", theme::textDim };
-    PlusButton plusCard;
-};
-
 //==============================================================================
 /** Interactive response curve of an 8-band parametric EQ (inputs and buses).
     Only bands that are switched on appear as points. Clicking an empty spot adds a band there,
@@ -110,30 +73,36 @@ private:
 };
 
 //==============================================================================
-/** Large EQ editor (own window): big curve with live spectrum plus the controls of all eight bands. */
+/** Large EQ editor (own window): big curve with live spectrum plus the controls of the bands in use
+    (and one "+ Add band" column while a band is free). */
 class EqEditor final : public juce::Component
 {
 public:
-    EqEditor (UiContext& c, int selectIndex);
+    EqEditor (UiContext& c, int selectIndex, int instance = 0);
     ~EqEditor() override;
     void paint (juce::Graphics&) override;
     void resized() override;
     int getSelectIndex() const noexcept { return selectIndex; }
+    int getInstance() const noexcept { return instance; }
 
 private:
     struct BandColumn;
     void selectBand (int b);
+    /** Places the columns of the bands in use (rows as needed); called when a band is added or removed. */
+    void layoutBands();
     void analyse (double timestamp);   // spectrum analyzer, once per display frame (max ~60 Hz)
 
     static constexpr int kFftOrder = 12, kFftSize = 1 << kFftOrder;
 
     UiContext& ctx;
-    int selectIndex;
+    int selectIndex, instance;
     ParamEq& eq;
     juce::Colour colour;
     juce::String title;
     Toggle onToggle;
     EqGraph graph;
+    Chip menu { "EQ  ...", theme::text };
+    InfoButton info;
     std::vector<std::unique_ptr<BandColumn>> bands;
 
     SpectrumTap& tap;
@@ -143,6 +112,7 @@ private:
     int historyPos = 0;
     double lastFrame = 0.0;
     juce::VBlankAttachment vblank { this, [this] (double t) { analyse (t); } };
+    LayoutAnimator animator { *this, 0.07 };   // the bands rearrange smoothly when the window size changes
 };
 
 //==============================================================================
@@ -162,8 +132,13 @@ public:
     std::function<void()> onScanRequested;
 
 private:
+    juce::String shownName() const;
+    void layoutHeader();   // bypass switch right after the channel name
+    int codeWidth() const; // width of the channel's code ("IN 3") with the gap to its name
+
     UiContext& ctx;
     int current = -1;
     std::unique_ptr<juce::Component> content;
+    std::unique_ptr<Toggle> bypass;
 };
 } // namespace hydra

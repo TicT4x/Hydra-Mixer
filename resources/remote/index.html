@@ -1,0 +1,814 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0d0f13">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Hydra">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon.png">
+<title>Hydra Remote</title>
+<!-- Hydra Remote: web app served by Hydra Mixer (src/remote). Protocol: see src/remote/RemoteControl.h.
+     #demo: try it without Hydra (fake channels).  ?embed=1: inside the Android app (no own header / navigation,
+     the app switches views with hydra.setView() and gets the status through window.HydraApp). -->
+<style>
+:root {
+  --bg: #0d0f13; --panel: #151920; --panel2: #1b2029; --raised: #232935; --outline: #2a313e;
+  --text: #e8ebf1; --dim: #8b94a5; --faint: #5a6273;
+  --in: #35d0f4; --hw: #8d6cff; --virt: #ff6aa6; --mute: #ff4d5e; --solo: #ffc23f; --ok: #3ee08f;
+  --st: env(safe-area-inset-top, 0px); --sb: env(safe-area-inset-bottom, 0px);
+  --sl: env(safe-area-inset-left, 0px); --sr: env(safe-area-inset-right, 0px);
+  --r: 6px;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+[hidden] { display: none !important; }
+html, body { margin: 0; background: var(--bg); color: var(--text); height: 100%; }
+body { font: 14px/1.3 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; overscroll-behavior: none;
+       -webkit-user-select: none; user-select: none; }
+button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; }
+.ic { width: 18px; height: 18px; flex: none; }
+/* global (not ".ic .l"): the symbols reached through <use> are not descendants of .ic */
+.l { fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.f { fill: currentColor; stroke: none; }
+
+/* ---- chrome: header (portrait), rail (landscape), tabs -------------------------------------------- */
+header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px;
+         padding: calc(10px + var(--st)) 16px 10px; background: var(--panel); border-bottom: 1px solid var(--outline); }
+.logo { width: 24px; height: 23px; flex: none; }
+.title { flex: 1; min-width: 0; }
+.title b { display: block; font-size: 15px; font-weight: 600; }
+.title span { display: block; font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
+.dot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.dsp { font: 600 11px/1 "Cascadia Mono", ui-monospace, Consolas, monospace; color: var(--dim); padding: 5px 7px;
+       border-radius: 5px; background: var(--panel2); border: 1px solid var(--outline); }
+
+nav { position: fixed; z-index: 5; display: flex; background: var(--panel); border-color: var(--outline); }
+nav button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+             color: var(--dim); font-size: 11px; font-weight: 600; border-radius: 10px; }
+nav button .ic { width: 22px; height: 22px; }
+nav button.on { color: var(--text); background: var(--raised); }
+nav button.on .ic { color: var(--in); }
+body.port nav { left: 0; right: 0; bottom: 0; gap: 6px; padding: 6px 10px calc(6px + var(--sb)); border-top: 1px solid var(--outline); justify-content: center; }
+body.port nav button { flex: 1; max-width: 140px; height: 52px; }
+body.land nav { left: 0; top: 0; bottom: 0; width: calc(76px + var(--sl)); flex-direction: column; gap: 6px;
+                padding: calc(12px + var(--st)) 8px calc(12px + var(--sb)) calc(8px + var(--sl)); border-right: 1px solid var(--outline); align-items: stretch; }
+body.land nav button { height: 58px; }
+nav .grow { flex: 1; }
+nav .brand { display: none; }
+body.land nav .brand { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 2px 0 10px; }
+body.land nav .brand .logo { width: 30px; height: 29px; }
+nav .stat { display: none; }
+body.land nav .stat { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+body.land header { display: none; }
+body.embed header, body.embed nav { display: none !important; }
+.only-port, .only-land { display: none; }
+body.port .only-port, body.land .only-land { display: flex; }
+
+main { padding: 12px 16px calc(84px + var(--sb)); }
+body.land main { margin-left: calc(76px + var(--sl)); padding: calc(10px + var(--st)) calc(10px + var(--sr)) calc(10px + var(--sb)) 10px; height: 100%; }
+body.embed main { padding: 10px 12px 16px; margin-left: 0; }
+body.embed.land main { padding: 8px; }
+
+/* ---- portrait: channel rows ------------------------------------------------------------------------ */
+h2 { font-size: 11px; letter-spacing: .09em; color: var(--dim); font-weight: 700; margin: 8px 2px 8px;
+     text-transform: uppercase; display: flex; align-items: center; gap: 8px; }
+h2 i { flex: 1; height: 1px; background: var(--outline); }
+.list { display: grid; gap: 8px; }
+.list > * { min-width: 0; }
+@media (min-width: 640px) { body.port .list { grid-template-columns: 1fr 1fr; } }
+.card { position: relative; background: var(--panel); border: 1px solid var(--outline); border-radius: var(--r); overflow: hidden; }
+.card::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--c, var(--in)); }
+.row { padding: 10px 10px 10px 12px; }
+.line { display: flex; align-items: center; gap: 6px; }
+.name { flex: 1; min-width: 0; }
+.name b { display: block; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.name span { display: block; font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.badge { flex: none; min-width: 32px; height: 22px; padding: 0 6px; border-radius: 5px; display: grid; place-items: center;
+         font-size: 11px; font-weight: 700; color: var(--bg); background: var(--c); }
+.badge .ic { width: 16px; height: 16px; }
+
+/* Hydra's strip buttons: dark, coloured when on */
+.sw { flex: none; height: 30px; min-width: 40px; padding: 0 8px; border-radius: 5px; border: 1px solid var(--outline);
+      background: var(--panel2); color: var(--dim); font-size: 11px; font-weight: 700; letter-spacing: .04em;
+      display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+.sw.on { color: var(--bg); background: var(--c, var(--in)); border-color: transparent; }
+.sw.mute { --c: var(--mute); } .sw.solo { --c: var(--solo); }
+.sw .ic { width: 16px; height: 16px; }
+.sw.more { min-width: 30px; padding: 0; }
+.sw.more .ic { transition: transform .2s; }
+.row.open .sw.more .ic { transform: rotate(180deg); }
+.routes { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.routes .sw { height: 28px; min-width: 40px; }
+.routes .gap { width: 6px; }
+.extra { display: none; }
+.row.open .extra { display: block; }
+.extra .line { margin-top: 8px; }
+
+/* horizontal fader (rows) */
+.hf { position: relative; height: 38px; margin-top: 8px; border-radius: 5px; background: var(--bg);
+      border: 1px solid var(--outline); overflow: hidden; touch-action: pan-y; cursor: ew-resize; }
+.hf.small { height: 28px; }
+.hf .m { position: absolute; left: 0; width: 100%; height: 4px; clip-path: inset(0 100% 0 0);
+         background: linear-gradient(90deg, #2bd48a 0 64%, #f0c544 70% 74%, #ff4d5e 77%); }
+.hf .m.l { bottom: 8px; } .hf .m.r { bottom: 3px; }
+.hf .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--c); opacity: .16; pointer-events: none; }
+.hf .zero { position: absolute; top: 5px; bottom: 5px; width: 1px; background: var(--faint); }
+.hf .thumb { position: absolute; top: 3px; bottom: 3px; width: 6px; margin-left: -3px; border-radius: 3px; background: var(--c);
+             box-shadow: 0 0 0 2px var(--bg); }
+.hf .val { position: absolute; right: 8px; top: 4px; font: 600 12px/1 "Cascadia Mono", ui-monospace, Consolas, monospace;
+           color: var(--text); text-shadow: 0 0 4px var(--bg), 0 0 8px var(--bg); pointer-events: none; padding-top: 3px; }
+.hf .lbl { position: absolute; left: 8px; top: 7px; font-size: 11px; color: var(--dim); pointer-events: none; }
+.hf.muted .m, .vf.muted .m { filter: grayscale(1); opacity: .45; }
+
+/* ---- landscape: vertical strips like Hydra ---------------------------------------------------------- */
+.mixer { display: flex; gap: 14px; height: 100%; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity;
+         -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+.mixer::-webkit-scrollbar { height: 6px; }
+.mixer::-webkit-scrollbar-thumb { background: var(--raised); border-radius: 3px; }
+.mixer::-webkit-scrollbar-track { background: transparent; }
+.mixer { scrollbar-width: thin; scrollbar-color: var(--raised) transparent; }
+body.land #viewMixer { height: 100%; }
+/* phones sideways: Gain / Pan only after a tap on the channel name, the fader gets the room */
+@media (max-height: 440px) { .strip .minis { display: none; } .strip.detail .minis { display: grid; } .strip .name { cursor: pointer; } }
+.group { display: flex; flex-direction: column; min-height: 0; }
+.group h2 { margin: 0 2px 6px; flex: none; }
+.group .strips { display: flex; gap: 6px; flex: 1; min-height: 0; }
+.strip { width: var(--sw, 96px); flex: none; display: flex; flex-direction: column; gap: 6px; padding: 9px 6px 6px; scroll-snap-align: start; }
+@media (min-width: 1000px) { .strip { --sw: 108px; } }
+.strip .name { flex: none; text-align: center; }
+.strip .name b { font-size: 13px; }
+.strip .routes { margin-top: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; }
+.strip .routes .sw { min-width: 0; height: 24px; padding: 0; font-size: 10px; }
+.strip .routes .sep { grid-column: 1 / -1; height: 2px; }
+.strip .sws { display: flex; gap: 4px; }
+.strip .sws .sw { flex: 1; min-width: 0; padding: 0; height: 26px; }
+.strip .badge { align-self: center; }
+.minis { display: grid; gap: 3px; }
+.hf.mini { height: 22px; margin: 0; }
+.hf.mini .lbl { top: 4px; left: 5px; font-size: 10px; }
+.hf.mini .val { top: 2px; right: 5px; font-size: 10px; }
+.vf { position: relative; flex: 1; min-height: 70px; border-radius: 5px; background: var(--bg); border: 1px solid var(--outline);
+      overflow: hidden; touch-action: pan-x; cursor: ns-resize; }
+.vf .m { position: absolute; bottom: 0; top: 0; width: 4px; clip-path: inset(100% 0 0 0);
+         background: linear-gradient(0deg, #2bd48a 0 64%, #f0c544 70% 74%, #ff4d5e 77%); }
+.vf .m.l { left: 5px; } .vf .m.r { left: 11px; }
+.vf .fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--c); opacity: .14; pointer-events: none; }
+.vf .zero { position: absolute; left: 18px; right: 6px; height: 1px; background: var(--faint); }
+.vf .thumb { position: absolute; left: 18px; right: 6px; height: 8px; margin-top: -4px; border-radius: 3px; background: var(--c);
+             box-shadow: 0 0 0 2px var(--bg); }
+.svalue { text-align: center; font: 600 11px/1 "Cascadia Mono", ui-monospace, Consolas, monospace; color: var(--text); }
+
+/* ---- scenes, sheets, overlays ------------------------------------------------------------------------ */
+.scenes { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.scene { position: relative; min-height: 66px; border-radius: var(--r); border: 1px solid var(--outline); background: var(--panel);
+         padding: 10px 12px; text-align: left; font-weight: 600; overflow: hidden; }
+.scene small { display: block; color: var(--dim); font: 600 11px/1 "Cascadia Mono", ui-monospace, monospace; margin-bottom: 6px; }
+.scene.on { border-color: var(--in); background: color-mix(in srgb, var(--in) 12%, var(--panel)); }
+.scene.on::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--in); }
+.empty { color: var(--dim); text-align: center; padding: 40px 16px; }
+.banner { display: none; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; margin-bottom: 10px; border-radius: var(--r);
+          background: color-mix(in srgb, var(--c) 16%, var(--panel)); border: 1px solid var(--c); font-size: 13px; }
+.banner.show { display: flex; }
+.banner span { flex: 1; }
+body.land .banner { position: fixed; left: calc(86px + var(--sl)); right: calc(10px + var(--sr)); bottom: calc(10px + var(--sb)); z-index: 4; margin: 0; }
+
+#pair, #wait, #install { position: fixed; inset: 0; z-index: 10; display: none; place-items: center; background: var(--bg); padding: 24px; }
+#install { background: rgba(13,15,19,.86); backdrop-filter: blur(6px); }
+#pair.show, #wait.show, #install.show { display: grid; }
+.box { width: 100%; max-width: 380px; text-align: center; }
+#install .box { background: var(--panel); border: 1px solid var(--outline); border-radius: 12px; padding: 22px; text-align: left; }
+.box .logo { width: 56px; height: 54px; margin-bottom: 8px; }
+.box h1 { font-size: 20px; font-weight: 600; margin: 4px 0 8px; }
+.box p { color: var(--dim); margin: 0 0 16px; }
+.box input { width: 100%; height: 54px; border-radius: 8px; border: 1px solid var(--outline); background: var(--panel);
+             color: var(--text); font: 600 24px/1 "Cascadia Mono", ui-monospace, Consolas, monospace; text-align: center; letter-spacing: .15em;
+             text-transform: uppercase; -webkit-user-select: text; user-select: text; }
+.box input:focus { outline: 2px solid var(--in); outline-offset: 1px; }
+.go { margin-top: 12px; width: 100%; height: 48px; border-radius: 8px; background: var(--in); color: var(--bg); font-weight: 700;
+      display: flex; align-items: center; justify-content: center; text-decoration: none; }
+.go.alt { background: var(--raised); color: var(--text); border: 1px solid var(--outline); }
+.box .err { color: var(--mute); min-height: 20px; margin-top: 10px; font-size: 13px; }
+.steps { margin: 0 0 6px; padding-left: 20px; color: var(--text); }
+.steps li { margin: 6px 0; }
+.spin { width: 26px; height: 26px; border-radius: 50%; border: 3px solid var(--outline); border-top-color: var(--in);
+        margin: 16px auto 0; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.toast { position: fixed; left: 50%; bottom: calc(78px + var(--sb)); transform: translateX(-50%); z-index: 6;
+         background: var(--raised); border: 1px solid var(--outline); padding: 8px 14px; border-radius: 8px; font-size: 13px;
+         color: var(--text); display: none; }
+.toast.show { display: block; }
+</style>
+</head>
+<body class="port">
+<svg width="0" height="0" style="position:absolute">
+  <defs><linearGradient id="lg" x1="0" x2="1" y1="0" y2="0"><stop offset="0" stop-color="#35d0f4"/><stop offset="1" stop-color="#8d6cff"/></linearGradient></defs>
+  <!-- Hydra's logo (theme::drawLogo): three rounded bars, the middle one taller, cyan -> violet -->
+  <symbol id="logo" viewBox="0 0 36 34"><g fill="url(#lg)"><rect x="0" y="10.9" width="10" height="23.1" rx="5"/><rect x="13" y="0" width="10" height="34" rx="5"/><rect x="26" y="10.9" width="10" height="23.1" rx="5"/></g></symbol>
+  <symbol id="chev" viewBox="0 0 24 24"><path class="l" d="M7 9.5l5 5 5-5"/></symbol>
+  <symbol id="n-in" viewBox="0 0 24 24"><rect class="l" x="9" y="2.5" width="6" height="12" rx="3"/><path class="l" d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3.5"/></symbol>
+  <symbol id="n-out" viewBox="0 0 24 24"><rect class="l" x="5.5" y="2.5" width="13" height="19" rx="2.5"/><circle class="l" cx="12" cy="15" r="4.2"/><circle class="f" cx="12" cy="7" r="1.7"/></symbol>
+  <symbol id="n-mix" viewBox="0 0 24 24"><path class="l" d="M6 3v18M12 3v18M18 3v18"/><rect class="f" x="3.5" y="13" width="5" height="3.2" rx="1"/><rect class="f" x="9.5" y="6.5" width="5" height="3.2" rx="1"/><rect class="f" x="15.5" y="10.5" width="5" height="3.2" rx="1"/></symbol>
+  <symbol id="n-scn" viewBox="0 0 24 24"><rect class="l" x="3" y="3.5" width="7.5" height="7.5" rx="2"/><rect class="l" x="13.5" y="3.5" width="7.5" height="7.5" rx="2"/><rect class="l" x="3" y="13" width="7.5" height="7.5" rx="2"/><rect class="l" x="13.5" y="13" width="7.5" height="7.5" rx="2"/></symbol>
+  <symbol id="n-get" viewBox="0 0 24 24"><path class="l" d="M12 3.5v11M7.5 10l4.5 4.5 4.5-4.5M4.5 19.5h15"/></symbol>
+</svg>
+
+<header>
+  <svg class="logo"><use href="#logo"/></svg>
+  <div class="title"><b id="hname">Hydra</b><span id="sub">connecting…</span></div>
+  <span class="dsp" id="dsp" hidden></span>
+  <span class="dot" id="dot"></span>
+</header>
+
+<main>
+  <div class="banner" id="selBanner"><span id="selText"></span><button class="sw on" id="selDone">DONE</button></div>
+  <div id="viewMixer"></div>
+  <div id="viewScenes" hidden><h2>Scenes<i></i></h2><div class="scenes" id="scenes"></div></div>
+</main>
+
+<nav id="nav">
+  <div class="brand"><svg class="logo"><use href="#logo"/></svg></div>
+  <button data-view="in" class="only-port"><svg class="ic"><use href="#n-in"/></svg>Inputs</button>
+  <button data-view="out" class="only-port"><svg class="ic"><use href="#n-out"/></svg>Outputs</button>
+  <button data-view="mix" class="only-land"><svg class="ic"><use href="#n-mix"/></svg>Mixer</button>
+  <button data-view="scenes"><svg class="ic"><use href="#n-scn"/></svg>Scenes</button>
+  <button id="getApp" hidden><svg class="ic"><use href="#n-get"/></svg>Install</button>
+  <div class="grow"></div>
+  <div class="stat"><span class="dsp" id="dsp2" hidden></span><span class="dot" id="dot2"></span></div>
+</nav>
+
+<div id="pair"><form class="box" id="pairForm" autocomplete="off">
+  <svg class="logo"><use href="#logo"/></svg>
+  <h1>Connect to Hydra</h1>
+  <p>Enter the access code shown in Hydra under Settings → Remote, or scan the QR code there.</p>
+  <input id="code" inputmode="text" autocapitalize="characters" spellcheck="false" maxlength="12" placeholder="XXXX-XXXX">
+  <button class="go" type="submit">Connect</button>
+  <div class="err" id="pairErr"></div>
+</form></div>
+<div id="wait"><div class="box"><svg class="logo"><use href="#logo"/></svg><h1>Connecting to Hydra</h1>
+  <p id="waitText">Is Hydra running, and is this device in the same network?</p><div class="spin"></div></div></div>
+<div id="install"><div class="box" id="installBox"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+// ---- fader / meter scale: the same as Hydra's fader (-60..+12 dB, centre at -15 dB) -----------------------
+const SKEW = Math.log(0.5) / Math.log(45 / 72);
+const dbToPos = db => db <= -60 ? 0 : Math.pow(Math.min(1, (db + 60) / 72), SKEW);
+const ZERO = dbToPos(0);
+
+// ---- Hydra's output icons (ui/ChannelIcons.cpp, 24 x 24; l = stroked, f = filled) -------------------------
+const R = (x, y, w, h, r, c) => `<rect class="${c}" x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}"/>`;
+const C = (x, y, r, c) => `<circle class="${c}" cx="${x}" cy="${y}" r="${r}"/>`;
+const E = (x, y, rx, ry) => `<ellipse class="f" cx="${x}" cy="${y}" rx="${rx}" ry="${ry}"/>`;
+const P = (d, c = "l") => `<path class="${c}" d="${d}"/>`;
+const ICONS = {
+  speakers: R(5.5, 2.5, 13, 19, 2.5, "l") + C(12, 15, 4.2, "l") + C(12, 7, 1.7, "f"),
+  headphones: P("M4 13A8 8 0 0 1 20 13") + R(2.5, 12, 5, 8.5, 1.6, "f") + R(16.5, 12, 5, 8.5, 1.6, "f"),
+  headset: P("M4 13A8 8 0 0 1 20 13") + R(2.5, 12, 5, 7, 1.6, "f") + R(16.5, 12, 5, 7, 1.6, "f") + P("M5 19Q5.2 22.3 9.5 22.3") + R(9.5, 21, 4, 2.6, 1.3, "f"),
+  subwoofer: R(3, 3, 18, 18, 2.5, "l") + C(12, 12, 6, "l") + C(12, 12, 2.2, "f"),
+  bluetooth: P("M7 7.5L17 16.5L12 21L12 3L17 7.5L7 16.5"),
+  monitor: R(2.5, 3.5, 19, 13, 2, "l") + P("M12 16.5V20.5M7.5 20.8H16.5"),
+  tv: R(2.5, 7, 19, 13, 2, "l") + P("M8 2.5L12 7M16 2.5L12 7"),
+  laptop: R(5, 5, 14, 10.5, 1.5, "l") + R(2, 17, 20, 2.6, 1.3, "f"),
+  phone: P("M6 6Q5 19 18 18") + C(6, 6, 3, "f") + C(18, 18, 3, "f"),
+  chat: P("M7 4H17Q21 4 21 8V12Q21 16 17 16H11.5L7 20.5V16Q3 16 3 12V8Q3 4 7 4Z") + C(8, 10, 1.25, "f") + C(12, 10, 1.25, "f") + C(16, 10, 1.25, "f"),
+  discord: P("M6.5 6.5Q12 4.5 17.5 6.5Q21.5 11 21 17Q19 19 16 19.5L15 17.5Q12 18.3 9 17.5L8 19.5Q5 19 3 17Q2.5 11 6.5 6.5Z") + E(9, 12.5, 1.7, 2) + E(15, 12.5, 1.7, 2),
+  teamspeak: C(12, 12, 10, "l") + P("M7 13A5 5 0 0 1 17 13") + R(6, 12, 3.2, 5, 1.2, "f") + R(14.8, 12, 3.2, 5, 1.2, "f"),
+  camera: R(2.5, 6.5, 13, 11, 2.2, "l") + P("M15.5 10.5L21.5 7.5V16.5L15.5 13.5"),
+  obs: C(12, 12, 10, "l") + C(12, 7.4, 2.6, "f") + C(15.98, 14.3, 2.6, "f") + C(8.02, 14.3, 2.6, "f"),
+  stream: C(12, 12, 2.2, "f") + P("M16.24 8.49A5.5 5.5 0 0 1 16.24 15.51M7.76 15.51A5.5 5.5 0 0 1 7.76 8.49M18.93 6.26A9 9 0 0 1 18.93 17.74M5.07 17.74A9 9 0 0 1 5.07 6.26"),
+  recording: C(12, 12, 9.5, "l") + C(12, 12, 5, "f"),
+  game: R(2, 7, 20, 11, 5.5, "l") + P("M5 12.5H9M7 10.5V14.5") + C(15.5, 11.2, 1.3, "f") + C(18, 13.8, 1.3, "f"),
+  music: P("M14.5 17V3.5Q19.5 4.5 19.5 9.5") + E(11.7, 17.1, 3.7, 2.8),
+};
+const icon = id => ICONS[id] ? `<svg class="ic" viewBox="0 0 24 24">${ICONS[id]}</svg>` : "";
+
+const $ = id => document.getElementById(id);
+const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const EMBED = new URLSearchParams(location.search).has("embed");
+const DEMO = location.hash === "#demo" || location.search.includes("demo");
+if (EMBED) document.body.classList.add("embed");
+let ws = null, state = null, params = {}, view = null, retry = 0, retryTimer = 0, authed = false, land = false, lastDsp = "";
+const touching = new Map();      // param id -> time the finger left (0 = still touching; echoes are ignored meanwhile)
+const pending = new Map();       // param id -> normalised value to send on the next frame
+const bindings = new Map();      // param id -> [update functions]
+const meterEls = [];             // per channel in state order: { fader, l, r }
+let meterBytes = null, meterTime = 0;
+
+// ---- the Android app (embed): status out, views in ------------------------------------------------------
+function tellApp() {
+  if (!window.HydraApp || !HydraApp.status) return;
+  try {
+    HydraApp.status(JSON.stringify({ connected: authed, name: state ? state.name : "", dsp: lastDsp,
+      paired: !$("pair").classList.contains("show"), view, scenes: state ? state.scenes.length : 0 }));
+  } catch (e) {}
+}
+window.hydra = { setView: v => setView(v), reconnect: () => { retry = 0; connect(); } };
+
+// ---- access code ------------------------------------------------------------------------------------------
+function takeCodeFromLink() {
+  const m = location.hash.match(/k=([A-Za-z0-9-]+)/);
+  if (m) {
+    try { localStorage.setItem("hydra.code", m[1]); } catch (e) {}
+    history.replaceState(null, "", location.pathname + location.search);   // the code does not stay in the address bar
+    return m[1];
+  }
+  try { return localStorage.getItem("hydra.code") || ""; } catch (e) { return ""; }
+}
+let code = DEMO ? "DEMO" : takeCodeFromLink();
+const fmtCode = c => { c = c.toUpperCase().replace(/[^A-Z0-9]/g, ""); return c.length > 4 ? c.slice(0, 4) + "-" + c.slice(4, 8) : c; };
+
+function showPair(msg) {
+  $("pair").classList.add("show");
+  $("wait").classList.remove("show");
+  $("pairErr").textContent = msg || "";
+  $("code").value = code ? fmtCode(code) : "";
+  setTimeout(() => $("code").focus(), 50);
+  tellApp();
+}
+$("code").addEventListener("input", e => { e.target.value = fmtCode(e.target.value); });
+$("pairForm").addEventListener("submit", e => {
+  e.preventDefault();
+  code = $("code").value.replace(/[^A-Za-z0-9]/g, "");
+  if (code.length < 8) { $("pairErr").textContent = "The code has 8 characters."; return; }
+  try { localStorage.setItem("hydra.code", code); } catch (e) {}
+  $("pair").classList.remove("show");
+  connect();
+});
+
+// ---- connection -------------------------------------------------------------------------------------------
+function setStatus(on, text) {
+  for (const d of [$("dot"), $("dot2")]) d.className = "dot" + (on ? " on" : "");
+  if (text != null) $("sub").textContent = text;
+  tellApp();
+}
+
+function connect() {
+  clearTimeout(retryTimer);
+  if (DEMO) { startDemo(); return; }
+  if (!code) { showPair(); return; }
+  if (ws) { ws.onclose = null; ws.close(); }
+  authed = false;
+  if (!state) $("wait").classList.add("show");
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => ws.send(JSON.stringify({ t: "hello", code }));
+  ws.onmessage = ev => {
+    if (typeof ev.data !== "string") { onMeters(new Uint8Array(ev.data)); return; }
+    let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+    onMessage(m);
+  };
+  ws.onclose = ev => {
+    authed = false;
+    setStatus(false, "reconnecting…");
+    if (ev.code === 4000) { showPair("The access code was changed in Hydra. Enter the new one."); return; }
+    if ($("pair").classList.contains("show")) return;
+    if (!state) $("wait").classList.add("show");
+    retry = Math.min(retry + 1, 5);
+    retryTimer = setTimeout(connect, 600 * retry);
+  };
+}
+
+function send(obj) {
+  if (DEMO) { demoCommand(obj); return; }
+  if (ws && authed && ws.readyState === 1) ws.send(JSON.stringify(obj));
+}
+
+function onMessage(m) {
+  switch (m.t) {
+    case "auth":
+      if (m.ok) { authed = true; retry = 0; $("wait").classList.remove("show"); $("pair").classList.remove("show"); updateMeterWish(); tellApp(); }
+      else {
+        if (ws) { ws.onclose = null; ws.close(); ws = null; }
+        showPair(m.why === "blocked" ? "Too many wrong codes. Wait a minute and try again."
+               : m.why === "full" ? "Too many phones and tablets are connected." : "This code is not right.");
+      }
+      break;
+    case "state": applyState(m); break;
+    case "p":
+      for (const id in m.d) {
+        const p = params[id]; if (!p) continue;
+        p.v = m.d[id][1];   // the text follows while dragging, the position stays under the finger
+        if (!(touching.has(id) && (touching.get(id) === 0 || performance.now() - touching.get(id) < 400))) p.n = m.d[id][0];
+        update(id);
+      }
+      refreshSel();
+      break;
+    case "s":
+      lastDsp = m.audio ? "DSP " + Math.round(m.dsp * 100) + "%" : "no audio";
+      for (const d of [$("dsp"), $("dsp2")]) { d.textContent = land ? Math.round(m.dsp * 100) + "%" : lastDsp; d.hidden = false; }
+      tellApp();
+      break;
+  }
+}
+
+// ---- state -> DOM -----------------------------------------------------------------------------------------
+function applyState(s) {
+  state = s;
+  params = s.params;
+  $("hname").textContent = s.name;
+  setStatus(true, "Hydra" + (s.version ? " " + s.version : ""));
+  document.title = "Hydra · " + s.name;
+  $("getApp").hidden = EMBED || standalone();
+  build();
+}
+
+function bind(id, fn) { if (!bindings.has(id)) bindings.set(id, []); bindings.get(id).push(fn); fn(); }
+function update(id) { (bindings.get(id) || []).forEach(f => f()); }
+const P0 = { n: 0, v: "", d: 0, k: "c" };
+const Pm = id => params[id] || P0;
+const busColour = b => b.hw ? "var(--hw)" : "var(--virt)";
+const busFace = b => icon(b.icon) || esc(b.label);
+const selBus = () => state ? state.buses.find(b => Pm("bus." + b.code + ".sel").n >= 0.5) || null : null;
+
+function toggleButton(html, id, cls) {
+  const b = el("button", "sw " + (cls || ""), html);
+  b.onclick = () => { const p = Pm(id); p.n = p.n >= 0.5 ? 0 : 1; update(id); send({ t: "toggle", id }); };
+  bind(id, () => b.classList.toggle("on", Pm(id).n >= 0.5));
+  return b;
+}
+
+/** A fader: horizontal (rows) or vertical (strips). Relative drag (a touch never makes the value jump), double tap = default. */
+function fader(idFn, colour, opts = {}) {
+  const vert = !!opts.vertical;
+  const f = el("div", vert ? "vf" : "hf" + (opts.small ? " small" : "") + (opts.mini ? " mini" : ""));
+  f.style.setProperty("--c", colour);
+  const ml = el("div", "m l"), mr = el("div", "m r"), fill = el("div", "fill"), thumb = el("div", "thumb");
+  const val = vert ? null : el("div", "val"), lbl = vert ? null : el("div", "lbl", opts.label || "");
+  const zp = opts.zeroPos ?? ZERO;
+  if (opts.zero !== false) { const z = el("div", "zero"); if (vert) z.style.bottom = zp * 100 + "%"; else z.style.left = zp * 100 + "%"; f.append(z); }
+  if (opts.meter === false) ml.hidden = mr.hidden = true;
+  f.append(fill, ml, mr, thumb);
+  if (!vert) f.append(val, lbl);
+  f.redraw = () => {
+    const p = Pm(idFn());
+    if (vert) {
+      const usable = f.clientHeight - 10;
+      thumb.style.top = (5 + (1 - p.n) * usable) + "px";
+      fill.style.height = (5 + p.n * usable) + "px";
+    } else {
+      thumb.style.left = (p.n * 100) + "%";
+      fill.style.width = (p.n * 100) + "%";
+      val.textContent = p.v;
+    }
+    if (opts.valueEl) opts.valueEl.textContent = p.v;
+  };
+  let start = 0, startN = 0, pid = null, lastTap = 0, moved = false;
+  f.addEventListener("pointerdown", e => {
+    pid = e.pointerId; start = vert ? e.clientY : e.clientX; startN = Pm(idFn()).n; moved = false;
+    touching.set(idFn(), 0);
+  });
+  f.addEventListener("pointermove", e => {
+    if (e.pointerId !== pid) return;
+    const d = vert ? start - e.clientY : e.clientX - start;
+    if (!moved && Math.abs(d) < 6) return;
+    if (!moved) { moved = true; try { f.setPointerCapture(pid); } catch (err) {} }
+    const id = idFn(), p = Pm(id);
+    const size = vert ? f.clientHeight : f.clientWidth;
+    p.n = Math.max(0, Math.min(1, startN + (e.shiftKey ? 0.25 : 1) * d / Math.max(40, size)));
+    pending.set(id, p.n);
+    f.redraw();
+  });
+  const end = e => {
+    if (e.pointerId !== pid) return;
+    pid = null;
+    const id = idFn();
+    touching.set(id, performance.now());
+    if (!moved && e.type === "pointerup") {
+      const now = performance.now();
+      if (now - lastTap < 350) { const p = Pm(id); p.n = p.d; f.redraw(); pending.delete(id); send({ t: "reset", id }); lastTap = 0; }
+      else lastTap = now;
+    }
+  };
+  f.addEventListener("pointerup", end);
+  f.addEventListener("pointercancel", end);
+  f.addEventListener("wheel", e => {   // mouse / trackpad
+    e.preventDefault();
+    const id = idFn(), p = Pm(id);
+    p.n = Math.max(0, Math.min(1, p.n - Math.sign(e.deltaY) * 0.01));
+    pending.set(id, p.n); touching.set(id, performance.now()); f.redraw();
+  }, { passive: false });
+  f.vertical = vert;
+  f.meterL = ml; f.meterR = mr;
+  return f;
+}
+
+function chevron() {
+  const b = el("button", "sw more", '<svg class="ic" viewBox="0 0 24 24"><use href="#chev"/></svg>');
+  b.setAttribute("aria-label", "More");
+  return b;
+}
+
+function routeButtons(s, compact) {
+  const routes = el("div", "routes");
+  let lastHw = null;
+  for (const b of state.buses) {
+    if (lastHw !== null && lastHw !== b.hw) routes.append(el(compact ? "span" : "span", compact ? "sep" : "gap"));
+    lastHw = b.hw;
+    const r = toggleButton(busFace(b), s.id + ".route." + b.code);
+    r.style.setProperty("--c", busColour(b));
+    r.title = s.name + " → " + b.name;
+    routes.append(r);
+  }
+  return routes;
+}
+
+function inputFaderId(s) { const b = selBus(); return b ? s.id + ".send." + b.code : s.id + ".gain"; }
+
+function buildRows() {
+  const v = $("viewMixer");
+  const open = new Set([...document.querySelectorAll(".row.open")].map(c => c.dataset.key));
+  const secIn = el("section"), secOut = el("section");
+  secIn.dataset.sec = "in"; secOut.dataset.sec = "out";
+  secIn.append(el("h2", null, "Inputs<i></i>"));
+  const ins = el("div", "list");
+  secIn.append(ins);
+  for (const s of state.inputs) {
+    const c = el("div", "card row"); c.dataset.key = s.id;
+    if (open.has(s.id)) c.classList.add("open");
+    const head = el("div", "line");
+    const more = chevron(); more.onclick = () => c.classList.toggle("open");
+    head.append(el("div", "name", "<b>" + esc(s.name) + "</b><span>" + esc(s.src || "no source") + "</span>"),
+                toggleButton("M", s.id + ".mute", "mute"), toggleButton("S", s.id + ".solo", "solo"), more);
+    const fd = fader(() => inputFaderId(s), "var(--in)");
+    const extra = el("div", "extra");
+    const trim = fader(() => s.id + ".trim", "var(--in)", { small: true, label: "Gain", meter: false, zeroPos: 0.5 });
+    const pan = fader(() => s.id + ".pan", "var(--in)", { small: true, label: "Pan", meter: false, zeroPos: 0.5 });
+    const sw = el("div", "line");
+    sw.append(toggleButton("MONO", s.id + ".mono"), toggleButton("FX BYPASS", s.id + ".fx.bypass"));
+    extra.append(trim, pan, sw);
+    c.append(head, fd, routeButtons(s, false), extra);
+    ins.append(c);
+    bindFader(s, fd, trim, pan);
+  }
+  if (!state.inputs.length) ins.append(el("div", "empty", "No inputs"));
+  for (const hw of [true, false]) {
+    const list = state.buses.filter(b => b.hw === hw);
+    if (!list.length) continue;
+    secOut.append(el("h2", null, (hw ? "Hardware outputs" : "Virtual outputs") + "<i></i>"));
+    const l = el("div", "list");
+    secOut.append(l);
+    for (const b of list) {
+      const id = "bus." + b.code;
+      const c = el("div", "card row"); c.dataset.key = id;
+      c.style.setProperty("--c", busColour(b));
+      const head = el("div", "line");
+      head.append(el("div", "badge", busFace(b)), el("div", "name", "<b>" + esc(b.name) + "</b><span>" + esc(b.label) + "</span>"),
+                  toggleButton("SEL", id + ".sel"), toggleButton("MONO", id + ".mono"), toggleButton("MUTE", id + ".mute", "mute"));
+      const fd = fader(() => id + ".gain", busColour(b));
+      c.append(head, fd);
+      l.append(c);
+      bindBus(b, fd);
+    }
+  }
+  v.append(secIn, secOut);
+}
+
+function buildStrips() {
+  const v = $("viewMixer");
+  const mixer = el("div", "mixer");
+  const group = (title, colour) => {
+    const g = el("div", "group");
+    g.append(el("h2", null, title + "<i></i>"));
+    const s = el("div", "strips");
+    g.append(s);
+    mixer.append(g);
+    return s;
+  };
+  const ins = group("Inputs");
+  for (const s of state.inputs) {
+    const c = el("div", "card strip");
+    const value = el("div", "svalue");
+    const fd = fader(() => inputFaderId(s), "var(--in)", { vertical: true, valueEl: value });
+    const trim = fader(() => s.id + ".trim", "var(--in)", { mini: true, label: "Gain", meter: false, zeroPos: 0.5 });
+    const pan = fader(() => s.id + ".pan", "var(--in)", { mini: true, label: "Pan", meter: false, zeroPos: 0.5 });
+    const minis = el("div", "minis"); minis.append(trim, pan);
+    const sws = el("div", "sws");
+    sws.append(toggleButton("M", s.id + ".mute", "mute"), toggleButton("S", s.id + ".solo", "solo"), toggleButton("MO", s.id + ".mono"));
+    const nm = el("div", "name", "<b>" + esc(s.name) + "</b><span>" + esc(s.src || "no source") + "</span>");
+    nm.onclick = () => { c.classList.toggle("detail"); fd.redraw(); };
+    c.append(nm, minis, routeButtons(s, true), fd, value, sws);
+    c.title = s.src || "";
+    ins.append(c);
+    bindFader(s, fd, trim, pan);
+  }
+  for (const hw of [true, false]) {
+    const list = state.buses.filter(b => b.hw === hw);
+    if (!list.length) continue;
+    const g = group(hw ? "Hardware outputs" : "Virtual outputs");
+    for (const b of list) {
+      const id = "bus." + b.code;
+      const c = el("div", "card strip");
+      c.style.setProperty("--c", busColour(b));
+      const value = el("div", "svalue");
+      const fd = fader(() => id + ".gain", busColour(b), { vertical: true, valueEl: value });
+      const top = el("div", "sws"); top.append(toggleButton("SEL", id + ".sel"), toggleButton("MO", id + ".mono"));
+      const bottom = el("div", "sws"); bottom.append(toggleButton("MUTE", id + ".mute", "mute"));
+      c.append(el("div", "badge", busFace(b)), el("div", "name", "<b>" + esc(b.name) + "</b><span>" + esc(b.label) + "</span>"), top, fd, value, bottom);
+      g.append(c);
+      bindBus(b, fd);
+    }
+  }
+  v.append(mixer);
+}
+
+function bindFader(s, fd, trim, pan) {
+  bind(s.id + ".gain", fd.redraw);
+  for (const b of state.buses) bind(s.id + ".send." + b.code, fd.redraw);
+  bind(s.id + ".trim", trim.redraw);
+  bind(s.id + ".pan", pan.redraw);
+  bind(s.id + ".mute", () => fd.classList.toggle("muted", Pm(s.id + ".mute").n >= 0.5));
+  meterEls.push({ fader: fd, l: 0, r: 0, input: true });
+}
+
+function bindBus(b, fd) {
+  const id = "bus." + b.code;
+  bind(id + ".gain", fd.redraw);
+  bind(id + ".mute", () => fd.classList.toggle("muted", Pm(id + ".mute").n >= 0.5));
+  bind(id + ".sel", () => fd.closest(".card").classList.toggle("selbus", Pm(id + ".sel").n >= 0.5));
+  meterEls.push({ fader: fd, l: 0, r: 0, input: false });
+}
+
+function build() {
+  if (!state) return;
+  bindings.clear();
+  meterEls.length = 0;
+  $("viewMixer").innerHTML = "";
+  if (land) buildStrips(); else buildRows();
+  // Meter order = state order: inputs first, then buses (meterEls was filled in that order).
+  requestAnimationFrame(() => meterEls.forEach(m => m.fader.redraw()));
+
+  const sc = $("scenes");
+  sc.innerHTML = "";
+  if (!state.scenes.length) sc.append(el("div", "empty", "No scenes yet. Create them in Hydra under Tools → Scene Editor."));
+  state.scenes.forEach((name, i) => {
+    const b = el("button", "scene" + (i === state.scene ? " on" : ""), "<small>" + String(i + 1).padStart(2, "0") + "</small>" + esc(name || "Scene " + (i + 1)));
+    b.onclick = () => {
+      send({ t: "scene", i });
+      [...sc.children].forEach((x, k) => x.classList.toggle("on", k === i));
+      toast(name || "Scene " + (i + 1));
+    };
+    sc.append(b);
+  });
+  applyViewVisibility();
+  refreshSel();
+}
+
+function refreshSel() {
+  const b = selBus();
+  const ban = $("selBanner");
+  ban.classList.toggle("show", !!b && view !== "scenes");
+  if (b) {
+    ban.style.setProperty("--c", busColour(b));
+    $("selText").textContent = "Input faders set the levels to " + b.label + (b.name !== b.label ? " (" + b.name + ")" : "");
+    $("selDone").onclick = () => { const id = "bus." + b.code + ".sel"; Pm(id).n = 0; update(id); send({ t: "toggle", id }); refreshSel(); };
+    $("selDone").style.setProperty("--c", busColour(b));
+  }
+  if (!state) return;
+  meterEls.forEach(m => { if (m.input) { m.fader.style.setProperty("--c", b ? busColour(b) : "var(--in)"); m.fader.redraw(); } });
+}
+
+// ---- meters -----------------------------------------------------------------------------------------------
+function onMeters(bytes) { if (bytes[0] === 1) { meterBytes = bytes; meterTime = performance.now(); } }
+const byteToPos = b => dbToPos(b / 255 * 66 - 60);
+let lastFrame = performance.now();
+function frame(now) {
+  const dt = Math.min(0.1, (now - lastFrame) / 1000); lastFrame = now;
+  for (const [id, n] of pending) send({ t: "set", id, n: Math.round(n * 10000) / 10000 });
+  pending.clear();
+  const fresh = meterBytes && now - meterTime < 500;
+  for (let k = 0; k < meterEls.length; ++k) {
+    const m = meterEls[k];
+    const ok = fresh && meterBytes.length > 3 + 3 * k;
+    const l = ok ? byteToPos(meterBytes[1 + 3 * k]) : 0, r = ok ? byteToPos(meterBytes[2 + 3 * k]) : 0;
+    m.l = Math.max(l, m.l - dt * 1.2); m.r = Math.max(r, m.r - dt * 1.2);
+    const f = m.fader;
+    if (f.vertical) {
+      f.meterL.style.clipPath = "inset(" + (100 - m.l * 100).toFixed(1) + "% 0 0 0)";
+      f.meterR.style.clipPath = "inset(" + (100 - m.r * 100).toFixed(1) + "% 0 0 0)";
+    } else {
+      f.meterL.style.clipPath = "inset(0 " + (100 - m.l * 100).toFixed(1) + "% 0 0)";
+      f.meterR.style.clipPath = "inset(0 " + (100 - m.r * 100).toFixed(1) + "% 0 0)";
+    }
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+function updateMeterWish() { send({ t: "meters", on: document.visibilityState === "visible" && view !== "scenes" }); }
+document.addEventListener("visibilitychange", () => {
+  updateMeterWish();
+  if (document.visibilityState === "visible" && !DEMO && (!ws || ws.readyState > 1)) { retry = 0; connect(); }
+});
+
+// ---- layout and views -------------------------------------------------------------------------------------
+const landQuery = matchMedia("(orientation: landscape) and (min-width: 560px)");
+function applyLayout() {
+  const was = land;
+  land = landQuery.matches;
+  document.body.classList.toggle("land", land);
+  document.body.classList.toggle("port", !land);
+  if (view === null) { let v = "in"; try { v = localStorage.getItem("hydra.view") || "in"; } catch (e) {} view = v; }
+  if (land && (view === "in" || view === "out")) view = "mix";
+  if (!land && view === "mix") view = "in";
+  if (was !== land || !$("viewMixer").childElementCount) build();
+  applyViewVisibility();
+}
+function applyViewVisibility() {
+  $("viewMixer").hidden = view === "scenes";
+  $("viewScenes").hidden = view !== "scenes";
+  document.querySelectorAll("#viewMixer section").forEach(s => s.hidden = (view === "in" && s.dataset.sec !== "in") || (view === "out" && s.dataset.sec !== "out"));
+  document.querySelectorAll("nav button[data-view]").forEach(b => b.classList.toggle("on", b.dataset.view === view));
+  $("selBanner").classList.toggle("show", !!selBus() && view !== "scenes");
+}
+function setView(v) {
+  if (land && (v === "in" || v === "out")) v = "mix";
+  if (!land && v === "mix") v = "in";
+  view = v;
+  try { localStorage.setItem("hydra.view", v); } catch (e) {}
+  applyViewVisibility();
+  updateMeterWish();
+  window.scrollTo(0, 0);
+  tellApp();
+}
+document.querySelectorAll("nav button[data-view]").forEach(b => b.onclick = () => setView(b.dataset.view));
+landQuery.addEventListener("change", applyLayout);
+addEventListener("resize", () => meterEls.forEach(m => m.fader.redraw()));
+applyLayout();
+
+let toastTimer = 0;
+function toast(t) { const e = $("toast"); e.textContent = t; e.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => e.classList.remove("show"), 1400); }
+
+// ---- install -----------------------------------------------------------------------------------------------
+function standalone() { return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; }
+$("getApp").onclick = () => {
+  const ua = navigator.userAgent, box = $("installBox");
+  const android = /Android/.test(ua), ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  let html = '<svg class="logo"><use href="#logo"/></svg><h1>Install Hydra</h1>';
+  if (android) {
+    html += "<p>The Hydra Link app has this remote built in, plus audio to and from Hydra (listen to a bus, send the microphone).</p>"
+      + (state && state.apk ? '<a class="go" href="/HydraLink.apk" download>Download the app (APK)</a><p style="margin-top:12px">Then open the file and allow the installation once.</p>'
+                            : "<p>Build it from mobile\\android (build-apk.ps1) and put HydraLink.apk next to Hydra Mixer.exe: Hydra then offers it here.</p>")
+      + '<button class="go alt" id="instClose">Not now</button>';
+  } else if (ios) {
+    html += '<ol class="steps"><li>Tap the share button <b>⬆</b> in Safari.</li><li>Choose <b>Add to Home Screen</b>.</li><li>Open Hydra from the home screen: it runs full screen like an app.</li></ol>'
+      + '<button class="go" id="instClose">OK</button>';
+  } else {
+    html += "<p>Browsers only install web apps from https addresses. Open this page on the phone or tablet instead, or keep it as a bookmark.</p>"
+      + '<button class="go" id="instClose">OK</button>';
+  }
+  box.innerHTML = html;
+  $("install").classList.add("show");
+  $("instClose").onclick = () => $("install").classList.remove("show");
+};
+$("install").onclick = e => { if (e.target.id === "install") $("install").classList.remove("show"); };
+
+// ---- demo (index.html#demo): fake Hydra for trying the app without the mixer ------------------------------
+function startDemo() {
+  const ins = [["Microphone", "Focusrite USB ASIO 1/2"], ["Discord", "App: Discord"], ["Spotify", "App: Spotify"], ["Game", "Hydra In 4"]];
+  const bus = [["A1", "H1", "Speakers", true, "speakers"], ["A2", "H2", "Headphones", true, "headphones"], ["B1", "V1", "Stream", false, "stream"], ["B2", "V2", "Discord", false, "discord"]];
+  const p = {};
+  const fdr = (id, db) => p[id] = { n: dbToPos(db), v: db.toFixed(1) + " dB", d: dbToPos(0), k: "c" };
+  const tg = (id, on) => p[id] = { n: on ? 1 : 0, v: on ? "On" : "Off", d: 0, k: "t" };
+  ins.forEach((s, i) => {
+    const id = "in" + (i + 1);
+    fdr(id + ".gain", [-4, -10, -18, -8][i]); p[id + ".trim"] = { n: .5, v: "0.0 dB", d: .5, k: "c" };
+    p[id + ".pan"] = { n: .5, v: "0.00", d: .5, k: "c" };
+    tg(id + ".mute", i === 3); tg(id + ".solo", false); tg(id + ".mono", i === 0); tg(id + ".fx.bypass", false);
+    bus.forEach((b, k) => { tg(id + ".route." + b[0], (i + k) % 2 === 0 || k === 0); fdr(id + ".send." + b[0], 0); });
+  });
+  bus.forEach((b, k) => { const id = "bus." + b[0]; fdr(id + ".gain", [0, -6, -3, 0][k]); tg(id + ".mute", false); tg(id + ".mono", false); tg(id + ".sel", false); tg(id + ".fx.bypass", false); });
+  tg("mon.on", false);
+  authed = true;
+  applyState({ t: "state", name: "STUDIO-PC", version: "demo",
+    inputs: ins.map((s, i) => ({ i, id: "in" + (i + 1), name: s[0], src: s[1] })),
+    buses: bus.map((b, i) => ({ i, code: b[0], label: b[1], name: b[2], hw: b[3], icon: b[4] })),
+    scenes: ["Gaming", "Podcast", "Music", "Late night"], scene: 0, params: p });
+  onMessage({ t: "s", dsp: 0.03, audio: true });
+  let ph = 0;
+  setInterval(() => {
+    ph += 0.15;
+    const n = state.inputs.length + state.buses.length, a = new Uint8Array(1 + 3 * n); a[0] = 1;
+    for (let k = 0; k < n; ++k) { const lvl = 150 + 60 * Math.sin(ph + k) + 30 * Math.random(); a[1 + 3 * k] = lvl; a[2 + 3 * k] = lvl - 10 * Math.random(); }
+    onMeters(a);
+  }, 50);
+}
+function demoCommand(o) {
+  const p = params[o.id];
+  const db = n => n <= 0 ? "-inf dB" : (Math.pow(n, 1 / SKEW) * 72 - 60).toFixed(1) + " dB";
+  if (o.t === "set" && p) { p.n = o.n; if (/gain|send/.test(o.id)) p.v = db(o.n); update(o.id); }
+  if (o.t === "toggle" && p) refreshSel();
+  if (o.t === "reset" && p) { p.n = p.d; if (/gain|send/.test(o.id)) p.v = "0.0 dB"; update(o.id); }
+}
+
+connect();
+</script>
+</body>
+</html>

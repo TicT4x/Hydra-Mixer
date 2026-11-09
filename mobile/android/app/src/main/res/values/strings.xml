@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Hydra</string>
+    <string name="notification_channel">Audio connection</string>
+    <string name="stop">Stop</string>
+
+    <string name="nav_inputs">Inputs</string>
+    <string name="nav_outputs">Outputs</string>
+    <string name="nav_mixer">Mixer</string>
+    <string name="nav_scenes">Scenes</string>
+    <string name="nav_audio">Audio</string>
+
+    <string name="mixer_searching_title">Looking for Hydra</string>
+    <string name="mixer_searching">Hydra is found automatically when, on the computer, Settings → Remote and Settings → Network (Hydra Link) are switched on, and this phone is in the same Wi-Fi. Without Hydra Link, enter the computer\'s address.</string>
+    <string name="mixer_unreachable_title">Hydra does not answer</string>
+    <string name="mixer_unreachable">%1$s cannot be reached. Is Hydra running and Settings → Remote on? Trying again …</string>
+    <string name="mixer_address">Enter address</string>
+    <string name="mixer_address_message">The address Hydra shows under Settings → Remote, e.g. 192.168.1.20 (or 192.168.1.20:6981). Empty: find Hydra automatically.</string>
+    <string name="retry">Try again</string>
+    <string name="mixer_not_connected">Mixer not connected</string>
+    <string name="mixer_connecting">Connecting …</string>
+    <string name="mixer_pairing">Enter the access code</string>
+
+    <string name="phone_card">This phone</string>
+    <string name="phone_address">%1$s in the Wi-Fi</string>
+    <string name="rename">Rename</string>
+    <string name="rename_title">Name of this phone</string>
+    <string name="rename_message">Hydra lists the phone under this name (Hydra Link in the device picker).</string>
+    <string name="this_phone">This phone: %1$s</string>
+    <string name="no_wifi">Not in a Wi-Fi network: Hydra Link works in the local network only.</string>
+
+    <string name="listen">Listen</string>
+    <string name="listen_hint">Nothing to listen to yet. In Hydra, click the device chip of a V bus (virtual output), choose Hydra Link and then \"%1$s\".</string>
+    <string name="stream_from">%1$s from %2$s</string>
+    <string name="playing">playing</string>
+    <string name="stop_listening">Stop listening</string>
+    <string name="volume">Volume</string>
+    <string name="waiting_for">Waiting for \"%1$s\" from %2$s …</string>
+    <string name="rx_stats">%1$s · %2$.0f ms delay · %3$.1f %% lost · %4$d dropouts</string>
+
+    <string name="send">Send microphone</string>
+    <string name="other_address">Other address…</string>
+    <string name="address_message">IP address of the computer with Hydra, if it is not listed (Hydra Link must be on there: Settings → Network).</string>
+    <string name="manual_address">entered by hand</string>
+    <string name="no_hydra">No Hydra found yet. Is Hydra Link switched on in Hydra (Settings → Network) and is this phone in the same Wi-Fi?</string>
+    <string name="quality">Quality</string>
+    <string name="quality_pcm_short">Best quality</string>
+    <string name="quality_pcm_sub">uncompressed, ~1.2 Mbit/s</string>
+    <string name="quality_opus_short">Saves Wi-Fi</string>
+    <string name="quality_opus_sub">Opus, 96 kbit/s</string>
+    <string name="voice_processing">Voice processing (echo cancellation, noise suppression; more latency)</string>
+    <string name="start_sending">Start sending</string>
+    <string name="stop_sending">Stop sending</string>
+    <string name="mic_level">Level</string>
+    <string name="stream_name">Mic</string>
+    <string name="choose_hydra_first">Choose the Hydra to send to first.</string>
+    <string name="mic_denied">Hydra needs the microphone to send it.</string>
+    <string name="looking_for">Looking for %1$s …</string>
+    <string name="sending_unheard">%1$s to %2$s · Hydra is not listening yet</string>
+    <string name="tx_stats">%1$s to %2$s · Hydra buffers %3$.0f ms · %4$.1f %% lost</string>
+    <string name="send_hint">In Hydra, choose Hydra Link → \"%1$s from %2$s\" as the source of an input.</string>
+
+    <string name="notif_listening">Listening to %1$s from %2$s</string>
+    <string name="notif_sending">Sending the microphone to %1$s</string>
+    <string name="footer">Hydra Link works in the local network without a network password. Audio keeps running with the screen off.</string>
+</resources>

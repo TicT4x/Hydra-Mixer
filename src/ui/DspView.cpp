@@ -206,7 +206,7 @@ DspView::Reading DspView::read() const
     auto chain = [&r] (const PluginChain& c)
     {
         for (int k = 0; k < c.size(); ++k)
-            if (auto* s = c.getSlot (k)) r.ticks[pluginKey (s)] = s->dspTicks.load();
+            if (auto* s = c.getSlot (k); s != nullptr && s->isPlugin()) r.ticks[pluginKey (s)] = s->dspTicks.load();
     };
     for (int i = 0; i < kMaxInputs; ++i)
     {
@@ -265,13 +265,13 @@ void DspView::measure()
         double inPlugins = 0.0;
         juce::StringArray lines;
         for (int k = 0; k < chain.size(); ++k)
-            if (auto* s = chain.getSlot (k))
+            if (auto* s = chain.getSlot (k); s != nullptr && s->isPlugin())
             {
                 const double v = delta (pluginKey (s));
                 inPlugins += v;
                 lines.add (s->instance->getName() + ":  " + percent (v) + (s->bypassed || bypassAll.isOn() ? "  (bypassed)" : ""));
             }
-        r.present[plugins] = chain.size() > 0;
+        r.present[plugins] = chain.numPlugins() > 0;
         r.target[plugins] = inPlugins;
         r.pluginInfo = lines.isEmpty() ? juce::String() : r.title + "  ·  plugins\n" + lines.joinIntoString ("\n");
         return juce::jmax (0.0, stageTotal - inPlugins);   // copies around the plugins
@@ -294,11 +294,15 @@ void DspView::measure()
         r.colour = theme::accentIn;
         r.selectIndex = i;
         double other = st (DspTimes::other);
-        stage (r, denoiser, s.dnOn->isOn(), st (DspTimes::denoiser), other);
-        stage (r, eq, s.eq.on->isOn(), st (DspTimes::eq), other);
-        stage (r, gate, s.gateOn->isOn(), st (DspTimes::gate), other);
-        stage (r, comp, s.compOn->isOn(), st (DspTimes::comp), other);
+        const auto& fx = s.plugins;
+        stage (r, denoiser, s.dnOn->isOn() && fx.hasBuiltin (Fx::denoiser), st (DspTimes::denoiser), other);
+        stage (r, eq, s.eq.on->isOn() && fx.hasBuiltin (Fx::eq), st (DspTimes::eq), other);
+        stage (r, gate, s.gateOn->isOn() && fx.hasBuiltin (Fx::gate), st (DspTimes::gate), other);
+        stage (r, comp, s.compOn->isOn() && fx.hasBuiltin (Fx::comp), st (DspTimes::comp), other);
         other += pluginsOf (r, s.plugins, st (DspTimes::plugins), *s.fxBypass);
+        bool lim = false;
+        for (int k = 0; k < kFxInstances; ++k) lim = lim || (s.limiters[(size_t) k].on->isOn() && fx.hasBuiltin (Fx::limiter, k));
+        stage (r, limiter, lim, st (DspTimes::limiter), other);
         r.present[rest] = true;
         r.target[rest] = other;
         if (s.source.kind == IoTarget::Kind::None) r.note = "no source";
@@ -312,13 +316,15 @@ void DspView::measure()
         auto st = [&] (DspTimes::Stage x) { return delta (key ("bus", b, x)); };
         Row r;
         r.key = "bus" + juce::String (b);
-        r.title = titled (busCode (b), bus.name);
+        r.title = titled (busLabel (b), bus.name);
         r.colour = theme::busColour (b);
         r.selectIndex = busSelectIndex (b);
         double other = st (DspTimes::other);
-        stage (r, eq, bus.eq.on->isOn(), st (DspTimes::eq), other);
+        stage (r, eq, (bus.eq.on->isOn() && bus.plugins.hasBuiltin (Fx::eq)) || bus.plugins.hasBuiltin (Fx::correction),
+               st (DspTimes::eq), other);
+        stage (r, comp, bus.comps[0].on->isOn() && bus.plugins.hasBuiltin (Fx::comp), st (DspTimes::comp), other);
         other += pluginsOf (r, bus.plugins, st (DspTimes::plugins), *bus.fxBypass);
-        stage (r, limiter, bus.limOn->isOn(), st (DspTimes::limiter), other);
+        stage (r, limiter, bus.limOn->isOn() && bus.plugins.hasBuiltin (Fx::limiter), st (DspTimes::limiter), other);
         r.present[rest] = true;
         r.target[rest] = other;
         if (bus.output.kind == IoTarget::Kind::None) r.note = "no output";

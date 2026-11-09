@@ -1,0 +1,10 @@
+{
+  "name": "Hydra Remote",
+  "short_name": "Hydra",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0d0f13",
+  "theme_color": "#0d0f13",
+  "icons": [ { "src": "/icon.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" } ]
+}

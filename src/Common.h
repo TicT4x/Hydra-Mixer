@@ -31,10 +31,20 @@ constexpr bool isHwBus (int b) noexcept      { return b < kMaxHwBuses; }
 constexpr int hwBusIndex (int a) noexcept    { return a; }                 // A(a+1)
 constexpr int virtBusIndex (int v) noexcept  { return kMaxHwBuses + v; }   // B(v+1)
 
+/** Internal code of a bus in parameter ids, session files and MIDI maps ("A1", "B1"). Never shown. */
 inline juce::String busCode (int b)
 {
     return isHwBus (b) ? "A" + juce::String (b + 1) : "B" + juce::String (b - kMaxHwBuses + 1);
 }
+
+/** What the user sees for a bus: H = hardware output ("H1"), V = virtual output ("V1"). */
+inline juce::String busLabel (int b)
+{
+    return isHwBus (b) ? "H" + juce::String (b + 1) : "V" + juce::String (b - kMaxHwBuses + 1);
+}
+
+/** Default name of a bus. Older sessions stored the internal code ("A1") as name: that counts as default too. */
+inline bool isDefaultBusName (int b, const juce::String& n) { return n.isEmpty() || n == busLabel (b) || n == busCode (b); }
 
 inline juce::File appDataDir()
 {

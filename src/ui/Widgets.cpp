@@ -1,4 +1,5 @@
 #include "Widgets.h"
+#include "ChannelIcons.h"
 #include "state/UndoHistory.h"
 
 namespace hydra
@@ -21,6 +22,7 @@ bool UiContext::handleUndoKey (const juce::KeyPress& key, juce::String* message)
     return true;
 }
 
+//==============================================================================
 //==============================================================================
 bool setParamFromText (Param& p, const juce::String& text)
 {
@@ -55,14 +57,81 @@ bool setParamFromText (Param& p, const juce::String& text)
 }
 
 //==============================================================================
+//==============================================================================
+// Mouse wheel between controls and scrolling panes. Without rules, scrolling through the strips moved every
+// fader and knob that passed under the mouse, and a control the user wanted to turn scrolled the pane instead.
+// Rules (only inside a pane that can scroll; elsewhere the wheel always turns the control):
+//  - The pane keeps the wheel while it is being scrolled (latch): controls that slide under the mouse stay put.
+//  - A control takes the wheel once the mouse really moved onto it and rested there briefly (kRestMs), or right
+//    after it was clicked. It then keeps the wheel for the whole wheel gesture, even if the mouse drifts off it.
+//  - Ctrl + wheel always turns the control under the mouse (Shift: fine steps, as before).
+namespace
+{
+constexpr double kWheelLatchMs = 450.0, kWheelRestMs = 280.0;
+double paneScrolledMs = -1.0e9, ownerWheelMs = -1.0e9;
+const ParamControl* wheelOwner = nullptr;
+// Last mouse position seen by any control (or when a pane scrolled): an event at the same place is a control
+// sliding under a resting mouse, not the user moving onto it.
+juce::Point<float> lastMouseScreen { -1.0e6f, -1.0e6f };
+double nowMs() { return juce::Time::getMillisecondCounterHiRes(); }
+
+bool inScrollablePane (const juce::Component& c)
+{
+    for (auto* p = c.getParentComponent(); p != nullptr; p = p->getParentComponent())
+        if (auto* v = dynamic_cast<juce::Viewport*> (p))
+            if (v->canScrollHorizontally() || v->canScrollVertically()) return true;
+    return false;
+}
+} // namespace
+
+void ParamControl::notePaneScrolled()
+{
+    paneScrolledMs = nowMs();
+    wheelOwner = nullptr;
+    lastMouseScreen = juce::Desktop::getInstance().getMainMouseSource().getScreenPosition();
+}
+
+void ParamControl::HoverClock::track (const juce::MouseEvent& e)
+{
+    // Only a real movement of the mouse counts: when the pane scrolls, controls move under a resting mouse.
+    const auto p = e.getScreenPosition().toFloat();
+    if (p == lastMouseScreen) return;
+    lastMouseScreen = p;
+    if (since == 0.0) since = nowMs();
+}
+
+bool ParamControl::takesWheel (const juce::MouseEvent& e)
+{
+    const double now = nowMs();
+    if (e.mods.isCtrlDown()) return true;
+    if (wheelOwner == this && now - ownerWheelMs < kWheelLatchMs) return true;
+    if (now - paneScrolledMs < kWheelLatchMs) return false;
+    if (! inScrollablePane (*this)) return true;
+    if (isMouseButtonDown()) return true;
+    return hoverClock.since > 0.0 && now - hoverClock.since >= kWheelRestMs;
+}
+
 ParamControl::ParamControl (UiContext& c, Param& p) : param (p), ctx (c)
 {
     ParamPoller::attach (this);
     setTooltip (p.name);
     setRepaintsOnMouseActivity (false);
+    addMouseListener (&hoverClock, false);
 }
 
-ParamControl::~ParamControl() { ParamPoller::detach (this); }
+ParamControl::~ParamControl()
+{
+    removeMouseListener (&hoverClock);
+    if (wheelOwner == this) wheelOwner = nullptr;
+    ParamPoller::detach (this);
+}
+
+juce::String ParamControl::getTooltip()
+{
+    if (! tooltipText) return juce::SettableTooltipClient::getTooltip();
+    const auto key = ctx.hotkeys.getKeyFor (&param);
+    return key.isValid() ? tooltipText() + "   [" + Hotkeys::describe (key) + "]" : tooltipText();
+}
 
 void ParamControl::resized()
 {
@@ -163,6 +232,7 @@ void ParamControl::mouseDown (const juce::MouseEvent& e)
         pollParams();
         return;
     }
+    hoverClock.since = nowMs() - kWheelRestMs;   // clicked: the wheel belongs to this control right away
     press (e);
 }
 
@@ -177,7 +247,15 @@ void ParamControl::mouseDoubleClick (const juce::MouseEvent& e)
 
 void ParamControl::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
 {
-    if (param.type != ParamType::Continuous) return;
+    if (param.type != ParamType::Continuous || ! takesWheel (e))
+    {
+        // Not for this control: the pane around it scrolls (Component passes the wheel on to the parent).
+        if (inScrollablePane (*this)) notePaneScrolled();
+        juce::Component::mouseWheelMove (e, w);
+        return;
+    }
+    wheelOwner = this;
+    ownerWheelMs = nowMs();
     const float dir = (w.deltaY != 0 ? w.deltaY : w.deltaX) > 0 ? 1.0f : -1.0f;
     const float step = wheelStep() * (e.mods.isShiftDown() ? 0.2f : 1.0f);
     param.setNormalised (param.getNormalised() + dir * step);
@@ -278,7 +356,7 @@ Fader::Fader (UiContext& c, Param& p, juce::Colour a) : ParamControl (c, p), acc
 juce::Rectangle<float> Fader::track() const
 {
     auto r = getLocalBounds().toFloat();
-    return r.reduced (0.0f, 14.0f);
+    return horizontal ? r.reduced (16.0f, 0.0f) : r.reduced (0.0f, 14.0f);
 }
 
 void Fader::press (const juce::MouseEvent& e)
@@ -286,6 +364,17 @@ void Fader::press (const juce::MouseEvent& e)
     dragStartNorm = param.getNormalised();
     // Click on the track (not the thumb) jumps there.
     const auto t = track();
+    if (horizontal)
+    {
+        const float thumbX = t.getX() + dragStartNorm * t.getWidth();
+        if (std::abs ((float) e.x - thumbX) > 14.0f && ! e.mods.isShiftDown())
+        {
+            param.setNormalised (((float) e.x - t.getX()) / t.getWidth());
+            dragStartNorm = param.getNormalised();
+            animating = true;
+        }
+        return;
+    }
     const float thumbY = t.getBottom() - dragStartNorm * t.getHeight();
     if (std::abs ((float) e.y - thumbY) > 14.0f && ! e.mods.isShiftDown())
     {
@@ -298,7 +387,8 @@ void Fader::press (const juce::MouseEvent& e)
 void Fader::drag (const juce::MouseEvent& e)
 {
     const float sens = e.mods.isShiftDown() ? 0.15f : 1.0f;
-    param.setNormalised (dragStartNorm - (float) e.getDistanceFromDragStartY() * sens / track().getHeight());
+    if (horizontal) param.setNormalised (dragStartNorm + (float) e.getDistanceFromDragStartX() * sens / track().getWidth());
+    else            param.setNormalised (dragStartNorm - (float) e.getDistanceFromDragStartY() * sens / track().getHeight());
     // Direct manipulation: follow the mouse without smoothing.
     shown = param.getNormalised();
     animating = false;
@@ -326,8 +416,10 @@ void Fader::frame (double t)
 
 void Fader::paint (juce::Graphics& g)
 {
+    if (horizontal) { paintHorizontal (g); return; }
     const auto t = track();
-    const float cx = t.getCentreX() + 6.0f;
+    const float cx = theme::deep() ? t.getRight() - 15.0f   // cap at the right edge, next to the meter
+                                   : t.getCentreX() + 6.0f;
 
     // Scale
     g.setFont (theme::font (10.0f));
@@ -360,6 +452,19 @@ void Fader::paint (juce::Graphics& g)
         g.fillRect (cx + 6.0f, yMin - 1.0f, 6.0f, 2.0f);
     }
 
+    if (theme::deep())
+    {
+        // Thumb: light rectangular cap (stands out from the slot in any channel colour) with a centre line in the accent colour
+        auto cap = juce::Rectangle<float> (28.0f, 18.0f).withCentre ({ cx, thumbY });
+        g.setColour (juce::Colours::black.withAlpha (0.5f));
+        g.fillRoundedRectangle (cap.translated (0.0f, 2.0f).expanded (1.0f), 4.0f);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffe2e6ee), cx, cap.getY(), juce::Colour (0xff9aa3b3), cx, cap.getBottom(), false));
+        g.fillRoundedRectangle (cap, 3.0f);
+        g.setColour (accent.darker (0.15f));
+        g.fillRect (cap.withSizeKeepingCentre (cap.getWidth() - 2.0f, 3.0f));
+        return;
+    }
+
     // Thumb: round knob with an accent ring
     const float d = 24.0f;
     auto thumb = juce::Rectangle<float> (d, d).withCentre ({ cx, thumbY });
@@ -372,6 +477,64 @@ void Fader::paint (juce::Graphics& g)
     g.drawEllipse (thumb.reduced (1.0f), 2.0f);
     g.setColour (theme::text.withAlpha (0.85f));
     g.fillEllipse (juce::Rectangle<float> (4.0f, 4.0f).withCentre ({ cx, thumbY }));
+}
+
+void Fader::paintHorizontal (juce::Graphics& g)
+{
+    // Track in the upper part, the scale below it; the cap is the vertical one turned sideways.
+    const auto t = track();
+    const float cy = juce::jmin (t.getCentreY() - 5.0f, t.getY() + 13.0f);
+    auto xOf = [&] (float n) { return t.getX() + n * t.getWidth(); };
+
+    g.setFont (theme::font (10.0f));
+    for (float db : { 12.0f, 6.0f, 0.0f, -6.0f, -12.0f, -24.0f, -40.0f, -60.0f })
+    {
+        const float x = xOf (param.range.convertTo0to1 (db));
+        g.setColour (db == 0.0f ? theme::textDim : theme::textFaint);
+        g.fillRect (x - 0.5f, cy + 9.0f, 1.0f, 4.0f);
+        g.drawText (db <= -60.0f ? "-inf" : juce::String ((int) db), juce::Rectangle<float> (x - 16.0f, cy + 13.0f, 32.0f, 11.0f),
+                    juce::Justification::centred);
+    }
+
+    auto tr = juce::Rectangle<float> (t.getX(), cy - 3.0f, t.getWidth(), 6.0f);
+    g.setColour (theme::bg);
+    g.fillRoundedRectangle (tr, 3.0f);
+    const float norm = shown >= 0.0f ? shown : param.getNormalised();
+    const float thumbX = xOf (norm);
+    g.setGradientFill (juce::ColourGradient (accent.withAlpha (0.35f), t.getX(), cy, accent, thumbX, cy, false));
+    g.fillRoundedRectangle (tr.withRight (thumbX), 3.0f);
+
+    if (hasCustomMidiRange())
+    {
+        const float xMin = xOf (midiMin), xMax = xOf (midiMax);
+        g.setColour (theme::learn.withAlpha (0.8f));
+        g.fillRect (juce::jmin (xMin, xMax), cy - 8.0f, std::abs (xMin - xMax), 2.0f);
+        g.fillRect (xMax - 1.0f, cy - 12.0f, 2.0f, 6.0f);
+        g.fillRect (xMin - 1.0f, cy - 12.0f, 2.0f, 6.0f);
+    }
+
+    if (theme::deep())
+    {
+        auto cap = juce::Rectangle<float> (18.0f, 24.0f).withCentre ({ thumbX, cy });
+        g.setColour (juce::Colours::black.withAlpha (0.5f));
+        g.fillRoundedRectangle (cap.translated (0.0f, 2.0f).expanded (1.0f), 4.0f);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffe2e6ee), thumbX, cap.getY(), juce::Colour (0xff9aa3b3), thumbX, cap.getBottom(), false));
+        g.fillRoundedRectangle (cap, 3.0f);
+        g.setColour (accent.darker (0.15f));
+        g.fillRect (cap.withSizeKeepingCentre (3.0f, cap.getHeight() - 2.0f));
+        return;
+    }
+    const float d = 22.0f;
+    auto thumb = juce::Rectangle<float> (d, d).withCentre ({ thumbX, cy });
+    g.setColour (juce::Colours::black.withAlpha (0.4f));
+    g.fillEllipse (thumb.translated (0.0f, 2.0f).expanded (1.0f));
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff434b5c), thumb.getX(), thumb.getY(),
+                                             juce::Colour (0xff252b35), thumb.getX(), thumb.getBottom(), false));
+    g.fillEllipse (thumb);
+    g.setColour (accent);
+    g.drawEllipse (thumb.reduced (1.0f), 2.0f);
+    g.setColour (theme::text.withAlpha (0.85f));
+    g.fillEllipse (juce::Rectangle<float> (4.0f, 4.0f).withCentre ({ thumbX, cy }));
 }
 
 //==============================================================================
@@ -400,7 +563,13 @@ void Knob::drag (const juce::MouseEvent& e)
 void Knob::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
-    auto textArea = r.removeFromBottom (14.0f);
+    auto textArea = r.removeFromBottom (alwaysShowValue ? 16.0f : 14.0f);
+    if (alwaysShowValue)
+    {
+        g.setFont (theme::font (10.5f));
+        g.setColour (theme::textDim);
+        g.drawText (label, r.removeFromTop (14.0f), juce::Justification::centred);
+    }
     const float size = juce::jmin (r.getWidth(), r.getHeight()) - 4.0f;
     auto k = r.withSizeKeepingCentre (size, size);
     const auto c = k.getCentre();
@@ -428,6 +597,14 @@ void Knob::paint (juce::Graphics& g)
     g.drawLine ({ c.getPointOnCircumference (inner * 0.25f, ang), tip }, 2.0f);
 
     if (isEditingText()) return;
+    if (alwaysShowValue)
+    {
+        // Plain text like in the EQ block; it can be clicked to type a value.
+        g.setFont (theme::font (10.5f));
+        g.setColour (hover || dragging ? theme::text : theme::textDim);
+        g.drawText (param.toText(), textArea, juce::Justification::centred);
+        return;
+    }
     g.setFont (theme::font (10.5f));
     g.setColour (hover || dragging ? theme::text : theme::textDim);
     g.drawText (hover || dragging ? param.toText() : label, textArea, juce::Justification::centred);
@@ -491,16 +668,62 @@ void Toggle::drawIcon (juce::Graphics& g, Icon icon, bool on, juce::Rectangle<fl
     }
 }
 
+namespace
+{
+constexpr int kToggleFrameHz = 60;
+constexpr float kToggleStep = 0.3f;   // per frame: settled after ~100 ms
+
+/** Returns true when shown has reached target. */
+bool glideToggle (float& shown, float target)
+{
+    shown += (target - shown) * kToggleStep;
+    if (std::abs (target - shown) >= 0.02f) return false;
+    shown = target;
+    return true;
+}
+} // namespace
+
+void Toggle::pollParams()
+{
+    ParamControl::pollParams();
+    const float target = isLit() ? 1.0f : 0.0f;
+    if (shown < 0.0f) shown = target;
+    else if (shown != target && ! isTimerRunning()) startTimerHz (kToggleFrameHz);
+}
+
+void Toggle::timerCallback()
+{
+    if (glideToggle (shown, isLit() ? 1.0f : 0.0f)) stopTimer();
+    repaint();
+}
+
 void Toggle::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (1.0f);
-    const bool on = choiceValue >= 0 ? juce::roundToInt (param.get()) == choiceValue : param.isOn();
-    g.setColour (on ? onColour : (hover ? theme::raised.brighter (0.08f) : theme::raised));
-    g.fillRoundedRectangle (r, 5.0f);
-    if (! on)
+    const bool on = isLit();
+    const float pos = shown >= 0.0f ? shown : (on ? 1.0f : 0.0f);
+    if (theme::deep() && icon == Icon::none && text == "ON")
     {
-        g.setColour (theme::outline);
+        // On/off of a block: toggle switch, at the right end of its slot
+        const float h = juce::jmin (18.0f, r.getHeight());
+        auto line = r.withSizeKeepingCentre (r.getWidth(), h);
+        theme::drawSwitch (g, line.withLeft (line.getRight() - h * 1.8f), pos, onColour, hover, true);
+        return;
+    }
+    const bool tinted = soft && theme::deep();
+    const auto offFill = hover ? theme::raised.brighter (0.08f) : theme::raised;
+    g.setColour (offFill.interpolatedWith (onColour, tinted ? pos * 0.62f : pos));
+    g.fillRoundedRectangle (r, 5.0f);
+    if (pos < 1.0f)
+    {
+        g.setColour (theme::outline.withMultipliedAlpha (1.0f - pos));
         g.drawRoundedRectangle (r, 5.0f, 1.0f);
+    }
+    if (tinted && pos > 0.0f)
+    {
+        // Routing, LIM: the frame in the full colour makes the active ones easy to pick out in a column of buttons.
+        g.setColour (onColour.withMultipliedAlpha (pos));
+        g.drawRoundedRectangle (r.reduced (0.5f), 4.5f, 1.0f);
     }
     if (icon != Icon::none)
     {
@@ -510,7 +733,14 @@ void Toggle::paint (juce::Graphics& g)
         drawIcon (g, icon, on, r.withSizeKeepingCentre (juce::jmin (r.getHeight(), 22.0f), juce::jmin (r.getHeight(), 22.0f)), colour);
         return;
     }
-    g.setColour (on ? theme::bg : theme::textDim);
+    const auto ink = tinted ? theme::textDim.interpolatedWith (juce::Colours::white, pos) : on ? theme::bg : theme::textDim;
+    g.setColour (ink);
+    if (icons::exists (glyph))
+    {
+        const float s = juce::jmin (r.getHeight() - 4.0f, r.getWidth() - 4.0f, 15.0f);
+        icons::draw (g, glyph, r.withSizeKeepingCentre (s, s), ink);
+        return;
+    }
     auto f = theme::font (juce::jmin (11.5f, r.getHeight() * 0.6f), true);
     const float tw = juce::GlyphArrangement::getStringWidth (f, text);
     if (tw > r.getWidth() - 4.0f)
@@ -523,11 +753,25 @@ void Toggle::paint (juce::Graphics& g)
 Switch::Switch (UiContext& c, Param& p, juce::String t, juce::Colour on)
     : ParamControl (c, p), text (std::move (t)), onColour (on) {}
 
+void Switch::pollParams()
+{
+    ParamControl::pollParams();
+    const float target = param.isOn() ? 1.0f : 0.0f;
+    if (shown < 0.0f) shown = target;
+    else if (shown != target && ! isTimerRunning()) startTimerHz (kToggleFrameHz);
+}
+
+void Switch::timerCallback()
+{
+    if (glideToggle (shown, param.isOn() ? 1.0f : 0.0f)) stopTimer();
+    repaint();
+}
+
 void Switch::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
     const float h = juce::jmin (22.0f, r.getHeight() - 2.0f);
-    theme::drawSwitch (g, r.withSizeKeepingCentre (r.getWidth(), h), param.isOn(), onColour, hover);
+    theme::drawSwitch (g, r.withSizeKeepingCentre (r.getWidth(), h), shown >= 0.0f ? shown : (param.isOn() ? 1.0f : 0.0f), onColour, hover, true);
     g.setColour (param.isOn() ? theme::text : theme::textDim);
     g.setFont (theme::font (12.5f, true));
     g.drawFittedText (text, r.withTrimmedLeft (h * 1.8f + 10.0f).toNearestInt(), juce::Justification::centredLeft, 1);
@@ -708,6 +952,41 @@ void MeterView::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
     const float gap = 2.0f;
+    if (horizontal)
+    {
+        const float h = (r.getHeight() - gap) * 0.5f;
+        for (int c = 0; c < 2; ++c)
+        {
+            auto bar = juce::Rectangle<float> (r.getX(), r.getY() + (float) c * (h + gap), r.getWidth(), h);
+            g.setColour (theme::bg);
+            g.fillRoundedRectangle (bar, 2.0f);
+            if (const float p = toPos (shown[c]); p > 0.0f)
+            {
+                if (dimmed)
+                    g.setColour (theme::textFaint.withAlpha (0.55f));
+                else
+                {
+                    juce::ColourGradient grad (theme::good, bar.getX(), 0, theme::mute, bar.getRight(), 0, false);
+                    grad.addColour (toPos (-12.0f), theme::good);
+                    grad.addColour (toPos (-3.0f), theme::solo);
+                    g.setGradientFill (grad);
+                }
+                g.fillRoundedRectangle (bar.withWidth (p * bar.getWidth()), 2.0f);
+            }
+            if (const float hp = toPos (shownHold[c]); hp > 0.0f)
+            {
+                g.setColour (dimmed ? theme::textFaint : shownHold[c] > -0.1f ? theme::mute : theme::text.withAlpha (0.8f));
+                g.fillRect (bar.getX() + hp * bar.getWidth() - 1.5f, bar.getY(), 1.5f, bar.getHeight());
+            }
+        }
+        if (! compact)
+        {
+            g.setColour (theme::bg.withAlpha (0.55f));
+            for (float db : { 0.0f, -6.0f, -12.0f, -24.0f, -40.0f })
+                g.fillRect (r.getX() + toPos (db) * r.getWidth(), r.getY(), 1.0f, r.getHeight());
+        }
+        return;
+    }
     const float w = (r.getWidth() - gap) * 0.5f;
 
     for (int c = 0; c < 2; ++c)
@@ -747,208 +1026,4 @@ void MeterView::paint (juce::Graphics& g)
     }
 }
 
-//==============================================================================
-void Chip::paint (juce::Graphics& g)
-{
-    auto r = getLocalBounds().toFloat().reduced (0.5f);
-    g.setColour (active ? colour.withAlpha (0.22f) : (hover ? theme::raised.brighter (0.06f) : theme::panel2));
-    g.fillRoundedRectangle (r, 6.0f);
-    bool offline = false;
-    for (auto& s : status) offline |= s.kind == Marker::offline;
-    g.setColour (offline ? theme::mute.withAlpha (0.7f) : ! status.empty() ? theme::warn.withAlpha (0.8f)
-                 : active ? colour.withAlpha (0.8f) : theme::outline);
-    g.drawRoundedRectangle (r, 6.0f, 1.0f);
-
-    auto tr = r.reduced (7.0f, 0.0f);
-    if (showArrow)
-    {
-        auto ar = tr.removeFromRight (8.0f);
-        juce::Path p;
-        const float cy = ar.getCentreY();
-        p.addTriangle (ar.getX(), cy - 2.0f, ar.getRight(), cy - 2.0f, ar.getCentreX(), cy + 2.5f);
-        g.setColour (theme::textDim);
-        g.fillPath (p);
-        tr.removeFromRight (3.0f);
-    }
-    // Status dots left of the name (red first)
-    markerAreas.clear();
-    for (auto& st : status)
-    {
-        auto m = tr.removeFromLeft (9.0f).withSizeKeepingCentre (9.0f, 9.0f);
-        drawMarker (g, st.kind, m);
-        markerAreas.push_back (m.expanded (3.0f, 6.0f));
-        tr.removeFromLeft (4.0f);
-    }
-    if (icon != Icon::none)
-    {
-        const float s = juce::jmin (14.0f, tr.getHeight() - 6.0f);
-        auto ir = text.isEmpty() ? tr.withSizeKeepingCentre (s, s) : tr.removeFromLeft (s).withSizeKeepingCentre (s, s);
-        drawIcon (g, icon, ir, active ? theme::text : colour);
-        if (text.isEmpty()) return;
-        tr.removeFromLeft (6.0f);
-        if (centred) tr.removeFromRight (s + 6.0f);   // keep the text centred under the whole chip
-    }
-    g.setColour (active ? theme::text : colour);
-    g.setFont (theme::font (12.0f));
-    g.drawFittedText (text, tr.toNearestInt(), centred ? juce::Justification::centred : juce::Justification::centredLeft, 1, 0.8f);
-}
-
-void Chip::setStatus (std::vector<Status> s)
-{
-    // One dot per colour: dropouts and "needs attention" are both yellow and share a dot (and its tooltip).
-    std::vector<Status> merged;
-    for (int pass = 0; pass < 2; ++pass)
-    {
-        const bool red = pass == 0;
-        Status dot { red ? Marker::offline : Marker::attention, {} };
-        bool any = false;
-        for (auto& x : s)
-            if ((x.kind == Marker::offline) == red)
-            {
-                if (any) dot.tip << "\n\n";
-                dot.tip << x.tip;
-                if (x.kind == Marker::dropouts && ! red) dot.kind = Marker::dropouts;
-                any = true;
-            }
-        if (any) merged.push_back (std::move (dot));
-    }
-
-    auto same = [] (const std::vector<Status>& a, const std::vector<Status>& b)
-    {
-        if (a.size() != b.size()) return false;
-        for (size_t k = 0; k < a.size(); ++k)
-            if (a[k].kind != b[k].kind || a[k].tip != b[k].tip) return false;
-        return true;
-    };
-    if (same (merged, status)) return;
-    const bool symbolsChanged = merged.size() != status.size()
-                             || ! std::equal (merged.begin(), merged.end(), status.begin(), [] (auto& a, auto& b) { return a.kind == b.kind; });
-    status = std::move (merged);
-    if (symbolsChanged) repaint();
-}
-
-juce::String Chip::getTooltip()
-{
-    // Over a dot: just what it means. Elsewhere: the problems first, then the chip's own tooltip.
-    const auto p = getMouseXYRelative().toFloat();
-    for (size_t k = 0; k < markerAreas.size() && k < status.size(); ++k)
-        if (markerAreas[k].contains (p)) return status[k].tip;
-    juce::String tip;
-    for (auto& st : status) tip << st.tip << "\n\n";
-    return tip + juce::SettableTooltipClient::getTooltip();
-}
-
-void Chip::drawMarker (juce::Graphics& g, Marker kind, juce::Rectangle<float> r)
-{
-    // Red dot = offline, yellow dot = dropouts / needs attention, with a faint halo so it reads on any chip.
-    const auto c = kind == Marker::offline ? theme::mute : theme::warn;
-    const auto d = juce::jmin (r.getWidth(), r.getHeight());
-    const auto dot = juce::Rectangle<float> (d, d).withCentre (r.getCentre());
-    g.setColour (c.withAlpha (0.25f));
-    g.fillEllipse (dot.expanded (1.5f));
-    g.setColour (c);
-    g.fillEllipse (dot.reduced (0.5f));
-}
-
-void Chip::drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> r, juce::Colour colour)
-{
-    const juce::PathStrokeType stroke (1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
-    g.setColour (colour);
-    if (icon == Icon::save)
-    {
-        // Floppy disk: body with a cut corner, shutter at the top, label at the bottom.
-        auto b = r.reduced (0.5f);
-        const float cut = b.getWidth() * 0.24f;
-        juce::Path body;
-        body.startNewSubPath (b.getX(), b.getY());
-        body.lineTo (b.getRight() - cut, b.getY());
-        body.lineTo (b.getRight(), b.getY() + cut);
-        body.lineTo (b.getRight(), b.getBottom());
-        body.lineTo (b.getX(), b.getBottom());
-        body.closeSubPath();
-        g.strokePath (body, stroke);
-        g.fillRect (juce::Rectangle<float> (b.getX() + b.getWidth() * 0.26f, b.getY(), b.getWidth() * 0.4f, b.getHeight() * 0.3f));
-        g.drawRoundedRectangle (juce::Rectangle<float> (b.getX() + b.getWidth() * 0.2f, b.getY() + b.getHeight() * 0.56f,
-                                                        b.getWidth() * 0.6f, b.getHeight() * 0.44f), 1.0f, 1.2f);
-    }
-    else if (icon == Icon::revert)
-    {
-        // Counter-clockwise arrow (back to the stored state).
-        const auto c = r.getCentre();
-        const float rad = r.getWidth() * 0.4f;
-        juce::Path arc;
-        arc.addCentredArc (c.x, c.y, rad, rad, 0.0f, -juce::MathConstants<float>::pi * 0.35f,
-                           juce::MathConstants<float>::pi * 1.25f, true);
-        g.strokePath (arc, stroke);
-        // Arrow head at the start of the arc, pointing against the drawing direction (= counter-clockwise).
-        const float sa = -juce::MathConstants<float>::pi * 0.35f;
-        const juce::Point<float> start (c.x + rad * std::sin (sa), c.y - rad * std::cos (sa));
-        const juce::Point<float> dir (-std::cos (sa), -std::sin (sa));   // tangent, counter-clockwise
-        const juce::Point<float> nrm (dir.y, -dir.x);
-        juce::Path head;
-        const float s = r.getWidth() * 0.26f;
-        head.addTriangle (start + dir * s, start - nrm * (s * 0.8f), start + nrm * (s * 0.8f));
-        g.fillPath (head);
-    }
-}
-//==============================================================================
-void TrashButton::drawIcon (juce::Graphics& g, juce::Rectangle<float> area, juce::Colour colour)
-{
-    // Trash can: lid with handle, tapered bin with three ribs.
-    const float s = juce::jmin (area.getWidth(), area.getHeight());
-    auto r = juce::Rectangle<float> (s * 0.8f, s).withCentre (area.getCentre());
-    const float stroke = juce::jmax (1.2f, s * 0.09f);
-    const juce::PathStrokeType pst (stroke, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
-    juce::Path p;
-    const float lidY = r.getY() + r.getHeight() * 0.2f;
-    p.startNewSubPath (r.getX(), lidY);
-    p.lineTo (r.getRight(), lidY);
-    const float hw = r.getWidth() * 0.18f;
-    p.startNewSubPath (r.getCentreX() - hw, lidY);
-    p.lineTo (r.getCentreX() - hw, r.getY() + stroke * 0.5f);
-    p.lineTo (r.getCentreX() + hw, r.getY() + stroke * 0.5f);
-    p.lineTo (r.getCentreX() + hw, lidY);
-    const float top = lidY + stroke * 0.9f, bottom = r.getBottom() - stroke * 0.5f;
-    const float inset = r.getWidth() * 0.12f, taper = r.getWidth() * 0.06f;
-    p.startNewSubPath (r.getX() + inset, top);
-    p.lineTo (r.getX() + inset + taper, bottom);
-    p.lineTo (r.getRight() - inset - taper, bottom);
-    p.lineTo (r.getRight() - inset, top);
-    for (float f : { 0.36f, 0.5f, 0.64f })
-    {
-        const float x = r.getX() + r.getWidth() * f;
-        p.startNewSubPath (x, top + r.getHeight() * 0.14f);
-        p.lineTo (x, bottom - r.getHeight() * 0.14f);
-    }
-    g.setColour (colour);
-    g.strokePath (p, pst);
-}
-
-void TrashButton::paint (juce::Graphics& g)
-{
-    auto r = getLocalBounds().toFloat().reduced (0.5f);
-    const bool hot = hover && isEnabled();
-    g.setColour (hot ? theme::mute.withAlpha (0.2f) : theme::panel2);
-    g.fillRoundedRectangle (r, 6.0f);
-    g.setColour (hot ? theme::mute.withAlpha (0.8f) : theme::outline);
-    g.drawRoundedRectangle (r, 6.0f, 1.0f);
-    drawIcon (g, r.withSizeKeepingCentre (14.0f, 14.0f), hot ? theme::mute : isEnabled() ? theme::textDim : theme::textFaint.withAlpha (0.5f));
-}
-
-//==============================================================================
-void PlusButton::paint (juce::Graphics& g)
-{
-    auto r = getLocalBounds().toFloat().reduced (0.5f);
-    const float corner = juce::jmin (8.0f, r.getHeight() * 0.3f);
-    g.setColour (hover ? colour.withAlpha (0.22f) : theme::panel2);
-    g.fillRoundedRectangle (r, corner);
-    g.setColour (colour.withAlpha (hover ? 0.9f : 0.45f));
-    g.drawRoundedRectangle (r, corner, 1.0f);
-
-    const auto c = r.getCentre();
-    const float s = juce::jmin (r.getWidth(), r.getHeight()) * 0.22f;
-    g.setColour (hover ? theme::text : colour);
-    g.fillRoundedRectangle (c.x - s, c.y - 1.0f, s * 2.0f, 2.0f, 1.0f);
-    g.fillRoundedRectangle (c.x - 1.0f, c.y - s, 2.0f, s * 2.0f, 1.0f);
-}
 } // namespace hydra

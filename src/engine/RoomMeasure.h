@@ -18,6 +18,7 @@ struct MeasureRun
     int outChannels = 3;       // bit 0 = left, bit 1 = right speaker
     bool muteOthers = true;    // every other bus is silent while measuring
     bool busEq = false;        // the sweep passes the bus's EQ (to check a correction)
+    bool busCorrection = false;   // the sweep passes the bus's Correction only (validating it; the EQ is taste)
 
     std::vector<float> stimulus, capture;
     int length = 0;            // = stimulus.size() = capture.size()

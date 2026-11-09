@@ -1,4 +1,5 @@
 #include "RoomAnalysis.h"
+#include <random>
 
 #include <algorithm>
 #include <array>
@@ -6,6 +7,7 @@
 #include <complex>
 #include <numeric>
 #include <sstream>
+#include <thread>
 
 namespace hydra::room
 {
@@ -148,6 +150,34 @@ std::vector<float> makeStimulus (const SweepSpec& s)
     return out;
 }
 
+std::vector<float> makePinkNoise (int length, double rmsDb, unsigned seed)
+{
+    // White noise through Paul Kellet's pink filter (within 0.05 dB of -3 dB/octave above ~10 Hz).
+    std::vector<float> out ((size_t) std::max (0, length));
+    std::mt19937 rng (seed);
+    std::uniform_real_distribution<double> white (-1.0, 1.0);
+    double b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, power = 0.0;
+    for (auto& v : out)
+    {
+        const double w = white (rng);
+        b0 = 0.99886 * b0 + w * 0.0555179;
+        b1 = 0.99332 * b1 + w * 0.0750759;
+        b2 = 0.96900 * b2 + w * 0.1538520;
+        b3 = 0.86650 * b3 + w * 0.3104856;
+        b4 = 0.55000 * b4 + w * 0.5329522;
+        b5 = -0.7616 * b5 - w * 0.0168980;
+        const double pink = b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362;
+        b6 = w * 0.115926;
+        v = (float) pink;
+        power += pink * pink;
+    }
+    if (power > 0.0)
+    {
+        const double gain = std::pow (10.0, rmsDb / 20.0) / std::sqrt (power / (double) out.size());
+        for (auto& v : out) v = (float) (v * gain);
+    }
+    return out;
+}
 //==============================================================================
 ImpulseResponse deconvolve (const std::vector<float>& capture, const SweepSpec& s)
 {
@@ -221,7 +251,15 @@ ImpulseResponse deconvolve (const std::vector<float>& capture, const SweepSpec& 
     double best = -1.0;
     for (size_t i = 0; i < res.ir.size(); ++i)
         if (std::abs (res.ir[i]) > best) { best = std::abs (res.ir[i]); res.peak = (int) i; }
-    res.latencyMs = (res.peak - pre) * 1000.0 / s.sampleRate;
+    // Between the samples (parabola through the peak and its neighbours): distances to ~1 mm instead of 7 mm.
+    double frac = 0.0;
+    if (res.peak > 0 && res.peak + 1 < (int) res.ir.size())
+    {
+        const double a = std::abs (res.ir[(size_t) res.peak - 1]), b = best, c = std::abs (res.ir[(size_t) res.peak + 1]);
+        const double d = a - 2.0 * b + c;
+        if (d < 0.0) frac = std::clamp (0.5 * (a - c) / d, -0.5, 0.5);
+    }
+    res.latencyMs = (res.peak + frac - pre) * 1000.0 / s.sampleRate;
 
     const size_t tail0 = res.ir.size() - res.ir.size() / 5;
     double tail = 0.0;
@@ -317,6 +355,74 @@ double valueAt (const std::vector<double>& freqs, const std::vector<double>& db,
 }
 
 //==============================================================================
+namespace
+{
+/** Mean level of the 1/3 octave response in the band of the sweep: the charts show the response relative to it. */
+void computeReference (Analysis& a)
+{
+    const auto third = smooth (a.magDb, 3.0);
+    const double lo = std::max (40.0, a.sweepStartHz * 1.5), hi = std::min (12000.0, a.sweepEndHz / 1.5);
+    double s = 0.0;
+    int count = 0;
+    for (size_t i = 0; i < a.freqs.size(); ++i)
+        if (a.freqs[i] >= lo && a.freqs[i] <= hi) { s += third[i]; ++count; }
+    a.referenceDb = count > 0 ? s / count : 0.0;
+}
+
+/** Resonances: peaks of the 1/12 octave response that stand out of the 1 octave response, with the ringing time
+    from the waterfall. */
+void findResonances (Analysis& a, const AnalysisOptions& o)
+{
+    const auto fine = smooth (a.magDb, 12.0), broad = smooth (a.magDb, 1.0), shape = smooth (a.magDb, 24.0);
+    const double lo = std::max (o.resonanceMinHz, a.sweepStartHz), hi = std::min (o.resonanceMaxHz, a.sweepEndHz);
+    const int n = (int) a.freqs.size(), span = Analysis::kPointsPerOctave / 6;
+    std::vector<Resonance> found;
+    for (int i = 1; i + 1 < n; ++i)
+    {
+        const double f = a.freqs[(size_t) i];
+        if (f < lo || f > hi) continue;
+        bool isMax = true;
+        for (int k = std::max (0, i - span); k <= std::min (n - 1, i + span) && isMax; ++k)
+            if (fine[(size_t) k] > fine[(size_t) i] || (fine[(size_t) k] == fine[(size_t) i] && k < i)) isMax = false;
+        const double excess = fine[(size_t) i] - broad[(size_t) i];
+        if (! isMax || excess < o.resonanceThresholdDb) continue;
+
+        Resonance r;
+        r.freq = f;
+        r.excessDb = excess;
+        // Width at half the peak's height above its surroundings (as a bell filter's Q is defined).
+        const double level = shape[(size_t) i] - excess * 0.5;
+        int l = i, h = i;
+        while (l > 0 && shape[(size_t) l] > level) --l;
+        while (h < n - 1 && shape[(size_t) h] > level) ++h;
+        const double bw = a.freqs[(size_t) h] - a.freqs[(size_t) l];
+        r.q = std::clamp (bw > 0.0 ? f / bw : 10.0, 0.5, 30.0);
+
+        // Ringing: when this frequency has fallen 20 dB below its level in the first slice.
+        r.ringMs = a.waterfallMs.empty() ? 0.0 : a.waterfallMs.back();
+        if (! a.waterfall.empty())
+        {
+            const double start = a.waterfall[0][(size_t) i];
+            for (size_t sIdx = 1; sIdx < a.waterfall.size(); ++sIdx)
+            {
+                const double v = a.waterfall[sIdx][(size_t) i];
+                if (v <= start - 20.0)
+                {
+                    const double prev = a.waterfall[sIdx - 1][(size_t) i];
+                    const double t = prev > v ? (prev - (start - 20.0)) / (prev - v) : 0.0;
+                    r.ringMs = a.waterfallMs[sIdx - 1] + t * (a.waterfallMs[sIdx] - a.waterfallMs[sIdx - 1]);
+                    break;
+                }
+            }
+        }
+        found.push_back (r);
+    }
+    std::sort (found.begin(), found.end(), [] (const Resonance& x, const Resonance& y) { return x.excessDb > y.excessDb; });
+    if (found.size() > 16) found.resize (16);
+    a.resonances = std::move (found);
+}
+} // namespace
+
 Analysis analyse (const ImpulseResponse& ir, const AnalysisOptions& o, double sweepStartHz, double sweepEndHz)
 {
     Analysis a;
@@ -346,13 +452,12 @@ Analysis analyse (const ImpulseResponse& ir, const AnalysisOptions& o, double sw
         a.magDb.resize (p.size());
         for (size_t i = 0; i < p.size(); ++i) a.magDb[i] = toDb (p[i]) - o.calibration.at (a.freqs[i]);
 
-        const auto third = smooth (a.magDb, 3.0);
-        const double lo = std::max (40.0, a.sweepStartHz * 1.5), hi = std::min (12000.0, a.sweepEndHz / 1.5);
-        double s = 0.0;
-        int count = 0;
-        for (size_t i = 0; i < a.freqs.size(); ++i)
-            if (a.freqs[i] >= lo && a.freqs[i] <= hi) { s += third[i]; ++count; }
-        a.referenceDb = count > 0 ? s / count : 0.0;
+        computeReference (a);
+    }
+    if (o.responseOnly)
+    {
+        findResonances (a, o);
+        return a;
     }
 
     // Waterfall: the response starting later and later (fixed window length, the end tapered).
@@ -475,56 +580,56 @@ Analysis analyse (const ImpulseResponse& ir, const AnalysisOptions& o, double sw
         }
     }
 
-    // Resonances: peaks of the 1/12 octave response that stand out of the 1 octave response.
+    findResonances (a, o);
+    return a;
+}
+
+Analysis analyse (const std::vector<const ImpulseResponse*>& positions, const AnalysisOptions& o, double sweepStartHz, double sweepEndHz)
+{
+    if (positions.empty()) return {};
+    if (positions.size() == 1) return analyse (*positions.front(), o, sweepStartHz, sweepEndHz);
+    // The positions are independent: each on its own thread.
+    std::vector<Analysis> each (positions.size());
+    if (! o.parallel)
+        for (size_t k = 0; k < positions.size(); ++k) each[k] = analyse (*positions[k], o, sweepStartHz, sweepEndHz);
+    else
     {
-        const auto fine = smooth (a.magDb, 12.0), broad = smooth (a.magDb, 1.0), shape = smooth (a.magDb, 24.0);
-        const double lo = std::max (o.resonanceMinHz, a.sweepStartHz), hi = std::min (o.resonanceMaxHz, a.sweepEndHz);
-        const int n = (int) a.freqs.size(), span = Analysis::kPointsPerOctave / 6;
-        std::vector<Resonance> found;
-        for (int i = 1; i + 1 < n; ++i)
-        {
-            const double f = a.freqs[(size_t) i];
-            if (f < lo || f > hi) continue;
-            bool isMax = true;
-            for (int k = std::max (0, i - span); k <= std::min (n - 1, i + span) && isMax; ++k)
-                if (fine[(size_t) k] > fine[(size_t) i] || (fine[(size_t) k] == fine[(size_t) i] && k < i)) isMax = false;
-            const double excess = fine[(size_t) i] - broad[(size_t) i];
-            if (! isMax || excess < o.resonanceThresholdDb) continue;
-
-            Resonance r;
-            r.freq = f;
-            r.excessDb = excess;
-            // Width at half the peak's height above its surroundings (as a bell filter's Q is defined).
-            const double level = shape[(size_t) i] - excess * 0.5;
-            int l = i, h = i;
-            while (l > 0 && shape[(size_t) l] > level) --l;
-            while (h < n - 1 && shape[(size_t) h] > level) ++h;
-            const double bw = a.freqs[(size_t) h] - a.freqs[(size_t) l];
-            r.q = std::clamp (bw > 0.0 ? f / bw : 10.0, 0.5, 30.0);
-
-            // Ringing: when this frequency has fallen 20 dB below its level in the first slice.
-            r.ringMs = a.waterfallMs.empty() ? 0.0 : a.waterfallMs.back();
-            if (! a.waterfall.empty())
-            {
-                const double start = a.waterfall[0][(size_t) i];
-                for (size_t sIdx = 1; sIdx < a.waterfall.size(); ++sIdx)
-                {
-                    const double v = a.waterfall[sIdx][(size_t) i];
-                    if (v <= start - 20.0)
-                    {
-                        const double prev = a.waterfall[sIdx - 1][(size_t) i];
-                        const double t = prev > v ? (prev - (start - 20.0)) / (prev - v) : 0.0;
-                        r.ringMs = a.waterfallMs[sIdx - 1] + t * (a.waterfallMs[sIdx] - a.waterfallMs[sIdx - 1]);
-                        break;
-                    }
-                }
-            }
-            found.push_back (r);
-        }
-        std::sort (found.begin(), found.end(), [] (const Resonance& x, const Resonance& y) { return x.excessDb > y.excessDb; });
-        if (found.size() > 16) found.resize (16);
-        a.resonances = std::move (found);
+        std::vector<std::thread> threads;
+        for (size_t k = 0; k < positions.size(); ++k)
+            threads.emplace_back ([&, k] { each[k] = analyse (*positions[k], o, sweepStartHz, sweepEndHz); });
+        for (auto& t : threads) t.join();
     }
+
+    auto a = each.front();   // impulse view (ETC) of the first position
+    const double n = (double) each.size();
+    auto powerMean = [n] (const std::vector<const std::vector<double>*>& curves, std::vector<double>& out)
+    {
+        for (size_t i = 0; i < out.size(); ++i)
+        {
+            double p = 0.0;
+            for (auto* c : curves) p += std::pow (10.0, (i < c->size() ? (*c)[i] : -200.0) / 10.0);
+            out[i] = 10.0 * std::log10 (p / n + 1.0e-30);
+        }
+    };
+    std::vector<const std::vector<double>*> mags;
+    for (auto& e : each) { mags.push_back (&e.magDb); a.positionDb.push_back (e.magDb); }
+    powerMean (mags, a.magDb);
+    for (size_t s = 0; s < a.waterfall.size(); ++s)
+    {
+        std::vector<const std::vector<double>*> slices;
+        for (auto& e : each) if (s < e.waterfall.size()) slices.push_back (&e.waterfall[s]);
+        powerMean (slices, a.waterfall[s]);
+    }
+    for (size_t b = 0; b < a.decay.size(); ++b)   // mean of the positions that have a value
+        for (double BandDecay::* v : { &BandDecay::edt, &BandDecay::t20, &BandDecay::t30 })
+        {
+            double sum = 0.0;
+            int count = 0;
+            for (auto& e : each) if (b < e.decay.size() && e.decay[b].*v > 0.0) { sum += e.decay[b].*v; ++count; }
+            a.decay[b].*v = count > 0 ? sum / count : -1.0;
+        }
+    computeReference (a);
+    findResonances (a, o);
     return a;
 }
 
@@ -551,7 +656,29 @@ AutoEqResult designEq (const Analysis& a, const AutoEqSettings& s)
 
     res.smoothedDb = smooth (a.magDb, s.smoothing);
     for (auto& v : res.smoothedDb) v -= a.referenceDb;
-    const auto& R = res.smoothedDb;
+    res.fitDb = res.smoothedDb;
+    if (s.nearDb.size() == f.size() && s.highHz > s.nearAboveHz)
+    {
+        // Above the crossover the speaker's own response (near field), moved to the level of the listening position
+        // there; one octave of crossfade.
+        const auto near = smooth (s.nearDb, s.smoothing);
+        const double fLo = s.nearAboveHz, fHi = std::min ({ s.highHz, a.sweepEndHz, 10000.0 });
+        double sum = 0.0;
+        int count = 0;
+        for (int i = 0; i < n; ++i)
+            if (f[(size_t) i] >= fLo && f[(size_t) i] <= fHi) { sum += res.smoothedDb[(size_t) i] - near[(size_t) i]; ++count; }
+        if (count > 4)
+        {
+            const double offset = sum / count;
+            for (int i = 0; i < n; ++i)
+            {
+                const double w = std::clamp (std::log2 (f[(size_t) i] / fLo), 0.0, 1.0);   // 0 below, 1 an octave above
+                res.fitDb[(size_t) i] = (1.0 - w) * res.smoothedDb[(size_t) i] + w * (near[(size_t) i] + offset);
+            }
+            res.usedNear = true;
+        }
+    }
+    const auto& R = res.fitDb;
 
     const double lo = std::max ({ s.lowHz, a.sweepStartHz, 20.0 }), hi = std::min ({ s.highHz, a.sweepEndHz, 20000.0 });
     std::vector<int> in, out;   // grid points inside the range / up to an octave around it
@@ -561,7 +688,7 @@ AutoEqResult designEq (const Analysis& a, const AutoEqSettings& s)
         else if (f[(size_t) i] >= lo * 0.5 && f[(size_t) i] <= hi * 2.0) out.push_back (i);
     }
     res.eqDb.assign ((size_t) n, 0.0);
-    res.correctedDb = R;
+    res.correctedDb = res.smoothedDb;
     if (in.size() < 4) return res;
 
     {
@@ -620,11 +747,21 @@ AutoEqResult designEq (const Analysis& a, const AutoEqSettings& s)
     {
         b.freq = std::clamp (b.freq, std::max (20.0, lo / 1.2), std::min (20000.0, hi * 1.2));
         b.gainDb = std::clamp (b.gainDb, -s.maxCutDb, std::max (0.0, s.maxBoostDb));
-        b.q = std::clamp (b.q, 0.3, 20.0);   // narrower filters would only fit this one microphone position
+        b.q = std::clamp (b.q, 0.3, std::max (0.3, s.maxQ));
+    };
+    // Bands keep their distance from each other, measured in their own bandwidths: without it several bands pile
+    // up on the same deep peak or dip, cancel each other out (+3 dB next to -4 dB) and none are left for the rest
+    // of the range. Narrow bands (room modes) may sit close together, wide ones not.
+    auto octaves = [] (double q) { return 2.0 / std::log (2.0) * std::asinh (1.0 / (2.0 * std::max (0.05, q))); };
+    auto crowded = [&] (double freq, double q, const std::vector<EqBand>& others, const EqBand* self)
+    {
+        for (auto& o : others)
+            if (&o != self && std::abs (std::log2 (freq / o.freq)) < s.minSpacing * 0.5 * (octaves (q) + octaves (o.q))) return true;
+        return false;
     };
     // Pattern search over frequency, gain and Q of every band (one parameter at a time; only the changed
-    // band's curve is recomputed).
-    auto optimise = [&] (std::vector<EqBand>& bs, int rounds)
+    // band's curve is recomputed). fixed: bands that are not optimised but must be kept away from.
+    auto optimise = [&] (std::vector<EqBand>& bs, int rounds, const std::vector<EqBand>& fixed)
     {
         std::vector<std::vector<double>> bc (bs.size());
         std::vector<double> total (m, 0.0), trialCurve, trialTotal (m);
@@ -647,6 +784,7 @@ AutoEqResult designEq (const Analysis& a, const AutoEqSettings& s)
                         else if (p == 1) b.gainDb += dir * step[k][1];
                         else             b.q *= std::exp (dir * step[k][2]);
                         clampBand (b);
+                        if (p != 1 && (crowded (b.freq, b.q, bs, &bs[k]) || crowded (b.freq, b.q, fixed, nullptr))) continue;
                         bandCurve (b, trialCurve);
                         for (size_t j = 0; j < m; ++j) trialTotal[j] = total[j] - bc[k][j] + trialCurve[j];
                         const double c = score (trialTotal);
@@ -669,14 +807,17 @@ AutoEqResult designEq (const Analysis& a, const AutoEqSettings& s)
         }
     };
 
-    for (int k = 0; k < std::clamp (s.maxBands, 0, AutoEqSettings::kMaxBands); ++k)
+    std::vector<char> blocked ((size_t) n, 0);   // points where no band fits between the others
+    for (int attempt = 0; (int) bands.size() < std::clamp (s.maxBands, 0, AutoEqSettings::kMaxBands) && attempt < 4 * AutoEqSettings::kMaxBands; ++attempt)
     {
         curve (bands, eq, idx);
         // Worst deviation: peaks above the target (dips only if boosting is allowed, and weighted less).
+        // Points too close to an existing band are left to that band (it is optimised again below).
         int at = -1;
         double worst = 0.0;
         for (int i : in)
         {
+            if (blocked[(size_t) i] || crowded (f[(size_t) i], s.maxQ, bands, nullptr)) continue;
             const double e = R[(size_t) i] + eq[(size_t) i] - T;
             const double weight = e > 0.0 ? e : (s.maxBoostDb > 0.0 ? -0.5 * e : 0.0);
             if (weight > worst) { worst = weight; at = i; }
@@ -694,16 +835,18 @@ AutoEqResult designEq (const Analysis& a, const AutoEqSettings& s)
         b.gainDb = -e0;
         b.q = bw > 0.0 ? f[(size_t) at] / bw : 8.0;
         clampBand (b);
+        while (crowded (b.freq, b.q, bands, nullptr) && b.q < s.maxQ) b.q = std::min (s.maxQ, b.q * 1.25);   // narrower until it fits
+        if (crowded (b.freq, b.q, bands, nullptr)) { blocked[(size_t) at] = 1; continue; }
         // Fit the new band alone against what the others already do, then (now and then) all together.
         std::vector<EqBand> one { b };
         for (int i : idx) shifted[(size_t) i] = R[(size_t) i] + eq[(size_t) i];
         fitting = &shifted;
-        optimise (one, 60);
+        optimise (one, 60, bands);
         fitting = &R;
         bands.push_back (one.front());
-        if (bands.size() % 4 == 0) optimise (bands, 30);
+        if (bands.size() % 4 == 0) optimise (bands, 30, {});
     }
-    optimise (bands, 150);
+    optimise (bands, 150, {});
     bands.erase (std::remove_if (bands.begin(), bands.end(), [] (const EqBand& b) { return std::abs (b.gainDb) < 0.3; }), bands.end());
     std::sort (bands.begin(), bands.end(), [] (const EqBand& x, const EqBand& y) { return x.freq < y.freq; });
     for (auto& b : bands)   // the EQ's parameter resolution
@@ -718,18 +861,70 @@ AutoEqResult designEq (const Analysis& a, const AutoEqSettings& s)
     std::iota (all.begin(), all.end(), 0);
     curve (bands, res.eqDb, all);
     const double top = *std::max_element (res.eqDb.begin(), res.eqDb.end());
-    res.preampDb = top > 0.0 ? -top : 0.0;
+    res.headroomPreampDb = top > 0.0 ? -top : 0.0;
+    // Loudness: mean power of the EQ curve on the log frequency grid = level change for pink noise (equal
+    // energy per octave, close to the long-term spectrum of music).
+    double power = 0.0;
+    for (double v : res.eqDb) power += std::pow (10.0, v / 10.0);
+    res.loudnessPreampDb = -10.0 * std::log10 (power / (double) n);
+    res.preampDb = s.matchLoudness ? res.loudnessPreampDb : res.headroomPreampDb;
     double before = 0.0, after = 0.0;
-    for (int i = 0; i < n; ++i) res.correctedDb[(size_t) i] = R[(size_t) i] + res.eqDb[(size_t) i];
+    // What the listening position gets; the numbers below rate what was fitted.
+    for (int i = 0; i < n; ++i) res.correctedDb[(size_t) i] = res.smoothedDb[(size_t) i] + res.eqDb[(size_t) i];
     for (int i : in)
     {
         before += (R[(size_t) i] - T) * (R[(size_t) i] - T);
-        after += (res.correctedDb[(size_t) i] - T) * (res.correctedDb[(size_t) i] - T);
+        const double fitted = R[(size_t) i] + res.eqDb[(size_t) i] - T;
+        after += fitted * fitted;
         res.peakBeforeDb = std::max (res.peakBeforeDb, R[(size_t) i] - T);
-        res.peakAfterDb = std::max (res.peakAfterDb, res.correctedDb[(size_t) i] - T);
+        res.peakAfterDb = std::max (res.peakAfterDb, fitted);
     }
     res.rmsBeforeDb = std::sqrt (before / (double) in.size());
     res.rmsAfterDb = std::sqrt (after / (double) in.size());
     return res;
+}
+//==============================================================================
+Layout locate (const Geometry& g, double c)
+{
+    Layout out;
+    // The system's latency: the speaker heard from 1.5 cm (both speakers if measured; they share the device).
+    double offset = 0.0;
+    int n = 0;
+    for (double t : g.nearMs)
+        if (t >= 0.0) { offset += t - 1000.0 * Geometry::kNearDistanceM / c; ++n; }
+    if (n == 0) return out;
+    offset /= n;
+    auto distance = [&] (double ms) { return (ms - offset) * 0.001 * c; };
+
+    double spacing = 0.0;
+    n = 0;
+    for (double t : g.crossMs)
+        if (t >= 0.0) { spacing += distance (t); ++n; }
+    if (n == 0 || spacing / n < 0.1) return out;
+    out.spacingM = spacing / n;
+    out.valid = true;
+
+    const double half = out.spacingM * 0.5;
+    const size_t count = std::max (g.posMs[0].size(), g.posMs[1].size());
+    for (size_t k = 0; k < count; ++k)
+    {
+        Layout::Spot s;
+        const double tl = k < g.posMs[0].size() ? g.posMs[0][k] : -1.0, tr = k < g.posMs[1].size() ? g.posMs[1][k] : -1.0;
+        if (tl >= 0.0 && tr >= 0.0)
+        {
+            s.distL = std::max (0.0, distance (tl));
+            s.distR = std::max (0.0, distance (tr));
+            // Two circles around the speakers; the listener is in front of them.
+            s.x = (s.distL * s.distL - s.distR * s.distR) / (2.0 * out.spacingM);
+            const double y2 = s.distL * s.distL - (s.x + half) * (s.x + half);
+            s.ok = y2 > 0.0;
+            s.y = std::sqrt (std::max (0.0, y2));
+            constexpr double deg = 180.0 / 3.14159265358979323846;
+            s.angleL = std::atan2 (-half - s.x, s.y) * deg;
+            s.angleR = std::atan2 (half - s.x, s.y) * deg;
+        }
+        out.mics.push_back (s);
+    }
+    return out;
 }
 } // namespace hydra::room

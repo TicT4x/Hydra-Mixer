@@ -1,6 +1,11 @@
 #include "ui/MainComponent.h"
 #include "state/Session.h"
 #include "state/Autostart.h"
+#include "state/CorrectionSync.h"
+#include "state/VacCables.h"
+#include "engine/VacStream.h"
+#include "engine/NetLink.h"
+#include "remote/RemoteControl.h"
 
 #include <windows.h>
 
@@ -32,16 +37,25 @@ public:
         setTitleBarHeight (0);
         setContentOwned (new MainComponent (e, m, k, s), true);
         setResizable (true, false);
-        setResizeLimits (900, 700, 8000, 4000);
+        setResizeLimits (760, 520, 8000, 4000);   // horizontal rows with few channels are compact
         auto area = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userArea;
         centreWithSize (juce::jmin (1840, (int) (area.getWidth() * 0.96)), juce::jmin (1000, (int) (area.getHeight() * 0.92)));
     }
 
     MainComponent* getMain() const { return dynamic_cast<MainComponent*> (getContentComponent()); }
 
+    /** No visible frame: the content fills the window, the resize zone lies on top of it (native hit test). */
+    juce::BorderSize<int> getContentComponentBorder() const override { return {}; }
+
+    void visibilityChanged() override
+    {
+        juce::DocumentWindow::visibilityChanged();
+        if (isVisible()) removeNativeWindowBorder (*this);
+    }
+
     /** Width so that all channels sit side by side without a scroll bar or a gap (height and position are
         kept, unless the window would leave the screen). Returns false if they do not fit on the screen. */
-    bool fitToChannels()
+    bool fitToChannels (bool growOnly = false)
     {
         auto* mc = getMain();
         if (mc == nullptr || isFullScreen() || isMinimised()) return false;
@@ -49,24 +63,68 @@ public:
         if (display == nullptr) return false;
         const auto area = display->userBounds.getSmallestIntegerContainer();
         const int wanted = mc->idealWidth() + (getWidth() - mc->getWidth());
+        if (growOnly && getWidth() >= wanted) return true;
         const int w = juce::jlimit (getConstrainer() != nullptr ? getConstrainer()->getMinimumWidth() : 0, area.getWidth(), wanted);
         const int x = juce::jlimit (area.getX(), juce::jmax (area.getX(), area.getRight() - w), getX());
         setBounds (x, getY(), w, getHeight());
         return wanted <= area.getWidth();
     }
 
-    std::function<void()> onClose, onMinimised;
+    /** Takes the size the channels need (Settings > Display: "Window always as large as needed"). The position is
+        kept as far as the window stays on its screen. animated: glides there (~0.2 s), otherwise at once. */
+    void fitWindow (bool animated)
+    {
+        auto* mc = getMain();
+        if (mc == nullptr || isFullScreen() || isMinimised()) return;
+        const auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (getScreenBounds());
+        if (display == nullptr) return;
+        const auto area = display->userBounds.getSmallestIntegerContainer();
+        const auto wanted = mc->fittingSize();   // content = window (no frame)
+        const auto* limits = getConstrainer();
+        const int w = juce::jlimit (limits != nullptr ? limits->getMinimumWidth() : 0, area.getWidth(), wanted.x);
+        const int h = juce::jlimit (limits != nullptr ? limits->getMinimumHeight() : 0, area.getHeight(), wanted.y);
+        const juce::Rectangle<int> target (juce::jlimit (area.getX(), juce::jmax (area.getX(), area.getRight() - w), getX()),
+                                           juce::jlimit (area.getY(), juce::jmax (area.getY(), area.getBottom() - h), getY()), w, h);
+        if (target == (gliding ? glideTo : getBounds())) return;
+        if (! animated || ! isShowing())
+        {
+            stopGlide();
+            setBounds (target);
+            return;
+        }
+        glideFrom = getBounds();
+        glideTo = target;
+        glideStart = juce::Time::getMillisecondCounterHiRes();
+        gliding = true;
+        lastSet = getBounds();
+        mc->setInstantLayout (true);
+    }
+
+    std::function<void()> onClose, onMinimised, onRestored, onLeftFullScreen;
+
+    /** Maximised -> normal window (button, double-click on the bar, dragged off the top): Windows restores the old
+        size, which rarely fits the channels any more. onLeftFullScreen takes the right size. */
+    void resized() override
+    {
+        juce::DocumentWindow::resized();
+        if (isMinimised()) return;
+        const bool full = isFullScreen();
+        if (wasFullScreen && ! full && onLeftFullScreen) onLeftFullScreen();
+        wasFullScreen = full;
+    }
 
     void closeButtonPressed() override { if (onClose) onClose(); }
 
     void minimisationStateChanged (bool isNowMinimised) override
     {
-        if (isNowMinimised && onMinimised) onMinimised();
+        if (isNowMinimised) { stopGlide(); if (onMinimised) onMinimised(); }
+        else if (onRestored) onRestored();
     }
 
     void activeWindowStatusChanged() override
     {
         juce::DocumentWindow::activeWindowStatusChanged();
+        removeNativeWindowBorder (*this);   // also here: JUCE may have recreated the native window since it was shown
         repaint(); // window buttons dim when inactive
     }
 
@@ -85,6 +143,40 @@ public:
                 return kind;
         return juce::DocumentWindow::findControlAtPoint (p);
     }
+
+private:
+    static constexpr double kGlideMs = 220.0;
+
+    void glideFrame()
+    {
+        if (! gliding) return;
+        // The user grabbed the window (resize / move / snap): stop gliding.
+        if (getBounds() != lastSet || isFullScreen() || isMinimised()) { stopGlide(); return; }
+        const double t = juce::jlimit (0.0, 1.0, (juce::Time::getMillisecondCounterHiRes() - glideStart) / kGlideMs);
+        const float e = 1.0f - (float) std::pow (1.0 - t, 3.0);   // ease out
+        auto lerp = [e] (int a, int b) { return a + juce::roundToInt ((float) (b - a) * e); };
+        const juce::Rectangle<int> r (lerp (glideFrom.getX(), glideTo.getX()), lerp (glideFrom.getY(), glideTo.getY()),
+                                      lerp (glideFrom.getWidth(), glideTo.getWidth()), lerp (glideFrom.getHeight(), glideTo.getHeight()));
+        setBounds (r);
+        lastSet = getBounds();
+        if (t >= 1.0) stopGlide();
+    }
+
+    void stopGlide()
+    {
+        if (! gliding) return;
+        gliding = false;
+        if (auto* mc = getMain())
+        {
+            mc->setInstantLayout (false);
+            mc->resized();   // the last layout once more with the normal rules
+        }
+    }
+
+    bool gliding = false, wasFullScreen = false;
+    juce::Rectangle<int> glideFrom, glideTo, lastSet;
+    double glideStart = 0.0;
+    juce::VBlankAttachment vblank { this, [this] (double) { glideFrame(); } };
 };
 
 /** Notification-area icon: left click shows the mixer, right click opens a menu with Shutdown. */
@@ -127,10 +219,27 @@ class App final : public juce::JUCEApplication, private juce::Timer
 public:
     const juce::String getApplicationName() override    { return "Hydra Mixer"; }
     const juce::String getApplicationVersion() override { return JUCE_APPLICATION_VERSION_STRING; }
-    bool moreThanOneInstanceAllowed() override          { return false; }
+    // The elevated helper that renames devices runs next to the mixer.
+    bool moreThanOneInstanceAllowed() override          { const auto c = getCommandLineParameters(); return isDeviceNameJob (c) || isVacJob (c); }
 
     void initialise (const juce::String& commandLine) override
     {
+        if (isVacJob (commandLine))
+        {
+            // Started elevated by VacCables: set the number of cables, restart the driver and quit.
+            setApplicationReturnValue (vac::runJob (commandLine));
+            quit();
+            return;
+        }
+        if (isDeviceNameJob (commandLine))
+        {
+            // Started elevated by DeviceNamer: apply the job file and quit, nothing else.
+            const auto file = commandLine.fromFirstOccurrenceOf (DeviceNamer::kJobArgument, false, false).trim().unquoted();
+            setApplicationReturnValue (DeviceNamer::runJob (juce::File (file)));
+            quit();
+            return;
+        }
+
         tuneProcessForAudio();
         juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
 
@@ -143,19 +252,46 @@ public:
         session = std::make_unique<Session> (*engine, *midi);
         session->hotkeys = hotkeys.get();
         const bool loaded = session->loadDefault();
+        deviceNamer = std::make_unique<DeviceNamer> (*engine, session->deviceRenames);
+        session->deviceNamer = deviceNamer.get();
+        vacCables = std::make_unique<VacCables> (*engine, session->deviceRenames);
+        session->vacCables = vacCables.get();
+        vacCables->onRoutingChanged = [this]
+        {
+            session->prefsVersion.fetch_add (1);   // sources / outputs may have changed
+            if (auto* mc = window != nullptr ? window->getMain() : nullptr) mc->refreshAll();
+        };
+        correctionSync = std::make_unique<CorrectionPoolSync> (*engine);   // after the session: its profiles get linked
+        remoteControl = std::make_unique<RemoteControl> (*engine, session->scenes);
+        remoteControl->nameProvider = [this]
+        {
+            auto& hub = net::Hub::get();
+            if (hub.isRunning()) return hub.getName();
+            return session->prefs.netName.isNotEmpty() ? session->prefs.netName : net::Hub::computerName();
+        };
+        deviceNamer->onRenamed = [this]
+        {
+            session->prefsVersion.fetch_add (1);   // the rename list is saved with the session
+            if (auto* mc = window != nullptr ? window->getMain() : nullptr) mc->refreshAll();
+        };
 
         theme::fontScale = session->prefs.fontScale; // before the UI creates its labels
-        // The window starts exactly as wide as the channels need, so the divider goes to its default place (no gap).
-        if (session->prefs.stripSplit >= 0.0f)
+        theme::apply (theme::styleFromName (session->prefs.theme));
+        lnf.refreshColours();
+        // The window starts exactly as wide as the channels need, so the dividers go to their default places (no gap).
+        if (session->prefs.stripSplit >= 0.0f || session->prefs.stripSplit2 >= 0.0f)
         {
-            session->prefs.stripSplit = -1.0f;
+            session->prefs.stripSplit = session->prefs.stripSplit2 = -1.0f;
             session->prefsVersion.fetch_add (1);
         }
         window = std::make_unique<MainWindow> (*engine, *midi, *hotkeys, *session);
         if (session->windowState.isNotEmpty())
             window->restoreWindowStateFromString (session->windowState);
         if (auto* mc = window->getMain()) mc->setUiScale (session->prefs.uiScale);
-        window->fitToChannels();   // just wide enough for all channels
+        if (session->prefs.fitWindow) window->fitWindow (false);   // exactly the size the channels need
+        else window->fitToChannels (session->prefs.adaptiveStrips);   // all channels fit (adaptive: only grows, the strips use extra room)
+        window->onRestored = [this] { fitWindowLater(); };   // back from the taskbar / the tray
+        window->onLeftFullScreen = [this] { fitAfterFullScreen(); };
         window->onClose = [this]
         {
             if (session->prefs.closeToTray) hideToTray();
@@ -171,7 +307,9 @@ public:
         {
             mc->onPrefsChanged = [this] { applyPrefs(); };
             mc->onShutdown = [this] { systemRequestedQuit(); };
+            mc->onChannelsChanged = [this] { fitWindowLater(); };   // a channel added / removed
         }
+        shownLayoutKey = layoutKey();
         if (session->prefs.startInTray) hideToTray();
         else                            window->setVisible (true);
         applyPrefs();
@@ -184,20 +322,29 @@ public:
         checkMasterAfterStart();
         startTimer (1000);
         // Keeps the autostart entry pointing at this exe (rebuilt / moved); off the critical startup path.
-        juce::Timer::callAfterDelay (8000, [] { Autostart::refreshIfMoved(); });
+        // schtasks.exe can take seconds: on a background thread, the window stays responsive.
+        juce::Timer::callAfterDelay (8000, [] { juce::Thread::launch ([] { Autostart::refreshIfMoved(); }); });
     }
 
     void shutdown() override
     {
         stopTimer();
+        if (engine == nullptr) return;   // device name helper
         save();
         engine->removeChangeListener (&changeCounter);
         tray.reset();
         window.reset();
+        if (session != nullptr) session->deviceNamer = nullptr;
+        deviceNamer.reset();
+        if (session != nullptr) session->vacCables = nullptr;
+        vacCables.reset();
+        correctionSync.reset();
+        remoteControl.reset();   // before the engine: it reads its meters and parameters
         hotkeys.reset();
         midi.reset();
         session.reset();
         engine.reset();
+        net::Hub::get().stop();   // closes Hydra Link's port (its streams are gone with the engine)
         poller.reset();
         juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
     }
@@ -206,13 +353,51 @@ public:
     void anotherInstanceStarted (const juce::String&) override { showWindow(); }
 
 private:
+    static bool isDeviceNameJob (const juce::String& commandLine) { return commandLine.contains (DeviceNamer::kJobArgument); }
+    static bool isVacJob (const juce::String& commandLine) { return commandLine.contains (vac::kJobArgument); }
+
     void showWindow()
     {
         if (window == nullptr) return;
+        // "Window always as large as needed": each time it appears. Still hidden: at once (nobody sees it);
+        // minimised: when it is restored (onRestored); already visible: it glides.
+        const bool hidden = ! window->isVisible(), minimised = window->isMinimised();
+        if (session->prefs.fitWindow && hidden && ! minimised) window->fitWindow (false);
         window->setVisible (true);
         window->setMinimised (false);
         window->toFront (true);
         applyPrefs();
+        if (! hidden && ! minimised) fitWindowLater();
+    }
+
+    /** Glides the window to its fitting size, if that option is on (after the current layout is done). */
+    /** Out of the maximised state: the size the channels need (whatever "Window always as large as needed" says,
+        the size from before maximising is stale). While the window is still being dragged (pulled off the top of
+        the screen) wait for the mouse to be released, resizing under the mouse would fight Windows. */
+    void fitAfterFullScreen()
+    {
+        juce::Timer::callAfterDelay (juce::ModifierKeys::getCurrentModifiersRealtime().isAnyMouseButtonDown() ? 120 : 0, [this]
+        {
+            if (window == nullptr || ! window->isVisible() || window->isFullScreen() || window->isMinimised()) return;
+            if (juce::ModifierKeys::getCurrentModifiersRealtime().isAnyMouseButtonDown()) { fitAfterFullScreen(); return; }
+            window->fitWindow (true);
+        });
+    }
+
+    void fitWindowLater()
+    {
+        if (session == nullptr || ! session->prefs.fitWindow) return;
+        juce::MessageManager::callAsync ([this] { if (window != nullptr && window->isVisible()) window->fitWindow (true); });
+    }
+
+    /** Settings that change the size the channels need. */
+    juce::String layoutKey() const
+    {
+        const auto& p = session->prefs;
+        juce::String key;
+        key << (int) p.fitWindow << (int) p.horizontalStrips << (int) p.sidePanel << (int) p.adaptiveStrips
+            << juce::String (p.uiScale, 3) << juce::String (p.fontScale, 3) << p.theme;
+        return key;
     }
 
     void hideToTray()
@@ -233,6 +418,18 @@ private:
     {
         if (session == nullptr || window == nullptr) return;
         const auto& p = session->prefs;
+        engine->autoReconnect = p.autoReconnect;
+        if (p.vacDirect != isVacDirectEnabled())
+        {
+            setVacDirectEnabled (p.vacDirect);
+            // Streams on cables reopen the other way: let go of them once, then take them again.
+            engine->holdDevice = [] (const IoTarget& t) { return vac::isCableEndpoint (t.deviceName); };
+            engine->rebuildGraph();
+            engine->holdDevice = nullptr;
+            engine->rebuildGraph();
+        }
+        applyNetwork();
+        applyRemote();
         if (auto* mc = window->getMain())
         {
             mc->setUiScale (p.uiScale);
@@ -241,11 +438,72 @@ private:
                 theme::fontScale = p.fontScale;
                 mc->fontScaleChanged();
             }
+            if (const auto style = theme::styleFromName (p.theme); style != theme::style)
+            {
+                theme::apply (style);
+                lnf.refreshColours();
+                mc->themeChanged();
+            }
+            mc->stripLayoutChanged();   // adaptive strips / side panel / dividers may have changed
+        }
+        if (const auto key = layoutKey(); key != shownLayoutKey)
+        {
+            shownLayoutKey = key;
+            fitWindowLater();
         }
         if (p.trayIcon || p.closeToTray || p.minimiseToTray || p.startInTray || ! window->isVisible())
             ensureTray();
         else
             tray.reset();
+    }
+
+    /** Hydra Link on / off / changed. Network channels that could not open while it was off open once it runs. */
+    void applyNetwork()
+    {
+        const auto& p = session->prefs;
+        auto& hub = net::Hub::get();
+        const bool was = hub.isRunning();
+        if (! p.netEnabled)
+        {
+            if (was)
+            {
+                hub.stop();
+                logLine ("Hydra Link off");
+                engine->rebuildGraph();
+            }
+            return;
+        }
+        net::Config c;
+        c.port = p.netPort;
+        c.name = p.netName;
+        c.password = p.netPassword;
+        c.peers = p.netPeers;
+        c.remotePort = p.remoteEnabled ? p.remotePort : 0;   // the phone app finds the web control through the announcements
+        const auto before = hub.getConfig();
+        juce::String err;
+        if (! hub.start (c, err))
+        {
+            logLine ("Hydra Link: " + err);
+            if (was) engine->rebuildGraph();
+            return;
+        }
+        if (! was || before.port != hub.getConfig().port)
+            logLine ("Hydra Link on, port " + juce::String (hub.getConfig().port) + ", name " + hub.getName()
+                     + (c.password.isNotEmpty() ? ", encrypted" : ", local network only"));
+        if (! was) engine->rebuildGraph();
+    }
+
+    /** Hydra Remote (phones / tablets) on / off / changed. The first time it is switched on it gets an access code. */
+    void applyRemote()
+    {
+        auto& p = session->prefs;
+        if (p.remoteEnabled && p.remoteCode.isEmpty())
+        {
+            p.remoteCode = remote::Server::newCode();
+            session->prefsVersion.fetch_add (1);
+        }
+        juce::String err;
+        remoteControl->apply (p.remoteEnabled, p.remotePort, p.remoteCode, err);
     }
 
     struct ChangeCounter : juce::ChangeListener
@@ -273,8 +531,8 @@ private:
     juce::String stateKey() const
     {
         juce::String k (juce::String ((juce::int64) engine->params.versionSum()));
-        for (auto& s : engine->inputs) k << '|' << s.name << ':' << s.plugins.size();
-        for (auto& b : engine->buses)  k << '|' << b.name << ':' << b.plugins.size();
+        for (auto& s : engine->inputs) k << '|' << s.name << ':' << (int) s.plugins.getVersion();   // effect chain edits (add / move / remove)
+        for (auto& b : engine->buses)  k << '|' << b.name << ':' << b.icon << ':' << (int) b.plugins.getVersion() << ':' << (int) b.correction.getVersion();
         k << '|' << (int) midi->mapVersion.load() << '|' << (int) hotkeys->version.load()
           << '|' << (int) session->prefsVersion.load() << '|' << (int) engine->recorder.stateVersion.load()
           << '|' << (int) session->scenes.version.load();
@@ -324,6 +582,10 @@ private:
     void timerCallback() override
     {
         retryMaster();
+        deviceNamer->useTask = session->prefs.renameNoPrompt;
+        if (! session->waitingForMaster) deviceNamer->tick (session->prefs.renameDevices, session->prefs.vacAutoName);
+        if (! session->waitingForMaster)
+            vacCables->tickHiding (session->prefs.vacHideOwnSide, session->prefs.vacHideUnused, session->vacHidden);
 
         // Debounced autosave: write ~2 s after the last change.
         const auto key = stateKey();
@@ -347,8 +609,13 @@ private:
     std::unique_ptr<MidiMapper> midi;
     std::unique_ptr<Hotkeys> hotkeys;
     std::unique_ptr<Session> session;
+    std::unique_ptr<DeviceNamer> deviceNamer;
+    std::unique_ptr<VacCables> vacCables;
+    std::unique_ptr<CorrectionPoolSync> correctionSync;
+    std::unique_ptr<RemoteControl> remoteControl;
     std::unique_ptr<MainWindow> window;
     std::unique_ptr<TrayIcon> tray;
+    juce::String shownLayoutKey;
     ChangeCounter changeCounter;
     juce::String lastState, pendingState;
     int pendingChanges = -1, quietTicks = 0;

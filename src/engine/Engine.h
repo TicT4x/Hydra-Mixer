@@ -17,12 +17,21 @@ struct Meter
 {
     std::atomic<float> l { 0 }, r { 0 };
     std::atomic<bool> muted { false }; // levels are what the channel would play if it were not muted (UI draws them grey)
+    std::atomic<float> remoteL { 0 }, remoteR { 0 };   // second reader: phones / tablets (remote/RemoteControl.h)
+    /** Remote meters are only collected while a phone or tablet shows them (one atomic load per push otherwise). */
+    static inline std::atomic<int> remoteUsers { 0 };
     void push (float a, float b) noexcept
     {
         if (a > l.load (std::memory_order_relaxed)) l.store (a, std::memory_order_relaxed);
         if (b > r.load (std::memory_order_relaxed)) r.store (b, std::memory_order_relaxed);
+        if (remoteUsers.load (std::memory_order_relaxed) > 0)
+        {
+            if (a > remoteL.load (std::memory_order_relaxed)) remoteL.store (a, std::memory_order_relaxed);
+            if (b > remoteR.load (std::memory_order_relaxed)) remoteR.store (b, std::memory_order_relaxed);
+        }
     }
     std::pair<float, float> take() noexcept { return { l.exchange (0.0f), r.exchange (0.0f) }; }
+    std::pair<float, float> takeRemote() noexcept { return { remoteL.exchange (0.0f), remoteR.exchange (0.0f) }; }
 };
 
 /** Feeds a channel's signal (after its EQ) to the spectrum analyzer of the large EQ window.
@@ -30,6 +39,7 @@ struct Meter
 struct SpectrumTap
 {
     std::atomic<int> users { 0 };   // open analyzer views
+    std::atomic<int> eqInstance { 0 };   // the EQ (instance) whose output is analysed
     SpscAudioRing ring;
     void push (const float* l, const float* r, int n) noexcept
     {
@@ -55,6 +65,40 @@ struct DspTimes
 };
 
 //==============================================================================
+// One instance of a built-in effect: its parameters and its audio-thread state. A channel has kFxInstances of
+// each (ids "in1.gate.*" for the first, "in1.gate2.*" ... for the others); the effect chain says which are used.
+struct GateFx
+{
+    Param *on {}, *thr {}, *range {}, *attack {}, *hold {}, *release {}, *scOn {}, *scFreq {}, *voice {}, *voiceThr {};
+    dsp::Gate dsp;
+    /** voice: speech probability of the denoiser (-1 = none). */
+    dsp::GateSettings settings (float voice) const;
+};
+
+struct CompFx
+{
+    Param *on {}, *input {}, *thr {}, *ratio {}, *knee {}, *attack {}, *release {}, *makeup {}, *autoGain {};
+    dsp::Compressor dsp;
+    std::atomic<float> gr { 0 };   // gain reduction shown in the UI
+    dsp::CompSettings settings() const;
+};
+
+struct DenoiserFx
+{
+    Param *on {}, *amount {}, *mode {};
+    std::unique_ptr<dsp::Denoiser> dsp;   // first instance always; others created when added (message thread)
+    std::atomic<dsp::Denoiser*> live { nullptr };   // = dsp once it exists; what the audio thread reads
+    bool wasOn = false;
+    dsp::DenoiserSettings settings() const;
+};
+
+struct LimiterFx
+{
+    Param *on {}, *ceiling {};
+    dsp::Limiter dsp;
+};
+
+//==============================================================================
 struct InputStrip
 {
     int index = 0;
@@ -63,35 +107,67 @@ struct InputStrip
     PluginChain plugins;
     Meter meter, preMeter;
     SpectrumTap spectrum;
-    std::atomic<float> compGr { 0 };
 
     // parameters
     Param *active {};   // slot in use (shown as a strip and processed); see Engine::addInput / removeInput
-    Param *gain {}, *trim {}, *pan {}, *mute {}, *solo {}, *mono {}, *phase {};
-    ParamEq eq;
-    Correction correction;   // room / speaker / headphone correction (after trim, before the denoiser)
-    Param *gateOn {}, *gateThr {}, *gateRange {}, *gateAttack {}, *gateHold {}, *gateRelease {}, *gateScOn {}, *gateScFreq {}, *gateVoice {}, *gateVoiceThr {};
-    Param *compOn {}, *compInput {}, *compThr {}, *compRatio {}, *compKnee {}, *compAttack {}, *compRelease {}, *compMakeup {}, *compAuto {};
-    Param *dnOn {}, *dnAmount {}, *dnMode {};
+    Param *gain {}, *trim {}, *pan {}, *mute {}, *solo {}, *mono {};
+    std::array<ParamEq, kFxInstances> eqs;
+    std::array<GateFx, kFxInstances> gates;
+    std::array<CompFx, kFxInstances> comps;
+    std::array<DenoiserFx, kFxInstances> denoisers;
+    std::array<LimiterFx, kFxInstances> limiters;   // off by default, added from the effect menu (9.11.)
+    std::array<Param*, kFxInstances> phases {};   // phase invert blocks
     Param *fxBypass {};
     Param *syncOn {}, *delayMs {};   // Sync Delay: automatic alignment with the input sync group / manual delay
     std::array<Param*, kMaxBuses> route {};
     std::array<Param*, kMaxBuses> send {};   // per-bus fader level (edited while a bus is selected with SEL)
 
-    dsp::GateSettings gateSettings() const;
-    dsp::CompSettings compSettings() const;
-    dsp::DenoiserSettings denoiserSettings() const;
+    // The first instance of each effect under the names it had before there were several.
+    ParamEq& eq = eqs[0];
+    Param*& phase = phases[0];
+    Param*& gateOn = gates[0].on;   Param*& gateThr = gates[0].thr;   Param*& gateRange = gates[0].range;
+    Param*& gateAttack = gates[0].attack;   Param*& gateHold = gates[0].hold;   Param*& gateRelease = gates[0].release;
+    Param*& gateScOn = gates[0].scOn;   Param*& gateScFreq = gates[0].scFreq;   Param*& gateVoice = gates[0].voice;
+    Param*& gateVoiceThr = gates[0].voiceThr;
+    Param*& compOn = comps[0].on;   Param*& compInput = comps[0].input;   Param*& compThr = comps[0].thr;
+    Param*& compRatio = comps[0].ratio;   Param*& compKnee = comps[0].knee;   Param*& compAttack = comps[0].attack;
+    Param*& compRelease = comps[0].release;   Param*& compMakeup = comps[0].makeup;   Param*& compAuto = comps[0].autoGain;
+    Param*& dnOn = denoisers[0].on;   Param*& dnAmount = denoisers[0].amount;   Param*& dnMode = denoisers[0].mode;
+    dsp::Gate& gate = gates[0].dsp;
+    dsp::Compressor& comp = comps[0].dsp;
+    std::atomic<float>& compGr = comps[0].gr;
+    std::unique_ptr<dsp::Denoiser>& denoiser = denoisers[0].dsp;
+
+    dsp::GateSettings gateSettings() const { return gates[0].settings (voiceProbability()); }
+    dsp::CompSettings compSettings() const { return comps[0].settings(); }
+    dsp::DenoiserSettings denoiserSettings() const { return denoisers[0].settings(); }
+    /** Denoiser instance k is in the effect chain, switched on and the chain is not bypassed (any thread). */
+    bool denoiserActive (int k) const noexcept
+    {
+        return denoisers[(size_t) k].on->isOn() && denoisers[(size_t) k].live.load (std::memory_order_acquire) != nullptr
+            && plugins.hasBuiltin (Fx::denoiser, k) && ! fxBypass->isOn();
+    }
+    /** Any denoiser active. */
+    bool denoiserActive() const noexcept
+    {
+        for (int k = 0; k < kFxInstances; ++k) if (denoiserActive (k)) return true;
+        return false;
+    }
+    /** Speech probability of the first active denoiser (Voice Key of the gates), -1 if none. */
+    float voiceProbability() const noexcept
+    {
+        for (int k = 0; k < kFxInstances; ++k)
+            if (denoiserActive (k))
+                if (auto* d = denoisers[(size_t) k].live.load (std::memory_order_acquire); d != nullptr) return d->getVad();
+        return -1.0f;
+    }
 
     /** Processing latency added inside this strip (denoiser + plugins), in samples. */
     std::atomic<int> dspLatency { 0 };
     DspTimes dspTimes;
 
     // audio-thread state
-    dsp::Gate gate;
-    dsp::Compressor comp;
     dsp::DelayLine delay;
-    std::unique_ptr<dsp::Denoiser> denoiser = std::make_unique<dsp::Denoiser>();
-    bool dnWasOn = false;
     float lastTrim = 1, lastL = 0, lastR = 0;
     std::array<float, kMaxBuses> lastRoute {};   // last applied send gain per bus (0 = not routed)
     std::vector<float> l, r;
@@ -101,6 +177,7 @@ struct Bus
 {
     int index = 0;
     juce::String name;
+    juce::String icon;   // optional symbol (ui/ChannelIcons.h id) shown instead of "H1" / "V1"; empty = the code
     IoTarget output;
     PluginChain plugins;
     Meter meter;
@@ -108,13 +185,21 @@ struct Bus
     DspTimes dspTimes;
 
     Param *active {};   // slot in use (shown as a strip and processed); see Engine::addBus / removeBus
-    Param *gain {}, *mute {}, *mono {}, *limOn {}, *limCeil {}, *fxBypass {};
+    Param *gain {}, *mute {}, *mono {}, *fxBypass {};
     Param *sel {};   // SEL: input faders edit the sends to this bus (exclusive), optional monitoring
     Param *syncOn {}, *delayMs {};   // Sync Delay (see InputStrip)
-    ParamEq eq;
-    Correction correction;   // room / speaker / headphone correction (after the plugins)
+    std::array<ParamEq, kFxInstances> eqs;
+    std::array<LimiterFx, kFxInstances> limiters;
+    std::array<CompFx, kFxInstances> comps;
+    std::array<Param*, kFxInstances> phases {};   // phase invert blocks
+    Correction correction;   // room + speaker / headphone correction (hardware outputs only, once)
 
-    dsp::Limiter limiter;
+    // The first instances under their old names.
+    ParamEq& eq = eqs[0];
+    Param*& limOn = limiters[0].on;
+    Param*& limCeil = limiters[0].ceiling;
+    dsp::Limiter& limiter = limiters[0].dsp;
+
     dsp::DelayLine delay;
     float lastGain = 0;
     std::vector<float> l, r;
@@ -207,9 +292,40 @@ public:
     void setInputSource (int strip, const IoTarget& t);
     void setBusOutput (int bus, const IoTarget& t);
     void rebuildGraph();
+    /** While set, streams on devices it returns true for are not opened, and rebuildGraph closes open ones
+        (e.g. all Virtual Audio Cable endpoints while that driver restarts). Message thread. */
+    std::function<bool (const IoTarget&)> holdDevice;
 
     // Status
-    float getCpuLoad() const noexcept { return cpuLoad.load(); }
+    /** Recent peak: highest single-callback load, decaying over ~20 callbacks. */
+    float getPeakLoad() const noexcept { return cpuLoad.load(); }
+
+    /** Average DSP load (callback time / real time) like a DAW's CPU meter. Each reader owns one and
+        calls update() regularly; the value covers the time since the previous reading (min. ~0.25 s). */
+    struct LoadMeter
+    {
+        float update (const Engine& e) noexcept
+        {
+            const uint64_t t = e.busyTicks.load (std::memory_order_relaxed);
+            const uint64_t f = e.busyFrames.load (std::memory_order_relaxed);
+            const double budget = (double) (f - frames) / juce::jmax (1.0, e.sampleRate);   // seconds of audio
+            if (f < frames || t < ticks) { ticks = t; frames = f; return value; }
+            if (budget >= 0.25)
+            {
+                value = (float) ((double) (t - ticks) * e.ticksToSeconds / budget);
+                ticks = t; frames = f;
+            }
+            return value;
+        }
+        uint64_t ticks = 0, frames = 0;
+        float value = 0;
+    };
+
+    /** Reopen devices that went offline (unplugged, driver restarted, not there at startup) as soon as they are
+        back; checked every ~3 s. Also restarts a master device that stopped calling back or reported an error
+        (driver reset, format change; with growing pauses when it keeps failing). Off: only a new choice
+        of the device or Tools > Restart Audio Engine reconnects. Message thread. */
+    bool autoReconnect = true;
 
     //--------------------------------------------------------------------------
     // DSP profiling (DSP view): per channel / stage (DspTimes), per plugin (PluginSlot::dspTicks), per
@@ -253,6 +369,8 @@ public:
         double clockSyncMs = 0.0;   // secondary devices: ring + resampler binding them to the master clock (moves slightly)
         int bufferFrames = 0;       // device period
         double deviceRate = 0.0;
+        juce::String transport;     // special connection ("Kernel Streaming, cable 2, clock synced to the master")
+        bool steeredClock = false;  // its clock follows the master (no resampler)
         double total() const noexcept { return bufferMs + driverMs + clockSyncMs; }
     };
     IoLatency getIoLatency (const IoTarget& t, bool input) const;
@@ -292,12 +410,44 @@ public:
     void prepareChains();
 
     //--------------------------------------------------------------------------
-    // Correction (room / speaker / headphone) of a channel, selection index scheme (inputs, then buses).
-    Correction& correctionFor (int selectIndex) noexcept
+    // Effect chain (message thread). Every channel has one chain of plugins and built-in effects (Fx) in any order.
+    // A built-in effect whose on switch is turned on while it is not in the chain (old sessions, import, scenes,
+    // undo) is inserted at its usual place (ensureBuiltins, 10 Hz).
+    /** Built-in effects a channel can have (selection index scheme: inputs, then buses), in their usual order. */
+    std::vector<Fx> allowedFx (int channel) const;
+    /** How many instances of f a channel can have (correction: 1). */
+    static int maxInstances (Fx f) noexcept { return f == Fx::correction ? 1 : kFxInstances; }
+    PluginChain& chainFor (int channel) noexcept
     {
-        return selectIndex < kMaxInputs ? inputs[(size_t) selectIndex].correction : buses[(size_t) (selectIndex - kMaxInputs)].correction;
+        return channel < kMaxInputs ? inputs[(size_t) channel].plugins : buses[(size_t) (channel - kMaxInputs)].plugins;
     }
-    /** Replaces a channel's correction profile (message thread). */
+    /** The on switch of instance k of a built-in effect of a channel (nullptr if the channel cannot have it). */
+    Param* fxOnParam (int channel, Fx, int k = 0) const;
+    /** Id part of instance k's parameters ("eq" / "eq2", "gate" ..., "phase" / "phase2"): ids are
+        <channel prefix><part>.<name> (phase: <channel prefix><part>). */
+    static juce::String fxPart (Fx, int k);
+    /** Every parameter of instance k of a built-in effect of a channel (its on switch included). */
+    std::vector<Param*> fxParams (int channel, Fx, int k = 0) const;
+    /** Adds a new instance of a built-in effect to the chain at index (-1 = its usual place) and switches it on.
+        Returns the instance, or -1 if the channel cannot have more of them. */
+    int addBuiltin (int channel, Fx, int index = -1);
+    /** Removes instance k of a built-in effect from the chain; its settings go back to their defaults and it is
+        switched off. */
+    void removeBuiltin (int channel, Fx, int k = 0);
+    /** Inserts the built-in effects that are switched on but not in the chain, removes ones the channel cannot have. */
+    void ensureBuiltins();
+    /** Creates the RNNoise state of a denoiser instance that does not have one yet (message thread). */
+    void prepareDenoiser (DenoiserFx&);
+
+    //--------------------------------------------------------------------------
+    // Correction (room + speaker / headphone) of a channel, selection index scheme (inputs, then buses).
+    // Only hardware outputs (A buses) have one: nullptr for inputs and virtual outputs.
+    Correction* correctionFor (int selectIndex) noexcept
+    {
+        const int b = selectIndex - kMaxInputs;
+        return juce::isPositiveAndBelow (b, kMaxBuses) && isHwBus (b) ? &buses[(size_t) b].correction : nullptr;
+    }
+    /** Replaces a channel's correction profile (message thread). Ignored for channels without a correction. */
     void setCorrection (int selectIndex, CorrectionProfile profile);
 
     //--------------------------------------------------------------------------
@@ -311,6 +461,28 @@ public:
     /** Ends the run: returns its recording if it played to the end (empty if it was stopped or the engine
         never ran it). The run itself is freed once the audio thread has let go of it. */
     std::vector<float> finishMeasurement();
+
+    /** Measuring with a device that is on no channel: a free (unused) input / bus slot is borrowed. It opens its
+        device (choose it with setInputSource / setBusOutput) but is neither shown nor mixed; only a measurement
+        records from / plays into it. Returns the slot (input index / bus index), -1 if every slot is in use.
+        The same slot is returned again while it is borrowed. */
+    int borrowMeasureInput();
+    int borrowMeasureBus();
+    /** Gives the slot back (its device is closed). */
+    void releaseMeasureInput();
+    void releaseMeasureBus();
+    int getMeasureInput() const noexcept { return measureIn; }
+    int getMeasureBus() const noexcept   { return measureBus; }
+
+    /** Live level of a raw source (also a borrowed slot), before any processing: the wizard's microphone step.
+        input -1 = off (then it costs one atomic read per block). */
+    void setMicLevelTap (int input, int channel) noexcept
+    {
+        micTapChannel.store (channel, std::memory_order_relaxed);
+        micTapInput.store (input, std::memory_order_relaxed);
+    }
+    /** Highest sample since the last call. */
+    float takeMicLevel() noexcept { return micTapPeak.exchange (0.0f); }
 
 private:
     struct Graph
@@ -345,7 +517,7 @@ private:
     int delaySamples (int channel) const noexcept;   // audio thread
 
     // Message thread: dropouts per stream as (time in ms, count), pruned after kDropoutWindowSeconds.
-    struct DropoutLog { int seen = 0; std::vector<std::pair<juce::int64, int>> events; };
+    struct DropoutLog { int seen = 0; std::vector<std::pair<juce::int64, int>> events; int unlogged = 0; juce::int64 lastLogged = 0; };
     std::map<const AsyncStream*, DropoutLog> dropoutLogs;
     DropoutLog masterDropouts;
 
@@ -365,14 +537,32 @@ private:
     std::vector<std::pair<std::unique_ptr<Graph>, uint64_t>> graveyard; // freed once the audio thread let go
     std::atomic<uint64_t> callbackCount { 0 };
     int selOwner = -1;     // SEL exclusivity (message thread)
+    bool anyMissing = false;   // an active channel's device could not be opened (rebuildGraph)
+    std::unique_ptr<StreamOpener> opener;           // opens Windows devices in the background
+    std::map<juce::String, juce::String> openErrors;   // last failure per stream (it stays shown during the next try)
+    /** Asks for a stream to be opened; a device plugged in after the last scan is looked for first. */
+    void requestOpen (const IoTarget&, bool input);
+    int recoverTicks = 0, masterQuietTicks = 0;
+    // Automatic restart of the master after a driver error (audioDeviceError, any thread) or a stall. Restarts in
+    // quick succession wait longer each time (0.5 s, 1, 2, 4 ... up to 60 s) so a broken driver cannot loop.
+    std::atomic<bool> masterErrorPending { false };
+    int masterRestartIn = -1;          // timer ticks (10 Hz) until the restart, -1 = none planned
+    int masterRestartStreak = 0;       // restarts within a minute of each other
+    double lastMasterRestartMs = -1.0e9;
+    void restartMaster (const juce::String& reason);
+    uint64_t masterSeenCallbacks = 0;
     std::vector<float> playL, playR;
     std::array<float, kMaxBuses> lastPlayRoute {};
 
     std::unique_ptr<MeasureRun> measureOwned;     // message thread; the audio thread reads 'measureLive'
     std::atomic<MeasureRun*> measureLive { nullptr };
     std::vector<std::pair<std::unique_ptr<MeasureRun>, uint64_t>> measureGraveyard;
+    int measureIn = -1, measureBus = -1;   // borrowed slots (see borrowMeasureInput), message thread
+    std::atomic<int> micTapInput { -1 }, micTapChannel { 0 };
+    std::atomic<float> micTapPeak { 0.0f };
 
     std::atomic<float> cpuLoad { 0 };
+    std::atomic<uint64_t> busyTicks { 0 }, busyFrames { 0 };   // always counted (see LoadMeter), audio thread writes
     double ticksToSeconds = 1.0;
     std::vector<float> silence;
 };

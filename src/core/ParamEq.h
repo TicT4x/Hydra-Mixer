@@ -4,11 +4,14 @@
 
 namespace hydra
 {
-/** 8-band parametric EQ bound to parameters; used by every input strip and every bus.
-    Each band has its own on/off and filter type (bell, notch, band pass, cuts, shelves). */
+/** 16-band parametric EQ bound to parameters; used by every input strip and every bus.
+    Each band has its own on/off and filter type (bell, notch, band pass, cuts, shelves). A band only costs
+    CPU while it is in use; bands 1-8 keep the defaults they had when the EQ had eight bands (sessions store
+    only values that differ from the default, so changing them would change old sessions). */
 struct ParamEq
 {
-    static constexpr int kBands = 8;
+    static constexpr int kBands = 16;
+    static constexpr int kV2Bands = 8;   // sessions before 2026-11-09 had eight bands
     static constexpr int kV1Bands = 6;   // sessions before 2026-10-15 had six bands
     // Same order (and indices) as Voicemeeter's EQ cell types.
     enum BandType { Bell = 0, Notch, BandPass, HighCut, LowCut, LowShelf, HighShelf, NumTypes };
@@ -35,7 +38,8 @@ struct ParamEq
     /** Frequency a band starts at (its default). */
     static float defaultFreq (int k) noexcept
     {
-        static const float f[kBands] = { 80, 200, 500, 1000, 2500, 5000, 8000, 12000 };
+        static const float f[kBands] = { 80, 200, 500, 1000, 2500, 5000, 8000, 12000,
+                                         40, 120, 320, 700, 1600, 3500, 6500, 16000 };
         return f[juce::jlimit (0, kBands - 1, k)];
     }
 
@@ -43,11 +47,15 @@ struct ParamEq
     static bool typeUsesGain (int t) noexcept { return t == Bell || t == LowShelf || t == HighShelf; }
 
     Param* on {};
-    std::array<Param*, kBands> bandOn {}, type {}, gain {}, freq {}, q {};
+    // bandOn = band in use (has a point); enabled = switched on (off: kept with its settings but bypassed)
+    std::array<Param*, kBands> bandOn {}, enabled {}, type {}, gain {}, freq {}, q {};
 
-    void create (ParamRegistry& reg, const juce::String& idPrefix, const juce::String& namePrefix)
+    /** part / label: "eq" / "EQ" for the first EQ of a channel, "eq2" / "EQ 2" for further instances. */
+    void create (ParamRegistry& reg, const juce::String& idPrefix, const juce::String& namePrefix,
+                 const juce::String& part = "eq", const juce::String& label = "EQ")
     {
-        static const int defType[kBands] = { LowShelf, Bell, Bell, Bell, Bell, Bell, Bell, HighShelf };
+        static const int defType[kBands] = { LowShelf, Bell, Bell, Bell, Bell, Bell, Bell, HighShelf,
+                                             Bell, Bell, Bell, Bell, Bell, Bell, Bell, Bell };
 
         juce::NormalisableRange<float> freqRange (20.0f, 20000.0f,
             [] (float s, float e, float n) { return s * std::pow (e / s, n); },
@@ -58,23 +66,24 @@ struct ParamEq
             [] (float s, float e, float v) { return std::log (v / s) / std::log (e / s); },
             [] (float, float, float v) { return v; });
 
-        on = &reg.addToggle (idPrefix + "eq.on", namePrefix + "EQ On");
+        on = &reg.addToggle (idPrefix + part + ".on", namePrefix + label + " On");
         for (int k = 0; k < kBands; ++k)
         {
-            const auto bp = idPrefix + "eq.b" + juce::String (k + 1) + ".";
-            const auto bn = namePrefix + "EQ Band " + juce::String (k + 1) + " ";
+            const auto bp = idPrefix + part + ".b" + juce::String (k + 1) + ".";
+            const auto bn = namePrefix + label + " Band " + juce::String (k + 1) + " ";
             bandOn[(size_t) k] = &reg.addToggle (bp + "on", bn + "On", false); // off = band not in use (no point shown)
+            enabled[(size_t) k] = &reg.addToggle (bp + "enabled", bn + "Enabled", true);
             type[(size_t) k]   = &reg.addChoice (bp + "type", bn + "Type", typeNames(), defType[k]);
             gain[(size_t) k]   = &reg.add (bp + "gain", bn + "Gain", ParamType::Continuous, { -18.0f, 18.0f, 0.1f }, 0.0f, " dB");
             freq[(size_t) k]   = &reg.add (bp + "freq", bn + "Freq", ParamType::Continuous, freqRange, defaultFreq (k), " Hz");
-            q[(size_t) k]      = &reg.add (bp + "q", bn + "Q", ParamType::Continuous, qRange, (k == 0 || k == kBands - 1) ? 0.7f : 1.0f);
+            q[(size_t) k]      = &reg.add (bp + "q", bn + "Q", ParamType::Continuous, qRange, (k == 0 || k == kV2Bands - 1) ? 0.7f : 1.0f);
         }
     }
 
     /** Does band k currently change the signal? */
     bool bandActive (int k) const noexcept
     {
-        if (! bandOn[(size_t) k]->isOn()) return false;
+        if (! bandOn[(size_t) k]->isOn() || ! enabled[(size_t) k]->isOn()) return false;
         const int t = (int) type[(size_t) k]->get();
         return ! typeUsesGain (t) || gain[(size_t) k]->get() != 0.0f;
     }
@@ -122,7 +131,7 @@ struct ParamEq
     {
         uint64_t s = on->getVersion();
         for (int k = 0; k < kBands; ++k)
-            s += bandOn[(size_t) k]->getVersion() + type[(size_t) k]->getVersion() + gain[(size_t) k]->getVersion()
+            s += bandOn[(size_t) k]->getVersion() + enabled[(size_t) k]->getVersion() + type[(size_t) k]->getVersion() + gain[(size_t) k]->getVersion()
                + freq[(size_t) k]->getVersion() + q[(size_t) k]->getVersion();
         return s;
     }

@@ -32,6 +32,7 @@ jobs:
           $app = "build/Release/HydraMixer_artefacts/Release"
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item "$app/Hydra Mixer.exe" dist/
+          Copy-Item -Recurse "build/Release/HydraRoomCorrection_artefacts/Release/VST3/Hydra Room Correction.vst3" dist/
           Copy-Item LICENSE, README.md dist/
 
       - name: Upload app

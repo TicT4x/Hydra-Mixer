@@ -44,6 +44,9 @@ struct SweepSpec
 std::vector<float> makeSweep (const SweepSpec&);
 /** What is played: lead silence, then repeats x (sweep + silence). */
 std::vector<float> makeStimulus (const SweepSpec&);
+/** Pink noise (equal power per octave, like music on average) with the given RMS level (dBFS), for the level check.
+    Deterministic for a seed. */
+std::vector<float> makePinkNoise (int length, double rmsDb, unsigned seed = 1);
 
 //==============================================================================
 /** Impulse response computed from a recording of the stimulus. */
@@ -102,6 +105,12 @@ struct AnalysisOptions
     double resonanceMinHz = 20.0, resonanceMaxHz = 400.0;
     double resonanceThresholdDb = 3.0;
     Calibration calibration;      // taken out of the response and the waterfall
+    /** Only the frequency response (and the resonances without their ringing time): what a correction needs, a
+        fraction of the time. Waterfall, impulse view and decay stay empty. */
+    bool responseOnly = false;
+    /** Several positions: each on its own thread (fast). False: one after another on the caller's thread, which leaves
+        the other cores to the audio (the plugin inside a DAW). */
+    bool parallel = true;
 };
 
 struct Analysis
@@ -120,6 +129,13 @@ struct Analysis
     std::vector<Resonance> resonances;  // most prominent first
     double sweepStartHz = 20.0, sweepEndHz = 20000.0;
 
+    // Multi-point measurement: the response at each microphone position (magDb is their power average). Empty for one.
+    std::vector<std::vector<double>> positionDb;
+
+    // Near-field measurement (microphone 1-2 cm in front of the speaker): the speaker's own response without the room,
+    // dB re. full scale on 'freqs' (its level is unrelated to magDb). Empty if there is none.
+    std::vector<double> nearDb;
+
     static constexpr int kPointsPerOctave = 48;
 };
 
@@ -132,6 +148,11 @@ std::vector<double> smooth (const std::vector<double>& db, double fraction);
 double valueAt (const std::vector<double>& freqs, const std::vector<double>& db, double f);
 
 Analysis analyse (const ImpulseResponse&, const AnalysisOptions&, double sweepStartHz, double sweepEndHz);
+/** Multi-point measurement (several microphone positions around the listening position): response and waterfall
+    are power averages over the positions, decay times their mean; resonances are searched in the average, so only
+    what all positions share (the room's modes) stands out, while dips of a single position average out.
+    The impulse view shows the first position. */
+Analysis analyse (const std::vector<const ImpulseResponse*>& positions, const AnalysisOptions&, double sweepStartHz, double sweepEndHz);
 
 //==============================================================================
 /** One band of the designed EQ (Hydra's EQ band types: 0 = Bell). */
@@ -147,19 +168,32 @@ struct AutoEqSettings
     double lowHz = 25.0, highHz = 500.0;   // range that is corrected
     int maxBands = 8;          // up to kMaxBands
     double maxBoostDb = 0.0;   // boosting dips (often cancellations that no EQ can fill) is limited to this
-    double maxCutDb = 15.0;
-    double smoothing = 12.0;   // response smoothing for the fit (1/n octave)
+    double maxCutDb = 15.0;    // strength: deepest cut a band (or bands together) may make
+    double smoothing = 12.0;   // response smoothing for the fit (1/n octave, any value > 0)
+    bool matchLoudness = false;    // preamp keeps the loudness (pink noise level) instead of the headroom
+    double minSpacing = 0.6;   // band centres at least this many bandwidths apart (mean of both, in octaves): bands spread
+                               // over the range instead of piling up (and fighting each other) on one deep dip or peak
+    double maxQ = 20.0;            // narrower bands would only fit this one microphone position
     double targetOffsetDb = 0.0;   // target relative to the mean level in the range
     double sampleRate = 48000.0;   // EQ runs at this rate (bell shape near Nyquist)
+    /** Near-field response of the speaker (Analysis::nearDb; empty = none). Above nearAboveHz (crossfade over one octave)
+        the fit follows it instead of the response at the listening position: there the room's reflections make
+        position-dependent ripples that no EQ can fix, while the speaker's own errors are the same everywhere. */
+    std::vector<double> nearDb;
+    double nearAboveHz = 400.0;
 };
 
 struct AutoEqResult
 {
     std::vector<EqBand> bands;        // sorted by frequency
-    double preampDb = 0.0;            // -(highest boost of the EQ curve): keeps boosts from clipping
+    double preampDb = 0.0;            // the chosen one of the two below
+    double headroomPreampDb = 0.0;    // -(highest boost of the EQ curve): boosts never clip, but everything gets quieter
+    double loudnessPreampDb = 0.0;    // pink noise has the same level with and without the correction
     std::vector<double> eqDb;         // EQ curve on the analysis grid
     std::vector<double> correctedDb;  // smoothed response + EQ (relative to the reference level)
-    std::vector<double> smoothedDb;   // smoothed response used for the fit (relative)
+    std::vector<double> smoothedDb;   // smoothed response at the listening position (relative)
+    std::vector<double> fitDb;        // what the bands were fitted to: smoothedDb, above nearAboveHz the near field (relative)
+    bool usedNear = false;            // the near field took part
     double targetDb = 0.0;            // flat target (relative to the reference level)
     double rmsBeforeDb = 0.0, rmsAfterDb = 0.0;   // deviation from the target in the range
     double peakBeforeDb = 0.0, peakAfterDb = 0.0; // highest peak above the target in the range
@@ -170,4 +204,32 @@ double bandMagnitudeDb (const EqBand&, double f, double sampleRate);
 
 /** Designs bell bands that bring the response in the range as close to a flat target as the limits allow. */
 AutoEqResult designEq (const Analysis&, const AutoEqSettings&);
+
+//==============================================================================
+/** Arrival times for the picture of speakers and microphone (ms from the output to the microphone, with the clock-sync
+    buffering of the devices already taken out; < 0 = not measured). */
+struct Geometry
+{
+    static constexpr double kNearDistanceM = 0.015;   // microphone in front of the speaker in the near-field measurement
+    double nearMs[2] { -1.0, -1.0 };    // speaker k heard with the microphone at it: the system's own latency
+    double crossMs[2] { -1.0, -1.0 };   // the other speaker heard with the microphone at speaker k: their distance
+    std::vector<double> posMs[2];       // speaker k heard at each listening position (both: left / right separately)
+    bool empty() const noexcept { return nearMs[0] < 0.0 && nearMs[1] < 0.0; }
+};
+
+/** Where speakers and microphone positions are, from the arrival times. Speakers at (-spacing/2, 0) and (spacing/2, 0),
+    y points from the speakers to the listener (metres, seen from above; heights are folded into the distances). */
+struct Layout
+{
+    bool valid = false;        // spacing known (needs a near-field reference and one cross measurement)
+    double spacingM = 0.0;
+    struct Spot
+    {
+        bool ok = false;       // both distances measured and they fit the spacing
+        double x = 0.0, y = 0.0, distL = 0.0, distR = 0.0;
+        double angleL = 0.0, angleR = 0.0;   // degrees off straight ahead (towards the speaker line), left negative
+    };
+    std::vector<Spot> mics;    // the listening positions in measuring order
+};
+Layout locate (const Geometry&, double speedOfSound = 343.0);
 } // namespace hydra::room

@@ -2,23 +2,6 @@
 
 namespace hydra
 {
-void drawLegend (juce::Graphics& g, juce::Rectangle<int> legend, const std::vector<std::pair<juce::String, juce::Colour>>& items)
-{
-    int x = legend.getRight();
-    g.setFont (theme::font (12.0f));
-    for (auto it = items.rbegin(); it != items.rend(); ++it)
-    {
-        const int w = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), it->first);
-        x -= w;
-        g.setColour (theme::textDim);
-        g.drawText (it->first, x, legend.getY(), w, legend.getHeight(), juce::Justification::centredLeft);
-        x -= 18;
-        g.setColour (it->second);
-        g.fillRoundedRectangle ((float) x, (float) legend.getCentreY() - 5.0f, 12.0f, 10.0f, 2.5f);
-        x -= 18;
-    }
-}
-
 //==============================================================================
 void ShareChart::setParts (std::vector<Part> newParts, double newTotal)
 {

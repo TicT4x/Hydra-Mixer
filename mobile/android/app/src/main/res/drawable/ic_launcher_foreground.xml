@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher: Hydra's logo in the 66 dp safe zone of the adaptive icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:translateX="31" android:translateY="32.5" android:scaleX="1.278" android:scaleY="1.278">
+        <path android:pathData="M0,15.9 A5,5 0 0 1 10,15.9 V29 A5,5 0 0 1 0,29 Z M13,5 A5,5 0 0 1 23,5 V29 A5,5 0 0 1 13,29 Z M26,15.9 A5,5 0 0 1 36,15.9 V29 A5,5 0 0 1 26,29 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="36" android:endY="0"
+                    android:startColor="#35d0f4" android:endColor="#8d6cff" />
+            </aapt:attr>
+        </path>
+    </group>
+</vector>

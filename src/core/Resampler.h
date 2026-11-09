@@ -9,13 +9,14 @@ namespace hydra
 class VarResampler
 {
 public:
-    /** ratio = input frames consumed per output frame (nominal). */
-    void prepare (int channels, double nominalRatio, int maxOutBlock)
+    /** ratio = input frames consumed per output frame (nominal).
+        wantedHalfTaps: filter length (0 = 8 or 16, by the ratio). */
+    void prepare (int channels, double nominalRatio, int maxOutBlock, int wantedHalfTaps = 0)
     {
         numChannels = juce::jlimit (1, kMaxChannels, channels);
         nominal = nominalRatio;
         ratio = nominalRatio;
-        halfTaps = std::abs (nominalRatio - 1.0) < 1.0e-3 ? 8 : 16;
+        halfTaps = wantedHalfTaps > 0 ? wantedHalfTaps : std::abs (nominalRatio - 1.0) < 1.0e-3 ? 8 : 16;
         taps = halfTaps * 2;
 
         // Anti-aliasing: when consuming faster than producing, lower the cutoff.
@@ -206,10 +207,17 @@ public:
     /** initialTarget/minTarget/maxTarget in frames (device frames), quantum = adaptation step.
         deviceRate: frames per second the ring moves at (sets the loop gain).
         windowBlocks: engine blocks the minimum is taken over (should span several device periods). */
+    /** Stability before latency (virtual cables, app capture; wish of the user 8.11.): after a dropout the
+        target never goes back below the level that failed (plus one step). Without this the back-off decayed
+        after 10 min and the target walked down into the same rare timing spike again: on the user's VAC inputs
+        one dropout per stream every 20-35 min (hydra.log, 9.11.). Set before prepare(). */
+    void setHoldFloor (bool on) noexcept { holdFloor = on; }
+
     void prepare (double initialTarget, double minTarget, double maxTarget, double quantumFrames,
                   double engineRate, int engineBlock, double deviceRate, int windowBlocks)
     {
         lo = minTarget;
+        floor = minTarget;
         hi = juce::jmax (minTarget, maxTarget);
         quantum = juce::jmax (8.0, quantumFrames);
         target = juce::jlimit (lo, hi, initialTarget);
@@ -221,6 +229,9 @@ public:
         window = juce::jlimit (1, 1024, windowBlocks);
         windowCounter = 0;
         curMin = prevMin = target;
+        tightenSeconds = kTightenMin;
+        quietBlocks = 0;
+        warmupBlocks = (int) (blocksPerSecond * 2.0);
 
         // PI loop on the fill error in frames. The ring moves by deviceRate * u frames/s for a
         // ratio correction u, so these gains give a critically damped loop (no overshoot into
@@ -239,7 +250,15 @@ public:
         if (hadUnderrun)
         {
             // Keep the integral: it holds the learned clock drift.
-            target = juce::jmin (hi, target + 2.0 * quantum);
+            // A dropout means rare late callbacks exist (timer-driven devices: Virtual Audio Cable,
+            // Windows shared mode). Wait longer before tightening again, so the observation window
+            // spans those spikes instead of tightening back into the next one, and step up in
+            // proportion: such a spike is usually much larger than the jitter the target was tuned to.
+            // Dropouts in the first 2 s are the start (priming, device settling): no back-off for those.
+            if (warmupBlocks <= 0) tightenSeconds = juce::jmin (kTightenMax, tightenSeconds * 8.0);
+            if (warmupBlocks <= 0 && holdFloor) floor = juce::jmin (hi, juce::jmax (floor, target + quantum));
+            target = juce::jmin (hi, target + 2.0 * quantum * std::sqrt (tightenSeconds / kTightenMin));
+            quietBlocks = 0;
             avg = fill;
             slackMin = 1.0e9;
             blockCounter = 0;
@@ -247,11 +266,16 @@ public:
             windowCounter = 0;
         }
 
+        if (warmupBlocks > 0) --warmupBlocks;
         slackMin = juce::jmin (slackMin, fill - minSafeFill);
-        if (++blockCounter >= (int) (blocksPerSecond * 4.0)) // every ~4 s, try to tighten
+        // After ~10 min without a dropout the waiting time halves again (down to 4 s).
+        if (++quietBlocks >= (int) (blocksPerSecond * 600.0)) { tightenSeconds = juce::jmax (kTightenMin, tightenSeconds * 0.5); quietBlocks = 0; }
+        if (++blockCounter >= (int) (blocksPerSecond * tightenSeconds)) // every ~4 s (longer after dropouts), try to tighten
         {
-            if (slackMin > 2.0 * quantum && target > lo)
-                target = juce::jmax (lo, target - quantum);
+            // After dropouts the margin kept above the worst dip grows with the back-off as well.
+            const double bottom = juce::jmax (lo, floor);
+            if (slackMin > 2.0 * quantum * std::sqrt (tightenSeconds / kTightenMin) && target > bottom)
+                target = juce::jmax (bottom, target - quantum);
             slackMin = 1.0e9;
             blockCounter = 0;
         }
@@ -271,11 +295,16 @@ public:
     }
 
     double getTarget() const noexcept { return target; }
+    double getFloor() const noexcept  { return floor; }
 
 private:
+    bool holdFloor = false;
+    double floor = 64;
     double lo = 64, hi = 4096, quantum = 32, target = 128, avg = 128, integral = 0, blocksPerSecond = 375, slackMin = 1e9;
     double curMin = 128, prevMin = 128, kp = 0, ki = 0, alpha = 0.01;
-    int blockCounter = 0, window = 1, windowCounter = 0;
+    int blockCounter = 0, window = 1, windowCounter = 0, quietBlocks = 0, warmupBlocks = 0;
+    double tightenSeconds = 4.0;
+    static constexpr double kTightenMin = 4.0, kTightenMax = 256.0; // seconds between two tightening steps
     static constexpr double kMaxDrift = 0.001; // clock mismatch the integral may learn (1000 ppm)
     static constexpr double kMaxCorr = 0.003;  // total ratio correction (~5 cents at most)
 };

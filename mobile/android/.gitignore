@@ -1,0 +1,8 @@
+.gradle/
+.idea/
+.kotlin/
+local.properties
+*.iml
+.cxx/
+build/
+HydraLink.apk

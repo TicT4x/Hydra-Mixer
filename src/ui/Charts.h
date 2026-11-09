@@ -49,9 +49,6 @@ struct FrameClock
     }
 };
 
-/** Legend for a tool window header: colour swatches with names, right-aligned in area. */
-void drawLegend (juce::Graphics&, juce::Rectangle<int> area, const std::vector<std::pair<juce::String, juce::Colour>>& items);
-
 /** Ranks items by value, biggest first, without letting near-equal items swap places on every refresh:
     the previous order (keys) is kept unless an item is clearly bigger than the one above it.
     Measured values (DSP load) jitter a little, so the lists stay readable. */

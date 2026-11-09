@@ -175,11 +175,11 @@ void Recorder::createParams (ParamRegistry& params)
     stop->persistent = false;
     loop   = &params.addToggle ("rec.loop", "Recorder Loop");
     juce::StringArray virtCodes;
-    for (int v = 0; v < kMaxVirtBuses; ++v) virtCodes.add (busCode (virtBusIndex (v)));
+    for (int v = 0; v < kMaxVirtBuses; ++v) virtCodes.add (busLabel (virtBusIndex (v)));
     source = &params.addChoice ("rec.src", "Recorder Source", virtCodes, 0);
     level  = &params.add ("rec.level", "Recorder Playback Level", ParamType::Continuous, fader, 0.0f, " dB");
     for (int b = 0; b < kMaxBuses; ++b)
-        out[(size_t) b] = &params.addToggle ("rec.out." + busCode (b), "Recorder -> " + busCode (b), b == 0);
+        out[(size_t) b] = &params.addToggle ("rec.out." + busCode (b), "Recorder -> " + busLabel (b), b == 0);
 }
 
 juce::File Recorder::getFolder() const
@@ -304,7 +304,7 @@ bool Recorder::startRecording()
         return false;
     }
 
-    const auto file = dir.getNonexistentChildFile ("Hydra_" + busCode (getRecordSourceBus()) + "_"
+    const auto file = dir.getNonexistentChildFile ("Hydra_" + busLabel (getRecordSourceBus()) + "_"
                                                        + juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S"),
                                                    ".wav", false);
     std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (file);
@@ -347,7 +347,7 @@ bool Recorder::startRecording()
     lastError.clear();
     ensureThread();
     changed();
-    logLine ("recording " + busCode (getRecordSourceBus()) + " to " + file.getFullPathName());
+    logLine ("recording " + busLabel (getRecordSourceBus()) + " to " + file.getFullPathName());
     return true;
 }
 

@@ -7,9 +7,26 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_subdirectory(external/JUCE)
 
+# HYDRA_FAST: quick rebuilds while iterating (build.ps1 -Fast). Same optimisation per file, but no link-time
+# optimisation (it redoes the whole program, JUCE included, on every link) and incremental linking.
+option(HYDRA_FAST "Quick rebuilds: no link-time optimisation, incremental linking" OFF)
+
+# Precompiled JUCE and standard headers, so that each of our files does not parse them again. JUCE's own
+# module sources must stay out: they set up their own defines before including anything.
+file(GLOB HYDRA_JUCE_SOURCES "${CMAKE_SOURCE_DIR}/external/JUCE/modules/*/*.cpp" "${CMAKE_SOURCE_DIR}/external/JUCE/modules/*/*.c")
+set_source_files_properties(${HYDRA_JUCE_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+function(hydra_precompile_headers target)
+    target_precompile_headers(${target} PRIVATE
+        <juce_audio_utils/juce_audio_utils.h>
+        <juce_audio_processors/juce_audio_processors.h>
+        <juce_audio_devices/juce_audio_devices.h>
+        <juce_gui_extra/juce_gui_extra.h>
+        <array> <atomic> <complex> <memory> <vector>)
+endfunction()
+
 # RNNoise 0.2 (BSD, xiph.org) - neural denoiser built into every input strip
 set(RNNOISE_DIR "${CMAKE_SOURCE_DIR}/external/rnnoise")
-add_library(rnnoise STATIC
+add_library(rnnoise STATIC EXCLUDE_FROM_ALL
     ${RNNOISE_DIR}/src/denoise.c
     ${RNNOISE_DIR}/src/rnn.c
     ${RNNOISE_DIR}/src/pitch.c
@@ -25,6 +42,27 @@ target_compile_definitions(rnnoise PRIVATE _USE_MATH_DEFINES _CRT_SECURE_NO_WARN
 if(MSVC)
     target_compile_options(rnnoise PRIVATE /W0 $<$<CONFIG:Release,RelWithDebInfo>:/O2 /Oi /arch:AVX2 /fp:fast>)
 endif()
+
+# HYDRA_PLUGIN_ONLY: just the plugin (build.ps1 builds it in a folder without "&" in its path, see below).
+option(HYDRA_PLUGIN_ONLY "Build only the Room Correction plugin" OFF)
+if(NOT HYDRA_PLUGIN_ONLY)
+# libopus 1.5.2 (BSD, xiph.org, release archive unchanged) - compression for Hydra Link (audio over the network).
+# Float build with runtime CPU detection; no programs, tests, DNN extras (DRED / OSCE / deep PLC) or install rules.
+set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+set(OPUS_DRED OFF CACHE BOOL "" FORCE)
+set(OPUS_OSCE OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+add_subdirectory(external/opus EXCLUDE_FROM_ALL)
+if(MSVC)
+    target_compile_options(opus PRIVATE /W0)
+endif()
+
+# Hydra Remote: the web app for phones / tablets, compiled into the exe (src/remote/RemoteControl.cpp serves it).
+juce_add_binary_data(HydraRemoteData HEADER_NAME RemoteData.h NAMESPACE RemoteData
+    SOURCES resources/remote/index.html resources/remote/manifest.webmanifest resources/icon.png)
 
 juce_add_gui_app(HydraMixer
     PRODUCT_NAME "Hydra Mixer"
@@ -43,6 +81,8 @@ set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/HydraMixer_artefacts/Ju
 file(GLOB_RECURSE HYDRA_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/*.h")
+# src/linkcore is the phone app's network core (mobile/android); here only in the tests (LinkLiteTest).
+list(FILTER HYDRA_SOURCES EXCLUDE REGEX "/src/linkcore/")
 target_sources(HydraMixer PRIVATE ${HYDRA_SOURCES})
 target_include_directories(HydraMixer PRIVATE "${CMAKE_SOURCE_DIR}/src")
 
@@ -75,26 +115,88 @@ target_link_libraries(HydraMixer
         juce::juce_audio_devices
         juce::juce_gui_extra
         juce::juce_dsp
-        rnnoise avrt ole32 uuid mmdevapi
+        rnnoise opus avrt ole32 uuid mmdevapi ws2_32 iphlpapi bcrypt crypt32 HydraRemoteData
     PUBLIC
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags)
+        $<$<NOT:$<BOOL:${HYDRA_FAST}>>:juce::juce_recommended_lto_flags>)
+hydra_precompile_headers(HydraMixer)
 
 if(MSVC)
     # Realtime audio: aggressive optimisation, AVX2 vectorisation, fast float maths.
     target_compile_options(HydraMixer PRIVATE
         /W3 /permissive- /Zc:__cplusplus /MP
-        $<$<CONFIG:Release,RelWithDebInfo>:/O2 /Oi /Ot /GL /arch:AVX2 /fp:fast>)
-    target_link_options(HydraMixer PRIVATE $<$<CONFIG:Release,RelWithDebInfo>:/LTCG /OPT:REF /OPT:ICF>)
+        $<$<CONFIG:Release,RelWithDebInfo>:/O2 /Oi /Ot /arch:AVX2 /fp:fast>)
+    if(HYDRA_FAST)
+        target_link_options(HydraMixer PRIVATE $<$<CONFIG:Release,RelWithDebInfo>:/INCREMENTAL /OPT:NOREF /OPT:NOICF>)
+    else()
+        target_compile_options(HydraMixer PRIVATE $<$<CONFIG:Release,RelWithDebInfo>:/GL>)
+        target_link_options(HydraMixer PRIVATE $<$<CONFIG:Release,RelWithDebInfo>:/LTCG /OPT:REF /OPT:ICF>)
+    endif()
 endif()
 
 # Offline DSP tests (run: build\<cfg>\HydraTests_artefacts\<cfg>\HydraTests.exe)
 juce_add_console_app(HydraTests PRODUCT_NAME "HydraTests")
-target_sources(HydraTests PRIVATE tests/DenoiserTest.cpp tests/SessionTest.cpp tests/MidiRangeTest.cpp tests/AppCaptureTest.cpp tests/LedTest.cpp tests/RecorderTest.cpp tests/AsioSecondaryTest.cpp tests/UndoTest.cpp tests/ReorderTest.cpp tests/SceneTest.cpp tests/SyncDelayTest.cpp tests/RoomAnalysisTest.cpp tests/CorrectionTest.cpp
-    src/core/Denoiser.cpp src/core/RoomAnalysis.cpp src/core/Correction.cpp src/engine/Engine.cpp src/engine/IoStreams.cpp src/engine/AsioSecondary.cpp src/engine/Recorder.cpp src/engine/PluginChain.cpp
-    src/midi/MidiMapper.cpp src/midi/Hotkeys.cpp src/state/Session.cpp src/state/VoicemeeterImport.cpp src/state/UndoHistory.cpp src/state/Scenes.cpp)
+target_sources(HydraTests PRIVATE tests/DenoiserTest.cpp tests/SessionTest.cpp tests/MidiRangeTest.cpp tests/AppCaptureTest.cpp tests/LedTest.cpp tests/RecorderTest.cpp tests/AsioSecondaryTest.cpp tests/UndoTest.cpp tests/ReorderTest.cpp tests/SceneTest.cpp tests/SyncDelayTest.cpp tests/RoomAnalysisTest.cpp tests/CorrectionTest.cpp tests/DeviceNamesTest.cpp tests/FxChainTest.cpp tests/CorrectionPoolTest.cpp tests/VacTest.cpp tests/VacStreamTest.cpp tests/NetLinkTest.cpp tests/RemoteTest.cpp tests/LinkLiteTest.cpp
+    src/core/Denoiser.cpp src/core/RoomAnalysis.cpp src/core/Correction.cpp src/engine/Engine.cpp src/engine/IoStreams.cpp src/engine/VacStream.cpp src/engine/NetLink.cpp src/core/NetCodec.cpp src/core/NetCrypto.cpp src/remote/QrCode.cpp src/remote/RemoteServer.cpp src/remote/RemoteControl.cpp src/linkcore/LinkLite.cpp src/engine/AsioSecondary.cpp src/engine/Recorder.cpp src/engine/PluginChain.cpp
+    src/midi/MidiMapper.cpp src/midi/Hotkeys.cpp src/state/Session.cpp src/state/VoicemeeterImport.cpp src/state/UndoHistory.cpp src/state/Scenes.cpp src/state/RoomMeasurements.cpp src/state/DeviceNames.cpp src/state/ChannelClipboard.cpp src/state/CorrectionPool.cpp src/state/VacControl.cpp src/state/VacCables.cpp)
 target_include_directories(HydraTests PRIVATE "${CMAKE_SOURCE_DIR}/src")
 target_compile_definitions(HydraTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_definitions(HydraTests PRIVATE JUCE_ASIO=1 JUCE_PLUGINHOST_VST3=1 JUCE_PLUGINHOST_LV2=0 JUCE_PLUGINHOST_LADSPA=0)
-target_link_libraries(HydraTests PRIVATE juce::juce_audio_utils juce::juce_audio_processors juce::juce_gui_extra rnnoise avrt ole32 uuid mmdevapi
+target_link_libraries(HydraTests PRIVATE juce::juce_audio_utils juce::juce_audio_processors juce::juce_gui_extra rnnoise opus avrt ole32 uuid mmdevapi ws2_32 iphlpapi bcrypt crypt32 HydraRemoteData
                       PUBLIC juce::juce_recommended_config_flags)
+hydra_precompile_headers(HydraTests)
+# The tests keep several Engine objects on the stack (several 100 KB each since the EQ has 16 bands): 16 MB stack.
+target_link_options(HydraTests PRIVATE /STACK:16777216)
+endif()  # NOT HYDRA_PLUGIN_ONLY
+
+# Room Correction as a VST3 plugin (for a DAW's master bus). Shares the corrections and measurements with the mixer
+# (%APPDATA%\HydraMixer\Corrections, \Measurements). Build output: build\<cfg>\HydraRoomCorrection_artefacts\<cfg>\VST3
+# JUCE's VST3 post-build step runs through cmd and breaks on an "&" in the build folder's path ("Phoebe & Til"):
+# then build.ps1 builds the plugin in its own folder (HYDRA_PLUGIN_ONLY) and copies it here.
+string(FIND "${CMAKE_BINARY_DIR}" "&" hydraAmpersand)
+if(hydraAmpersand EQUAL -1)
+juce_add_plugin(HydraRoomCorrection
+    PRODUCT_NAME "Hydra Room Correction"
+    COMPANY_NAME "Hydra"
+    VERSION ${PROJECT_VERSION}
+    PLUGIN_MANUFACTURER_CODE Hydr
+    PLUGIN_CODE HyRc
+    FORMATS VST3
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT FALSE
+    NEEDS_MIDI_OUTPUT FALSE
+    IS_MIDI_EFFECT FALSE
+    VST3_CATEGORIES Fx EQ
+    COPY_PLUGIN_AFTER_BUILD FALSE)
+target_sources(HydraRoomCorrection PRIVATE
+    plugin/RoomCorrectionPlugin.cpp plugin/RoomCorrectionEditor.cpp
+    src/core/Correction.cpp src/core/RoomAnalysis.cpp src/state/RoomMeasurements.cpp src/state/CorrectionPool.cpp
+    src/ui/Theme.cpp src/ui/ChannelIcons.cpp src/ui/Dialog.cpp src/ui/Controls.cpp src/ui/RoomPages.cpp)
+target_include_directories(HydraRoomCorrection PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/plugin")
+target_compile_definitions(HydraRoomCorrection PUBLIC
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_VST3_CAN_REPLACE_VST2=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_REPORT_APP_USAGE=0
+    JUCE_MODAL_LOOPS_PERMITTED=1
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN)
+target_link_libraries(HydraRoomCorrection
+    PRIVATE
+        juce::juce_audio_utils
+        juce::juce_audio_processors
+        juce::juce_audio_devices
+        juce::juce_gui_extra
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags)
+hydra_precompile_headers(HydraRoomCorrection)
+if(MSVC)
+    target_compile_options(HydraRoomCorrection PRIVATE
+        /W3 /permissive- /Zc:__cplusplus /MP
+        $<$<CONFIG:Release,RelWithDebInfo>:/O2 /Oi /Ot /arch:AVX2 /fp:fast>)
+endif()
+else()
+    message(STATUS "Room Correction plugin: built separately (\"&\" in the build path), see build.ps1")
+endif()
