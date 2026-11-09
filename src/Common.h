@@ -13,6 +13,11 @@
 
 namespace hydra
 {
+// Only set by the screenshot tool (tools/Shots.cpp): fixed status line / DSP load, no device warnings.
+inline bool demoMode = false;
+inline juce::String demoStatus;
+inline float demoDspLoad = 0.0f;
+
 // Channel slots. Every slot exists (parameters, buffers) from the start; the user adds / removes
 // channels by switching slots on and off (inX.active / bus.X.active), so nothing is allocated or
 // renumbered while the engine runs. Bus index layout: 0..7 = A1..A8, 8..15 = B1..B8.

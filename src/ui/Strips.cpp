@@ -191,6 +191,7 @@ std::vector<Chip::Status> statusFor (const Engine& engine, const IoTarget& t, bo
 {
     using State = Engine::StreamHealth::State;
     std::vector<Chip::Status> out;
+    if (demoMode) return out;
     const auto h = engine.getStreamHealth (t, input);
     const auto name = t.describe();
     switch (h.state)

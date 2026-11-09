@@ -147,6 +147,24 @@ target_link_libraries(HydraTests PRIVATE juce::juce_audio_utils juce::juce_audio
 hydra_precompile_headers(HydraTests)
 # The tests keep several Engine objects on the stack (several 100 KB each since the EQ has 16 bands): 16 MB stack.
 target_link_options(HydraTests PRIVATE /STACK:16777216)
+
+# Screenshot tool (docs/screenshot*.png): renders the UI with an example layout offscreen. Not part of the release.
+# Configure with -DHYDRA_SHOTS=ON, run: HydraShots.exe <output folder>
+option(HYDRA_SHOTS "Build the screenshot tool" OFF)
+if(HYDRA_SHOTS)
+    juce_add_console_app(HydraShots PRODUCT_NAME "HydraShots")
+    set(SHOT_SOURCES ${HYDRA_SOURCES})
+    list(FILTER SHOT_SOURCES EXCLUDE REGEX "/src/Main\.cpp$")
+    target_sources(HydraShots PRIVATE ${SHOT_SOURCES} tools/Shots.cpp)
+    target_include_directories(HydraShots PRIVATE "${CMAKE_SOURCE_DIR}/src")
+    target_compile_definitions(HydraShots PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 NOMINMAX WIN32_LEAN_AND_MEAN
+        JUCE_ASIO=1 JUCE_WASAPI=1 JUCE_DIRECTSOUND=0 JUCE_PLUGINHOST_VST3=1 JUCE_PLUGINHOST_VST=0 JUCE_PLUGINHOST_LV2=0 JUCE_PLUGINHOST_LADSPA=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0 JUCE_REPORT_APP_USAGE=0)
+    target_link_libraries(HydraShots PRIVATE juce::juce_audio_utils juce::juce_audio_processors juce::juce_audio_devices juce::juce_gui_extra juce::juce_dsp
+        rnnoise opus avrt ole32 uuid mmdevapi ws2_32 iphlpapi bcrypt crypt32 HydraRemoteData PUBLIC juce::juce_recommended_config_flags)
+    target_compile_options(HydraShots PRIVATE /W3 /permissive- /Zc:__cplusplus /MP /O2 /arch:AVX2 /fp:fast)
+    target_link_options(HydraShots PRIVATE /STACK:16777216)
+endif()
 endif()  # NOT HYDRA_PLUGIN_ONLY
 
 # Room Correction as a VST3 plugin (for a DAW's master bus). Shares the corrections and measurements with the mixer

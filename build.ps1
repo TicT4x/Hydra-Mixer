@@ -36,7 +36,8 @@ $apk = @(Get-Item (Join-Path $root "mobile\android\HydraLink.apk") -ErrorAction 
 
 if ($Fast) {
     $build = Join-Path $env:USERPROFILE ".hydra-build\fast-$Config"
-    cmake -S $root -B $build -G Ninja "-DCMAKE_BUILD_TYPE=$Config" -DHYDRA_FAST=ON
+    $shots = if ($Target -eq "HydraShots") { "ON" } else { "OFF" }   # screenshot tool (tools/Shots.cpp)
+    cmake -S $root -B $build -G Ninja "-DCMAKE_BUILD_TYPE=$Config" -DHYDRA_FAST=ON "-DHYDRA_SHOTS=$shots"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     cmake --build $build --target $Target -- -k 0
     $result = $LASTEXITCODE

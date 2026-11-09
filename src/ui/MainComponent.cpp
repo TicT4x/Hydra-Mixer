@@ -312,7 +312,8 @@ void TopBar::update()
         s << "Audio engine stopped - click to open the settings";
     if (ctx.learnMode)
         s = "MIDI LEARN MODE - click a control, then move / press a MIDI control.   Esc = exit";
-    statusLink.setStatus (s, e.getMasterDevice() != nullptr, ctx.learnMode);
+    if (demoMode) s = demoStatus;
+    statusLink.setStatus (s, demoMode || e.getMasterDevice() != nullptr, ctx.learnMode);
 
     // DSP load: average over the last ~0.25 s (like a DAW's CPU meter), refreshed 4x per second.
     // The peak (single slowest callback) goes into the tooltip.
@@ -320,7 +321,7 @@ void TopBar::update()
     if (++cpuTick >= 8)
     {
         cpuTick = 0;
-        dsp.setLoad (cpuMeter.update (e), peakSmooth);
+        dsp.setLoad (demoMode ? demoDspLoad : cpuMeter.update (e), demoMode ? demoDspLoad : peakSmooth);
     }
 
     const auto act = ctx.midi.activity.load();
