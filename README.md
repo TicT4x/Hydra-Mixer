@@ -156,8 +156,8 @@ Discord / OBS use one of the cables above.
 
 ## Installation
 
-1. Download `HydraMixer-0.6-win64.zip` from the [Releases](https://github.com/TicT4x/Hydra-Mixer/releases) page.
-2. Unzip it anywhere and start `Hydra Mixer.exe`. No installer, no runtime needed.
+1. Download `HydraMixer-0.7-win64.exe` from the [Releases](https://github.com/TicT4x/Hydra-Mixer/releases) page.
+2. Put it anywhere and start it. No installer, no runtime needed.
 3. Open the settings (gear icon) → **Audio Engine** and choose the master device. ASIO gives the lowest latency.
 
 Requirements: Windows 10 / 11, 64-bit, a CPU with AVX2.
