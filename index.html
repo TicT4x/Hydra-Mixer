@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -8,7 +8,7 @@
 <meta property="og:title" content="Hydra Mixer">
 <meta property="og:description" content="Free low-latency audio mixer for Windows, an alternative to Voicemeeter Potato.">
 <meta property="og:image" content="screenshot.png">
-<meta name="theme-color" content="#0a0c10">
+<meta name="theme-color" content="#0b0e12">
 <link rel="icon" href="icon.png">
 <script>
 // Before first paint. Language: ?lang= > saved choice > English. Theme: saved choice > dark.
@@ -22,33 +22,33 @@
 })();
 </script>
 <style>
-/* Colours from Hydra's own theme (src/ui/Theme.h) */
 :root {
-  --bg: #0a0c10;
-  --bg2: #0e1116;
-  --panel: #13171e;
-  --panel2: #191e27;
-  --raised: #212733;
-  --line: #262d3a;
-  --text: #e8ebf1;
-  --muted: #8f98a9;
-  --accent: #35d0f4;     /* inputs */
-  --accent2: #8d6cff;    /* hardware outputs */
-  --virt: #ff6aa6;       /* virtual outputs */
-  --green: #3ee08f;
-  --yellow: #ffc23f;
-  --red: #ff4d5e;
-  --orange: #ff8f4d;
+  --bg: #0b0e12;
+  --bg2: #10141a;
+  --panel: #161b22;
+  --panel2: #1d242d;
+  --line: #262f3a;
+  --text: #e3e8ee;
+  --muted: #8f9bab;
+  --accent: #35c7d9;
+  --accent2: #7b8cff;
+  --green: #4cd18a;
+  --yellow: #f2c14e;
+  --red: #ef5b5b;
+  --orange: #f08c3c;
   --code: #0e1217;
-  --shadow: 0 12px 40px rgba(0,0,0,.35);
-  --headH: 60px;
+  --glow: rgba(53, 199, 217, .16);
+  --glow2: rgba(123, 140, 255, .14);
+  --shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 10px 30px rgba(0,0,0,.30);
+  --headH: 64px;
   color-scheme: dark;
 }
 :root[data-theme="light"] {
-  --bg: #f6f7f9; --bg2: #eef0f4; --panel: #ffffff; --panel2: #f1f3f6; --raised: #e6e9ee; --line: #dadfe6;
-  --text: #141820; --muted: #5a6474; --accent: #0a8fb0; --accent2: #6a4ee0; --virt: #d6386f;
-  --green: #1e9b5a; --yellow: #a87a00; --red: #c93838; --orange: #c56516; --code: #eef0f4;
-  --shadow: 0 10px 30px rgba(20,30,50,.10);
+  --bg: #f6f8fb; --bg2: #eef2f6; --panel: #ffffff; --panel2: #f0f3f7; --line: #dbe1e8;
+  --text: #141b24; --muted: #5a6878; --accent: #0b8ea0; --accent2: #4c5fd6;
+  --green: #1e9b5a; --yellow: #a87a00; --red: #c93838; --orange: #c56516; --code: #eef2f6;
+  --glow: rgba(11, 142, 160, .12); --glow2: rgba(76, 95, 214, .10);
+  --shadow: 0 1px 2px rgba(0,0,0,.05), 0 10px 30px rgba(20,30,50,.08);
   color-scheme: light;
 }
 
@@ -70,174 +70,216 @@ html[lang="de"] .en, html[lang="en"] .de { display: none !important; }
 /* ---------- Header ---------- */
 header.top {
   position: sticky; top: 0; z-index: 40; height: var(--headH);
-  display: flex; align-items: center; gap: 8px; padding: 0 max(16px, calc((100vw - 1180px) / 2));
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 10px; padding: 0 max(16px, calc((100vw - 1240px) / 2));
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  backdrop-filter: saturate(1.4) blur(14px); -webkit-backdrop-filter: saturate(1.4) blur(14px);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
 }
-.brand { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 16px; letter-spacing: .04em; color: var(--text); flex: none; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; letter-spacing: .01em; color: var(--text); flex: none; }
 .brand:hover { text-decoration: none; }
-.brand img { width: 26px; height: 26px; }
-.brand span b { font-weight: 400; color: var(--muted); }
+.brand img { width: 30px; height: 30px; }
 nav.links { display: flex; gap: 2px; margin-left: 18px; }
-nav.links a { color: var(--muted); font-size: 14.5px; padding: 6px 11px; border-radius: 7px; }
+nav.links a { color: var(--muted); font-size: 14.5px; font-weight: 500; padding: 7px 12px; border-radius: 8px; }
 nav.links a:hover { color: var(--text); background: var(--panel); text-decoration: none; }
 nav.links a.on { color: var(--text); }
 .hspace { flex: 1; }
 .iconbtn {
-  background: transparent; border: 1px solid var(--line); color: var(--text); border-radius: 8px;
-  width: 36px; height: 36px; display: grid; place-items: center; cursor: pointer; flex: none;
+  background: transparent; border: 1px solid var(--line); color: var(--text); border-radius: 9px;
+  width: 38px; height: 38px; display: grid; place-items: center; cursor: pointer; flex: none;
 }
-.iconbtn:hover { border-color: var(--muted); text-decoration: none; }
-.lang { display: flex; flex: none; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; height: 36px; }
-.lang button { border: 0; font: inherit; cursor: pointer; padding: 0 10px; font-size: 13px; font-weight: 600; color: var(--muted); background: transparent; }
+.iconbtn:hover { border-color: var(--accent); }
+.lang { display: flex; flex: none; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; height: 38px; }
+.lang button { border: 0; font: inherit; cursor: pointer; padding: 0 11px; font-size: 13px; font-weight: 600; color: var(--muted); background: transparent; }
 .lang button:hover { color: var(--text); }
-html[lang="en"] .lang [data-lang="en"], html[lang="de"] .lang [data-lang="de"] { color: var(--text); background: var(--raised); }
+html[lang="en"] .lang [data-lang="en"], html[lang="de"] .lang [data-lang="de"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 #menuBtn { display: none; }
-.theme-sun { display: none; }
-:root[data-theme="light"] .theme-sun { display: block; }
-:root[data-theme="light"] .theme-moon { display: none; }
 
 .btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 9px; height: 44px; padding: 0 18px;
-  border-radius: 8px; font-weight: 600; font-size: 15px; border: 1px solid var(--line);
+  display: inline-flex; align-items: center; justify-content: center; gap: 9px; height: 46px; padding: 0 20px;
+  border-radius: 11px; font-weight: 600; font-size: 15.5px; border: 1px solid var(--line);
   color: var(--text); background: var(--panel); cursor: pointer; white-space: nowrap;
+  transition: transform .15s, border-color .15s, box-shadow .15s;
 }
-.btn:hover { text-decoration: none; border-color: var(--muted); }
-.btn.primary { border-color: transparent; color: #061317; background: var(--accent); }
-.btn.primary:hover { filter: brightness(1.08); }
-:root[data-theme="light"] .btn.primary { color: #fff; }
-.btn.sm { height: 36px; padding: 0 13px; font-size: 14px; }
+.btn:hover { text-decoration: none; border-color: var(--accent); transform: translateY(-1px); }
+.btn.primary {
+  border: 0; color: #061317;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, var(--accent2)));
+  box-shadow: 0 8px 26px var(--glow);
+}
+.btn.primary:hover { box-shadow: 0 10px 34px color-mix(in srgb, var(--accent) 35%, transparent); }
+.btn.sm { height: 38px; padding: 0 14px; font-size: 14px; border-radius: 9px; }
 .btn svg { flex: none; }
 
 /* ---------- Landing ---------- */
-.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
-section.block { padding: 88px 0; border-top: 1px solid var(--line); }
-.eyebrow { font-weight: 700; font-size: 12.5px; letter-spacing: .12em; text-transform: uppercase; margin: 0 0 8px; color: var(--accent); }
-.h2 { font-size: clamp(26px, 3.2vw, 36px); line-height: 1.2; letter-spacing: -.015em; margin: 0 0 12px; font-weight: 700; }
-.sub { color: var(--muted); font-size: 17px; max-width: 700px; margin: 0 0 40px; }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 0 24px; }
+section.block { padding: 96px 0; border-top: 1px solid var(--line); }
+.eyebrow { color: var(--accent); font-weight: 700; font-size: 13px; letter-spacing: .14em; text-transform: uppercase; margin: 0 0 10px; }
+.h2 { font-size: clamp(28px, 3.6vw, 42px); line-height: 1.15; letter-spacing: -.02em; margin: 0 0 14px; font-weight: 700; }
+.sub { color: var(--muted); font-size: 18px; max-width: 720px; margin: 0 0 44px; }
 
-.hero { padding: 72px 0 56px; }
-.hero h1 { font-size: clamp(36px, 5.4vw, 60px); line-height: 1.08; letter-spacing: -.03em; margin: 0 0 18px; font-weight: 750; max-width: 860px; }
-.hero h1 em { font-style: normal; color: var(--accent); }
-.hero p.lead { font-size: clamp(17px, 1.6vw, 19px); color: var(--muted); max-width: 680px; margin: 0 0 28px; }
-.cta { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.facts { color: var(--muted); font-size: 14px; margin-top: 16px; display: flex; flex-wrap: wrap; gap: 4px 18px; }
-.facts span::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--green); margin-right: 8px; vertical-align: 2px; }
-.relinfo { color: var(--muted); font-size: 13.5px; margin-top: 6px; min-height: 1.6em; }
-.shot { margin-top: 48px; border-radius: 10px; border: 1px solid var(--line); overflow: hidden; box-shadow: var(--shadow); background: var(--panel); }
-.shot img { display: block; width: 100%; height: auto; }
-
-/* Crops of Hydra's screenshots (inline SVG with a viewBox on the PNG) */
-svg.crop { display: block; width: 100%; height: auto; }
-
-/* How it works: real strip heads, lines = routing */
-.routing { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 10px; overflow-x: auto; }
-.routing svg { display: block; width: 100%; min-width: 760px; height: auto; }
-.routing .lbl { font: 700 12px "Segoe UI", system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
-.routing path.w { fill: none; stroke-width: 2.2; opacity: .6; transition: opacity .15s, stroke-width .15s; }
-.routing path.w.dash { stroke-dasharray: 5 5; opacity: .35; }
-.routing svg.focus path.w { opacity: .08; }
-.routing svg.focus path.w.on { opacity: 1; stroke-width: 3; }
-.routing g.node { cursor: pointer; }
-.routing g.node rect.hl { fill: none; stroke: transparent; stroke-width: 2; }
-.routing g.node:hover rect.hl { stroke: var(--text); }
-.legend { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 14px 4px 0; color: var(--muted); font-size: 14px; }
-.legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: 4px; margin-right: 8px; }
-.two { display: grid; grid-template-columns: 1fr 1fr; gap: 28px 48px; margin-top: 36px; }
-.two h3 { margin: 0 0 4px; font-size: 17px; }
-.two p { margin: 0; color: var(--muted); font-size: 15.5px; }
-
-/* Effects */
-.chainshot { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); }
-.chainshot img { display: block; width: 100%; height: auto; }
-.cap { color: var(--muted); font-size: 13.5px; margin: 10px 2px 0; }
-.fxgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 32px; }
-.fx { background: var(--panel); border: 1px solid var(--line); border-top: 2px solid var(--c); border-radius: 8px; padding: 14px 16px 16px; }
-.fx h3 { margin: 0 0 6px; font-size: 12.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--c); display: flex; align-items: center; gap: 8px; }
-.fx h3 .grip { width: 8px; height: 12px; opacity: .5; background: radial-gradient(circle, var(--muted) 1px, transparent 1.4px) 0 0 / 4px 4px; }
-.fx p { margin: 0; color: var(--muted); font-size: 14.5px; }
-.fx.vst { border-style: dashed; border-top-style: solid; }
-.where { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.where span { font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 4px; background: var(--raised); color: var(--muted); }
-
-/* Features: list left, detail right */
-.feats { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 28px; align-items: stretch; }
-.flist { display: flex; flex-direction: column; gap: 2px; }
-.flist button {
-  all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 12px;
-  padding: 9px 12px; border-radius: 8px; color: var(--muted); font-size: 15px; border-left: 2px solid transparent;
+.hero { position: relative; overflow: hidden; padding: 84px 0 64px; }
+.hero::before {
+  content: ""; position: absolute; inset: -20% -10% auto; height: 820px; pointer-events: none; z-index: -1;
+  background:
+    radial-gradient(600px 360px at 22% 18%, var(--glow), transparent 70%),
+    radial-gradient(640px 400px at 82% 30%, var(--glow2), transparent 70%);
 }
-.flist button:hover { color: var(--text); background: var(--panel); }
-.flist button:focus-visible { outline: 2px solid var(--accent); }
-.flist button[aria-selected="true"] { color: var(--text); background: var(--panel); border-left-color: var(--accent); }
-.flist button svg { flex: none; opacity: .85; }
-.fdetail { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 28px 30px 30px; }
-.fdetail article[hidden] { display: none; }
-.fdetail h3 { margin: 0 0 8px; font-size: 22px; letter-spacing: -.01em; }
-.fdetail p { color: var(--muted); margin: 0 0 14px; }
-.fdetail ul { margin: 0 0 18px; padding-left: 20px; color: var(--muted); }
-.fdetail li { margin: 5px 0; }
-.fdetail li b { color: var(--text); font-weight: 600; }
-.fdetail .pic { margin: 6px 0 18px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--bg); }
-.fdetail .pic img { display: block; width: 100%; height: auto; }
-.fdetail .pic.narrow { max-width: 460px; }
-.fdetail .more { font-size: 14.5px; font-weight: 600; }
-.tag { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; margin-left: 6px; vertical-align: 3px; color: var(--yellow); background: color-mix(in srgb, var(--yellow) 14%, transparent); }
-.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; font-size: 14.5px; margin: 0 0 18px; }
-.kv dt { color: var(--text); font-weight: 600; }
-.kv dd { margin: 0; color: var(--muted); }
+.hero-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 52px; text-align: center; justify-items: center; }
+.pill {
+  display: inline-flex; align-items: center; gap: 8px; padding: 5px 14px 5px 6px; border-radius: 99px;
+  background: var(--panel); border: 1px solid var(--line); font-size: 13.5px; color: var(--muted);
+}
+.pill:hover { text-decoration: none; border-color: var(--accent); color: var(--text); }
+.pill b { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); padding: 1px 9px; border-radius: 99px; font-size: 12px; }
+.hero h1 {
+  font-size: clamp(40px, 6.6vw, 76px); line-height: 1.04; letter-spacing: -.035em; margin: 22px 0 18px; font-weight: 800;
+}
+.grad { background: linear-gradient(100deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.hero p.lead { font-size: clamp(17px, 1.7vw, 20px); color: var(--muted); max-width: 720px; margin: 0 auto 32px; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+.relinfo { color: var(--muted); font-size: 13.5px; margin-top: 14px; min-height: 1.6em; }
+.shot-frame {
+  width: 100%; max-width: 1140px; border-radius: 14px; padding: 8px; position: relative;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--line) 90%, transparent), transparent);
+  box-shadow: 0 40px 120px -30px var(--glow), var(--shadow);
+}
+.shot-frame img { display: block; width: 100%; height: auto; border-radius: 9px; border: 1px solid var(--line); }
 
-/* Phone & tablet */
-.app-grid { display: grid; grid-template-columns: .9fr 1.1fr; gap: 48px; align-items: center; }
-.ticks { list-style: none; padding: 0; margin: 0 0 26px; }
-.ticks li { position: relative; padding-left: 24px; margin: 10px 0; color: var(--muted); }
-.ticks li::before { content: ""; position: absolute; left: 2px; top: 10px; width: 8px; height: 8px; border-radius: 2px; background: var(--accent); }
-.ticks li b { color: var(--text); font-weight: 600; }
-.devices { position: relative; padding: 0 60px 48px 0; }
-.tablet { border-radius: 22px; padding: 12px; background: #1b1f27; border: 1px solid #2c3340; box-shadow: var(--shadow); }
-.tablet img, .phone img { display: block; width: 100%; height: auto; border-radius: 10px; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-top: 10px; }
+.stat { background: var(--bg2); padding: 22px 20px; }
+.stat b { display: block; font-size: 28px; letter-spacing: -.02em; line-height: 1.15; }
+.stat span { color: var(--muted); font-size: 14px; }
+
+/* How it works */
+.flowmap { display: grid; grid-template-columns: 1fr 1.25fr 1fr; gap: 18px; align-items: stretch; }
+.col { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; position: relative; }
+.col h3 { margin: 0 0 4px; font-size: 16px; }
+.col .hint { color: var(--muted); font-size: 13.5px; margin: 0 0 14px; }
+.col:not(:last-child)::after {
+  content: ""; position: absolute; right: -14px; top: 50%; width: 10px; height: 10px; z-index: 2;
+  border-top: 2px solid var(--accent); border-right: 2px solid var(--accent); transform: translateY(-50%) rotate(45deg);
+}
+.chips { display: flex; flex-direction: column; gap: 8px; }
+.chip {
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px;
+  background: var(--panel2); border: 1px solid var(--line); font-size: 14.5px;
+}
+.chip small { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.chip i { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--c, var(--accent)); box-shadow: 0 0 10px var(--c, var(--accent)); }
+.chain { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.chain span { font-size: 13px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel2); }
+.chain span:nth-child(1) { color: #c29bff; } .chain span:nth-child(2) { color: #6fd3a0; } .chain span:nth-child(3) { color: #f2c14e; }
+.chain span:nth-child(4) { color: #ff8f6b; } .chain span:nth-child(5) { color: var(--accent); }
+.matrix { display: grid; grid-template-columns: auto repeat(4, 1fr); gap: 5px; font-size: 12.5px; align-items: center; }
+.matrix .h { color: var(--muted); text-align: center; font-weight: 600; }
+.matrix .r { color: var(--text); padding-right: 6px; white-space: nowrap; }
+.matrix .c { height: 24px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel2); }
+.matrix .c.on { background: color-mix(in srgb, var(--accent) 30%, var(--panel2)); border-color: var(--accent); }
+.matrix .c.on.v { background: color-mix(in srgb, var(--accent2) 30%, var(--panel2)); border-color: var(--accent2); }
+.steps3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 30px; }
+.step { padding: 4px 4px 0 0; }
+.step .n { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 14px; color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); margin-bottom: 10px; }
+.step h4 { margin: 0 0 4px; font-size: 16.5px; }
+.step p { margin: 0; color: var(--muted); font-size: 15px; }
+
+/* Features */
+.fgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.feat {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px; color: var(--text);
+  transition: border-color .15s, transform .15s; display: block;
+}
+a.feat:hover { text-decoration: none; border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); transform: translateY(-2px); }
+.feat .ic {
+  width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; margin-bottom: 14px;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+.feat:nth-child(3n+2) .ic { color: var(--accent2); background: color-mix(in srgb, var(--accent2) 13%, transparent); }
+.feat:nth-child(3n) .ic { color: var(--green); background: color-mix(in srgb, var(--green) 13%, transparent); }
+.feat h3 { margin: 0 0 6px; font-size: 17px; }
+.feat p { margin: 0; color: var(--muted); font-size: 14.8px; }
+.feat .more { display: inline-block; margin-top: 10px; font-size: 13.5px; color: var(--accent); }
+.tag { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 1px 7px; border-radius: 5px; margin-left: 6px; vertical-align: 2px; color: var(--yellow); background: color-mix(in srgb, var(--yellow) 14%, transparent); }
+
+/* Android */
+.app-grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 48px; align-items: center; }
+.ticks { list-style: none; padding: 0; margin: 0 0 28px; }
+.ticks li { position: relative; padding-left: 30px; margin: 10px 0; }
+.ticks li::before {
+  content: ""; position: absolute; left: 0; top: 4px; width: 18px; height: 18px; border-radius: 50%;
+  background: color-mix(in srgb, var(--green) 18%, transparent)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234cd18a' stroke-width='3'%3E%3Cpath d='m6 12 4 4 8-8'/%3E%3C/svg%3E") center/12px no-repeat;
+}
+.ticks li b { color: var(--text); }
+.ticks li span { color: var(--muted); }
+.phones { display: flex; justify-content: center; gap: 18px; }
 .phone {
-  position: absolute; right: 0; bottom: 0; width: 30%; border-radius: 26px; padding: 8px;
-  background: #1b1f27; border: 1px solid #2c3340; box-shadow: 0 20px 50px rgba(0,0,0,.5);
+  width: 220px; aspect-ratio: 9 / 18.5; border-radius: 32px; padding: 10px; flex: none;
+  background: linear-gradient(160deg, var(--panel2), var(--panel)); border: 1px solid var(--line);
+  box-shadow: 0 30px 80px -20px var(--glow2), var(--shadow);
 }
-.phone img { border-radius: 19px; }
-.smallprint { color: var(--muted); font-size: 14px; margin-top: 20px; }
+
+.screen { height: 100%; border-radius: 24px; background: var(--bg2); border: 1px solid var(--line); padding: 16px 12px; display: flex; flex-direction: column; gap: 9px; overflow: hidden; font-size: 11.5px; }
+.screen .ttl { font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 7px; }
+.screen .ttl img { width: 18px; height: 18px; }
+.screen .row { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 9px; }
+.screen .row .nm { display: flex; justify-content: space-between; color: var(--text); font-weight: 600; }
+.screen .row .nm span { color: var(--muted); font-weight: 400; }
+.mbar { height: 5px; border-radius: 3px; background: var(--panel2); margin-top: 6px; overflow: hidden; }
+.mbar i { display: block; height: 100%; width: var(--w); border-radius: 3px; background: linear-gradient(90deg, var(--green), var(--yellow)); transform-origin: left; }
+.phones.in .mbar i { animation: meter 1.6s ease-in-out 8 alternate; animation-delay: var(--d, 0s); }
+@keyframes meter { from { transform: scaleX(.55); } to { transform: scaleX(1); } }
+.faders { display: flex; gap: 8px; justify-content: space-around; flex: 1; padding-top: 4px; }
+.fd { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 1; }
+.fd .tr { flex: 1; width: 6px; border-radius: 3px; background: var(--panel2); position: relative; min-height: 90px; }
+.fd .tr::after { content: ""; position: absolute; left: 50%; top: var(--p); width: 22px; height: 12px; margin-left: -11px; border-radius: 4px; background: var(--text); box-shadow: 0 2px 6px rgba(0,0,0,.3); }
+.fd .tr::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; top: var(--p); border-radius: 3px; background: var(--accent); opacity: .65; }
+.fd span { color: var(--muted); font-size: 10px; }
+.qr { width: 64px; height: 64px; margin: 4px auto 0; border-radius: 6px; background:
+  conic-gradient(from 90deg at 2px 2px, var(--text) 25%, transparent 0) 0 0 / 8px 8px; opacity: .8; }
 
 /* Download */
-.dl-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
-.dl { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 26px; display: flex; flex-direction: column; }
-.dl .top { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
-.dl .top .ic { width: 44px; height: 44px; border-radius: 10px; display: grid; place-items: center; background: var(--raised); color: var(--accent); }
+.dl-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+.dl {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 28px; display: flex; flex-direction: column;
+  position: relative; overflow: hidden;
+}
+.dl::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+.dl.android::before { background: linear-gradient(90deg, var(--green), var(--accent)); }
+.dl .top { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.dl .top .ic { width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center; background: var(--panel2); border: 1px solid var(--line); color: var(--accent); }
 .dl.android .top .ic { color: var(--green); }
-.dl h3 { margin: 0; font-size: 19px; }
+.dl h3 { margin: 0; font-size: 20px; }
 .dl .meta { color: var(--muted); font-size: 13.5px; }
 .dl ul { margin: 4px 0 22px; padding-left: 20px; color: var(--muted); font-size: 14.8px; }
 .dl ul li { margin: 4px 0; }
 .dl .acts { margin-top: auto; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .dl .acts .alt { font-size: 14px; }
+.smallprint { color: var(--muted); font-size: 14px; margin-top: 22px; }
 
-/* FAQ */
+/* Docs teaser + FAQ */
 .split { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; }
 details { border-bottom: 1px solid var(--line); padding: 14px 0; }
 details summary { cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
 details summary::-webkit-details-marker { display: none; }
-details summary::after { content: "+"; color: var(--muted); font-size: 20px; line-height: 1; }
+details summary::after { content: "+"; color: var(--accent); font-size: 20px; line-height: 1; }
 details[open] summary::after { content: "–"; }
 details p { color: var(--muted); margin: 10px 0 0; font-size: 15px; }
 .doclist { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 24px 0; }
-.doclist a { display: block; padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); color: var(--text); font-size: 14.5px; font-weight: 500; }
+.doclist a { display: block; padding: 12px 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel); color: var(--text); font-size: 14.5px; font-weight: 500; }
 .doclist a small { display: block; color: var(--muted); font-weight: 400; font-size: 13px; }
-.doclist a:hover { text-decoration: none; border-color: var(--muted); }
+.doclist a:hover { text-decoration: none; border-color: var(--accent); }
 
-footer.site { border-top: 1px solid var(--line); padding: 32px 0 40px; color: var(--muted); font-size: 13.5px; }
+footer.site { border-top: 1px solid var(--line); padding: 36px 0 44px; color: var(--muted); font-size: 13.5px; }
 footer.site .wrap { display: flex; flex-wrap: wrap; gap: 18px 36px; justify-content: space-between; }
 footer.site nav { display: flex; flex-wrap: wrap; gap: 6px 20px; }
 footer.site nav a { color: var(--muted); }
 footer.site nav a:hover { color: var(--text); }
 footer.site p { margin: 0; max-width: 640px; }
 
-@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+/* Reveal on scroll */
+.rv { opacity: 0; transform: translateY(14px); transition: opacity .6s ease, transform .6s ease; }
+.rv.in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { .rv { opacity: 1; transform: none; transition: none; } .mbar i { animation: none; } html { scroll-behavior: auto; } }
 
 /* Views */
 body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
@@ -250,7 +292,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 }
 .search { position: relative; margin: 0 8px 6px 0; }
 .search input {
-  width: 100%; padding: 9px 12px 9px 34px; border-radius: 8px; border: 1px solid var(--line);
+  width: 100%; padding: 9px 12px 9px 34px; border-radius: 9px; border: 1px solid var(--line);
   background: var(--panel); color: var(--text); font: inherit; font-size: 14px; outline: none;
 }
 .search input:focus { border-color: var(--accent); }
@@ -277,13 +319,14 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 .wiki ul, .wiki ol { padding-left: 22px; margin: 8px 0 14px; }
 .wiki li { margin: 3px 0; }
 .wiki .lead { font-size: 17.5px; color: var(--muted); max-width: 760px; }
-.wiki .hero { display: grid; gap: 20px; padding: 0; }
-.wiki .hero img.shot, .wiki img.shot { display: block; width: 100%; border-radius: 10px; border: 1px solid var(--line); box-shadow: var(--shadow); margin: 14px 0; }
+.wiki .hero { display: grid; gap: 20px; padding: 0; overflow: visible; }
+.wiki .hero::before { display: none; }
+.wiki .hero img.shot { width: 100%; border-radius: 10px; border: 1px solid var(--line); box-shadow: var(--shadow); }
 .wiki .badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .wiki .badge { font-size: 12.5px; padding: 3px 10px; border-radius: 99px; background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
 .wiki .badge b { color: var(--text); font-weight: 600; }
 .wiki .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; margin: 16px 0; }
-.wiki .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; color: var(--text); }
+.wiki .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; box-shadow: var(--shadow); color: var(--text); }
 .wiki a.card:hover { border-color: var(--accent); text-decoration: none; }
 .wiki .card h4 { margin: 0 0 4px; }
 .wiki .card p { margin: 0; font-size: 14px; color: var(--muted); }
@@ -318,9 +361,11 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 1000px) {
-  .fxgrid { grid-template-columns: repeat(2, 1fr); }
+  .fgrid { grid-template-columns: repeat(2, 1fr); }
+  .flowmap { grid-template-columns: 1fr; }
+  .col:not(:last-child)::after { right: auto; left: 50%; top: auto; bottom: -15px; transform: translateX(-50%) rotate(135deg); }
   .app-grid, .split { grid-template-columns: 1fr; gap: 40px; }
-  .feats { grid-template-columns: 220px minmax(0, 1fr); }
+  .stats { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 900px) {
   #docs .layout { grid-template-columns: 1fr; }
@@ -336,26 +381,118 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 @media (max-width: 760px) {
   nav.links a:not(.keep) { display: none; }
   nav.links { margin-left: 4px; }
-  section.block { padding: 64px 0; }
+  section.block { padding: 68px 0; }
   .wrap { padding: 0 16px; }
-  .two, .dl-grid, .doclist { grid-template-columns: 1fr; }
-  .hero { padding: 48px 0 40px; }
-  #getBtn, #ghTop { display: none; }
-  /* features: list becomes a scrolling row of chips above the detail */
-  .feats { grid-template-columns: 1fr; gap: 14px; }
-  .flist { position: static; flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 6px; scrollbar-width: thin; }
-  .flist button { flex: none; border: 1px solid var(--line); border-radius: 99px; padding: 6px 12px; font-size: 14px; }
-  .flist button[aria-selected="true"] { border-color: var(--accent); }
-  .flist button svg { display: none; }
-  .fdetail { padding: 20px 18px; min-height: 0; }
-  .devices { padding-right: 30px; }
+  .fgrid, .dl-grid, .steps3, .doclist { grid-template-columns: 1fr; }
+  .hero { padding: 56px 0 40px; }
+  .phone { width: 170px; }
+  .phone.b { margin-top: 32px; }
+  #getBtn { display: none; }
 }
-@media (max-width: 480px) {
+@media (max-width: 420px) {
   header.top { gap: 6px; }
   .brand span { display: none; }
-  .fxgrid { grid-template-columns: 1fr; }
+  .phone.b { display: none; }
+  .stat b { font-size: 23px; }
   .cta .btn { width: 100%; }
 }
+
+/* ---------- Hydra graphics (hydra-ui.js): vector, always in the app's dark colours ---------- */
+.wiki img.shot, .wiki .hx.shot { display: block; width: 100%; border-radius: 10px; border: 1px solid var(--line); margin: 14px 0; overflow: hidden; }
+.routing[data-g="chain"] svg { min-width: 900px; }
+.hx svg { display: block; width: 100%; height: auto; }
+.hx.framed { border-radius: 12px; overflow: hidden; box-shadow: 0 30px 80px -30px var(--glow), var(--shadow); }
+.routing { overflow-x: auto; border-radius: 14px; border: 1px solid var(--line); background: #0a0c10; box-shadow: 0 40px 100px -40px var(--glow), var(--shadow); }
+.routing svg { min-width: 680px; }
+.routing path.w { stroke-width: 2.2; opacity: .6; transition: opacity .15s, stroke-width .15s; }
+.routing path.w.dash { stroke-dasharray: 5 5; opacity: .35; }
+.routing svg.focus path.w { opacity: .08; }
+.routing svg.focus path.w.on { opacity: 1; stroke-width: 3; }
+.routing g.node { cursor: pointer; outline: none; }
+.routing g.node rect.hl { stroke: transparent; stroke-width: 2; }
+.routing g.node:hover rect.hl, .routing g.node:focus rect.hl { stroke: #e8ebf1; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 14px 2px 0; color: var(--muted); font-size: 14px; }
+.legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: 4px; margin-right: 8px; }
+.swipe { display: none; color: var(--muted); font-size: 13px; margin: 8px 2px 0; }
+
+/* Effects */
+.fxgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 30px; }
+.fx { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 18px 16px; position: relative; overflow: hidden; }
+.fx::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; background: var(--c); }
+.fx h3 { margin: 0 0 6px; font-size: 13px; letter-spacing: .07em; text-transform: uppercase; color: var(--c); }
+.fx p { margin: 0; color: var(--muted); font-size: 14.5px; }
+.where { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.where span { font-size: 11.5px; font-weight: 600; padding: 1px 8px; border-radius: 99px; background: var(--panel2); border: 1px solid var(--line); color: var(--muted); }
+.cap { color: var(--muted); font-size: 13.5px; margin: 12px 2px 0; }
+
+/* Features: list left, detail right (mobile: accordion) */
+.feats { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 24px; align-items: stretch; }
+.flist { display: flex; flex-direction: column; gap: 4px; }
+.flist > button {
+  all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 12px;
+  padding: 7px 12px; border-radius: 11px; color: var(--muted); font-size: 15px; font-weight: 500; border: 1px solid transparent;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.flist > button:hover { color: var(--text); background: var(--panel); }
+.flist > button:focus-visible { outline: 2px solid var(--accent); }
+.flist > button[aria-selected="true"] { color: var(--text); background: var(--panel); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.flist > button .ic { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; flex: none; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.flist > button:nth-of-type(3n+2) .ic { color: var(--accent2); background: color-mix(in srgb, var(--accent2) 12%, transparent); }
+.flist > button:nth-of-type(3n) .ic { color: var(--green); background: color-mix(in srgb, var(--green) 12%, transparent); }
+.flist > button .chev { display: none; margin-left: auto; transition: transform .2s; color: var(--muted); }
+.fdetail { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 28px 30px 30px; box-shadow: var(--shadow); }
+.fdetail article[hidden], .flist article[hidden] { display: none; }
+.fdetail h3 { margin: 0 0 10px; font-size: 23px; letter-spacing: -.01em; }
+.fdetail p, .flist article p { color: var(--muted); margin: 0 0 14px; }
+.fdetail ul, .flist article ul { margin: 0 0 18px; padding-left: 20px; color: var(--muted); }
+.fdetail li, .flist article li { margin: 5px 0; }
+.fdetail li b, .flist article li b { color: var(--text); font-weight: 600; }
+.pic { margin: 4px 0 20px; }
+.pic.narrow { max-width: 520px; }
+.pic img { display: block; width: 100%; height: auto; border-radius: 10px; }
+.pic .hx svg { border-radius: 10px; }
+.duo { display: grid; grid-template-columns: 2.2fr 1fr; gap: 12px; align-items: end; }
+.more { font-size: 14.5px; font-weight: 600; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; font-size: 14.5px; margin: 0 0 18px; }
+.kv dt { color: var(--text); font-weight: 600; }
+.kv dd { margin: 0; color: var(--muted); }
+
+/* Phone & tablet */
+.devices { position: relative; padding: 0 56px 48px 0; }
+.tablet { border-radius: 24px; padding: 12px; background: linear-gradient(160deg, var(--panel2), var(--panel)); border: 1px solid var(--line); box-shadow: 0 30px 80px -20px var(--glow2), var(--shadow); }
+.tablet img, .phone img { display: block; width: 100%; height: auto; border-radius: 12px; }
+.phone {
+  position: absolute; right: 0; bottom: 0; width: 30%; border-radius: 28px; padding: 8px;
+  background: linear-gradient(160deg, var(--panel2), var(--panel)); border: 1px solid var(--line); box-shadow: 0 24px 60px rgba(0,0,0,.5);
+}
+.phone img { border-radius: 21px; }
+
+@media (max-width: 1000px) {
+  .fxgrid { grid-template-columns: repeat(2, 1fr); }
+  .feats { grid-template-columns: 240px minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  .swipe { display: block; }
+  #ghTop { display: none; }
+  /* Features as an accordion: the detail opens right below its entry */
+  .feats { grid-template-columns: 1fr; }
+  .fdetail { display: none; }
+  .flist { gap: 0; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--panel); }
+  .flist > button { border-radius: 0; border: 0; border-top: 1px solid var(--line); padding: 12px 14px; }
+  .flist > button:first-child { border-top: 0; }
+  .flist > button[aria-selected="true"] { background: var(--panel2); border-color: var(--line); }
+  .flist > button .chev { display: block; }
+  .flist > button[aria-selected="true"] .chev { transform: rotate(180deg); }
+  .flist article { padding: 4px 16px 18px; background: var(--panel2); }
+  .flist article h3 { display: none; }
+  .flist article .pic { margin: 6px -4px 16px; }
+  .duo { grid-template-columns: 1.6fr 1fr; }
+  .devices { padding-right: 28px; }
+}
+@media (max-width: 480px) {
+  .fxgrid { grid-template-columns: 1fr; }
+}
+
 </style>
 </head>
 <body data-view="home">
@@ -364,7 +501,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
   <button class="iconbtn" id="menuBtn" aria-label="Open navigation">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
   </button>
-  <a class="brand" href="#top"><img src="icon.png" alt=""><span>HYDRA <b>MIXER</b></span></a>
+  <a class="brand" href="#top"><img src="icon.png" alt=""><span>Hydra Mixer</span></a>
   <nav class="links">
     <a href="#how"><span class="en">How it works</span><span class="de">So funktioniert's</span></a>
     <a href="#effects"><span class="en">Effects</span><span class="de">Effekte</span></a>
@@ -378,44 +515,53 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
     <button type="button" data-lang="de" lang="de">DE</button>
   </div>
   <button class="iconbtn" id="themeBtn" aria-label="Light / dark" title="Light / dark">
-    <svg class="theme-moon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
-    <svg class="theme-sun" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
   </button>
   <a class="iconbtn" id="ghTop" href="https://github.com/TicT4x/Hydra-Mixer" aria-label="GitHub" title="GitHub">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.8 1.19 1.83 1.19 3.09 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"/></svg>
   </a>
-  <a class="btn primary sm" id="getBtn" href="#download">Download</a>
+  <a class="btn primary sm" id="getBtn" href="#download">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
+    Download
+  </a>
 </header>
 
 <!-- ================================================================ HOME -->
 <div id="home">
 
 <section class="hero" id="top">
-  <div class="wrap">
-    <h1><span class="en">Every sound on your PC in <em>one mixer</em>.</span><span class="de">Jeder Sound deines PCs in <em>einem Mixer</em>.</span></h1>
-    <p class="lead">
-      <span class="en">Hydra Mixer is a free, open-source audio mixer for Windows, built for low latency. Mix microphones, games, apps and virtual cables, run them through effects and VST3 plugins, and send each mix where it belongs. An alternative to Voicemeeter Potato.</span>
-      <span class="de">Hydra Mixer ist ein kostenloser Open-Source-Audiomixer für Windows, gebaut für geringe Latenz. Mische Mikrofone, Spiele, Apps und virtuelle Kabel, schick sie durch Effekte und VST3-Plugins und jeden Mix dorthin, wo er hingehört. Eine Alternative zu Voicemeeter Potato.</span>
-    </p>
-    <div class="cta">
-      <a class="btn primary" data-dl="win" href="https://github.com/TicT4x/Hydra-Mixer/releases/latest">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10.5 4.4v7.1H3zM11.5 4.3 21 3v8.5h-9.5zM3 12.5h7.5v7.1L3 18.5zM11.5 12.5H21V21l-9.5-1.3z"/></svg>
-        <span class="en">Download for Windows</span><span class="de">Für Windows laden</span>
-      </a>
-      <a class="btn" href="https://github.com/TicT4x/Hydra-Mixer">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.8 1.19 1.83 1.19 3.09 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"/></svg>
-        <span class="en">Source on GitHub</span><span class="de">Quellcode auf GitHub</span>
-      </a>
-      <a class="btn" href="#docs">Wiki</a>
+  <div class="wrap hero-grid">
+    <div>
+      <a class="pill" href="#app" id="relPill"><b class="en">New</b><b class="de">Neu</b><span class="en">Hydra Link, phone remote and Android app</span><span class="de">Hydra Link, Handy-Steuerung und Android-App</span></a>
+      <h1><span class="en">Every sound on your PC.<br><span class="grad">One mixer, zero lag.</span></span><span class="de">Jeder Sound deines PCs.<br><span class="grad">Ein Mixer, keine Verzögerung.</span></span></h1>
+      <p class="lead">
+        <span class="en">Hydra Mixer is a free, open-source audio mixer for Windows, built for the lowest possible latency. Mix microphones, games, apps and virtual cables, run them through effects and VST3 plugins and send each mix wherever it needs to go. An alternative to Voicemeeter Potato.</span>
+        <span class="de">Hydra Mixer ist ein kostenloser Open-Source-Audiomixer für Windows, gebaut für die geringstmögliche Latenz. Mische Mikrofone, Spiele, Apps und virtuelle Kabel, schick sie durch Effekte und VST3-Plugins und jeden Mix genau dorthin, wo er hin soll. Eine Alternative zu Voicemeeter Potato.</span>
+      </p>
+      <div class="cta">
+        <a class="btn primary" data-dl="win" href="https://github.com/TicT4x/Hydra-Mixer/releases/latest">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10.5 4.4v7.1H3zM11.5 4.3 21 3v8.5h-9.5zM3 12.5h7.5v7.1L3 18.5zM11.5 12.5H21V21l-9.5-1.3z"/></svg>
+          <span class="en">Download for Windows</span><span class="de">Für Windows laden</span>
+        </a>
+        <a class="btn" href="https://github.com/TicT4x/Hydra-Mixer">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.8 1.19 1.83 1.19 3.09 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"/></svg>
+          GitHub
+        </a>
+        <a class="btn" href="#app">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></svg>
+          <span class="en">Android app</span><span class="de">Android-App</span>
+        </a>
+      </div>
+      <div class="relinfo" data-relinfo></div>
     </div>
-    <div class="facts">
-      <span class="en">Windows 10 / 11</span><span class="de">Windows 10 / 11</span>
-      <span class="en">single .exe, no installer</span><span class="de">eine .exe, kein Installer</span>
-      <span class="en">free, AGPL-3.0</span><span class="de">kostenlos, AGPL-3.0</span>
+    <div class="shot-frame rv">
+      <img src="screenshot.png" width="3122" height="2000" alt="Hydra Mixer main window: input strips on the left, hardware and virtual outputs on the right, the effect chain of the selected channel at the bottom">
     </div>
-    <div class="relinfo" data-relinfo></div>
-    <div class="shot">
-      <img src="screenshot.png" width="1951" height="1250" alt="Hydra Mixer main window: input strips on the left, hardware and virtual outputs on the right, the effect chain of the selected channel at the bottom">
+    <div class="stats rv" style="width:100%;max-width:1140px">
+      <div class="stat"><b>0</b><span class="en">extra buffers on the master device</span><span class="de">Zusatzpuffer am Master-Gerät</span></div>
+      <div class="stat"><b>16 · 8 · 8</b><span class="en">inputs · hardware · virtual outputs</span><span class="de">Inputs · Hardware- · virtuelle Ausgänge</span></div>
+      <div class="stat"><b>≈ 1.6 %</b><span class="en">of one CPU core when idle</span><span class="de">eines CPU-Kerns im Leerlauf</span></div>
+      <div class="stat"><b>AGPL-3.0</b><span class="en">free and open source</span><span class="de">kostenlos und Open Source</span></div>
     </div>
   </div>
 </section>
@@ -426,23 +572,25 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
     <p class="eyebrow"><span class="en">How it works</span><span class="de">So funktioniert's</span></p>
     <h2 class="h2"><span class="en">Sources in, mixes out.</span><span class="de">Quellen rein, Mixe raus.</span></h2>
     <p class="sub">
-      <span class="en">Every sound gets its own channel strip. The buttons on a strip decide which outputs hear it. Below: the strips of the example above, the lines show how they are routed. Point at a strip to follow its lines.</span>
-      <span class="de">Jeder Sound bekommt einen eigenen Kanal. Die Knöpfe am Kanal legen fest, welche Ausgänge ihn hören. Unten die Kanäle aus dem Beispiel oben, die Linien zeigen das Routing. Zeig auf einen Kanal, um seinen Linien zu folgen.</span>
+      <span class="en">Every sound gets its own channel strip. The buttons on a strip decide which outputs hear it: your headphones, your speakers, the stream, the call. Point at a strip to follow its lines.</span>
+      <span class="de">Jeder Sound bekommt einen eigenen Kanal. Die Knöpfe am Kanal legen fest, welche Ausgänge ihn hören: Kopfhörer, Lautsprecher, Stream, Call. Zeig auf einen Kanal, um seinen Linien zu folgen.</span>
     </p>
-    <div class="routing" id="routing"></div>
+    <div class="routing hx rv" data-g="routing"></div>
+    <p class="swipe"><span class="en">← Swipe to see all channels →</span><span class="de">← Wischen für alle Kanäle →</span></p>
     <div class="legend">
-      <span><i style="background:var(--accent2)"></i><span class="en">to a hardware output (H): speakers, headphones, TV</span><span class="de">zu einem Hardware-Ausgang (H): Lautsprecher, Kopfhörer, TV</span></span>
-      <span><i style="background:var(--virt)"></i><span class="en">to a virtual output (V): OBS, Discord, recording</span><span class="de">zu einem virtuellen Ausgang (V): OBS, Discord, Aufnahme</span></span>
+      <span><i style="background:#a288ff"></i><span class="en">to a hardware output (H): speakers, headphones, TV</span><span class="de">zu einem Hardware-Ausgang (H): Lautsprecher, Kopfhörer, TV</span></span>
+      <span><i style="background:#ff6aa6"></i><span class="en">to a virtual output (V): OBS, Discord, recording</span><span class="de">zu einem virtuellen Ausgang (V): OBS, Discord, Aufnahme</span></span>
     </div>
-    <div class="two">
-      <div>
-        <h3><span class="en">One master clock</span><span class="de">Eine Master-Clock</span></h3>
-        <p><span class="en">Your main interface (ideally ASIO) drives the whole mixer. Its channels run without any extra buffer, so the mic you hear back is as fast as your driver allows.</span><span class="de">Dein Haupt-Interface (am besten ASIO) treibt den ganzen Mixer. Seine Kanäle laufen ohne Zusatzpuffer, dein Mikro hörst du so schnell zurück, wie der Treiber es erlaubt.</span></p>
-      </div>
-      <div>
-        <h3><span class="en">Everything else follows</span><span class="de">Alles andere folgt</span></h3>
-        <p><span class="en">Other devices, more ASIO interfaces, apps and network streams attach through a self-tuning drift controller and resampler: no clicks and no growing delay, even after hours.</span><span class="de">Andere Geräte, weitere ASIO-Interfaces, Apps und Netzwerk-Streams hängen über einen selbst-tunenden Drift-Regler und Resampler daran: keine Knackser und keine wachsende Verzögerung, auch nach Stunden.</span></p>
-      </div>
+    <div class="steps3">
+      <div class="step rv"><div class="n">1</div>
+        <h4><span class="en">One master clock</span><span class="de">Eine Master-Clock</span></h4>
+        <p><span class="en">Your main interface (ideally ASIO) drives the whole mixer. Its channels run without any extra buffer, so the mic you hear back is as fast as your driver allows.</span><span class="de">Dein Haupt-Interface (am besten ASIO) treibt den ganzen Mixer. Seine Kanäle laufen ohne Zusatzpuffer, dein Mikro hörst du so schnell zurück, wie der Treiber es erlaubt.</span></p></div>
+      <div class="step rv"><div class="n">2</div>
+        <h4><span class="en">Everything else follows</span><span class="de">Alles andere folgt</span></h4>
+        <p><span class="en">Other devices, more ASIO interfaces, apps and network streams attach through a self-tuning drift controller and resampler: no clicks and no growing delay, even after hours.</span><span class="de">Andere Geräte, weitere ASIO-Interfaces, Apps und Netzwerk-Streams hängen über einen selbst-tunenden Drift-Regler und Resampler daran: keine Knackser und keine wachsende Verzögerung, auch nach Stunden.</span></p></div>
+      <div class="step rv"><div class="n">3</div>
+        <h4><span class="en">An effect chain per channel</span><span class="de">Eine Effektkette pro Kanal</span></h4>
+        <p><span class="en">Every input and output runs through its own chain of built-in effects and VST3 plugins, in the order you choose.</span><span class="de">Jeder Input und jeder Ausgang läuft durch seine eigene Kette aus eingebauten Effekten und VST3-Plugins, in der Reihenfolge, die du festlegst.</span></p></div>
     </div>
   </div>
 </section>
@@ -451,37 +599,38 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 <section class="block" id="effects">
   <div class="wrap">
     <p class="eyebrow"><span class="en">Effects</span><span class="de">Effekte</span></p>
-    <h2 class="h2"><span class="en">An effect chain on every channel.</span><span class="de">Eine Effektkette auf jedem Kanal.</span></h2>
+    <h2 class="h2"><span class="en">Studio effects on every channel.</span><span class="de">Studio-Effekte auf jedem Kanal.</span></h2>
     <p class="sub">
       <span class="en">Built-in effects and your VST3 plugins are blocks in one chain. Drag them into any order, use up to four of each, switch them off without losing settings. The built-in effects add no latency.</span>
       <span class="de">Eingebaute Effekte und deine VST3-Plugins sind Blöcke in einer Kette. Zieh sie in jede Reihenfolge, nutze bis zu vier von jedem, schalte sie aus, ohne Einstellungen zu verlieren. Die eingebauten Effekte kosten keine Latenz.</span>
     </p>
-    <div class="chainshot"><img src="chain-mic.png" width="1440" height="285" alt="Effect chain of a microphone in Hydra: denoiser, equalizer, gate, compressor and a plus button to add more"></div>
-    <p class="cap"><span class="en">The chain of the mic from the screenshot above. The + adds a built-in effect or a VST3 plugin anywhere.</span><span class="de">Die Kette des Mikros aus dem Screenshot oben. Das + fügt überall einen eingebauten Effekt oder ein VST3-Plugin ein.</span></p>
+    <div class="routing hx rv" data-g="chain" style="background:#13171e"></div>
+    <p class="swipe"><span class="en">← Swipe to see the whole chain →</span><span class="de">← Wischen für die ganze Kette →</span></p>
+    <p class="cap"><span class="en">The chain of a microphone: denoiser, EQ and gate, a VST3 plugin, then the compressor. The + adds a built-in effect or a plugin anywhere.</span><span class="de">Die Kette eines Mikrofons: Denoiser, EQ und Gate, ein VST3-Plugin, dann der Kompressor. Das + fügt überall einen eingebauten Effekt oder ein Plugin ein.</span></p>
 
     <div class="fxgrid">
-      <div class="fx" style="--c:#3ee08f"><h3><i class="grip"></i>Denoiser</h3>
+      <div class="fx rv" style="--c:#3ee08f"><h3>Denoiser</h3>
         <p><span class="en">Removes fans, keyboards and room noise from your voice. RNNoise with Hydra's own filter bank, from 0 ms extra delay.</span><span class="de">Entfernt Lüfter, Tastatur und Raumrauschen aus der Stimme. RNNoise mit Hydras eigener Filterbank, ab 0 ms Zusatzverzögerung.</span></p>
         <div class="where"><span>Inputs</span></div></div>
-      <div class="fx" style="--c:#35d0f4"><h3><i class="grip"></i>Equalizer</h3>
+      <div class="fx rv" style="--c:#35d0f4"><h3>Equalizer</h3>
         <p><span class="en">16 bands, seven filter types, a large window with a live spectrum. Import and export presets.</span><span class="de">16 Bänder, sieben Filtertypen, ein großes Fenster mit Live-Spektrum. Presets importieren und exportieren.</span></p>
         <div class="where"><span>Inputs</span><span>H</span><span>V</span></div></div>
-      <div class="fx" style="--c:#ffc23f"><h3><i class="grip"></i>Gate</h3>
+      <div class="fx rv" style="--c:#ffc23f"><h3>Gate</h3>
         <p><span class="en">Closes between words. With Voice Key it only opens for speech, not for a keyboard click.</span><span class="de">Schließt zwischen den Wörtern. Mit Voice Key öffnet es nur für Sprache, nicht für Tastenklicks.</span></p>
         <div class="where"><span>Inputs</span></div></div>
-      <div class="fx" style="--c:#ff8f4d"><h3><i class="grip"></i><span class="en">Compressor</span><span class="de">Kompressor</span></h3>
+      <div class="fx rv" style="--c:#ff8f4d"><h3><span class="en">Compressor</span><span class="de">Kompressor</span></h3>
         <p><span class="en">Evens out loud and quiet parts. Knee, attack, release, makeup and auto gain, with a live curve.</span><span class="de">Gleicht laute und leise Stellen aus. Knee, Attack, Release, Makeup und Auto-Gain, mit Live-Kennlinie.</span></p>
         <div class="where"><span>Inputs</span><span>H</span><span>V</span></div></div>
-      <div class="fx" style="--c:#ff6a7d"><h3><i class="grip"></i>Limiter</h3>
+      <div class="fx rv" style="--c:#ff6a7d"><h3>Limiter</h3>
         <p><span class="en">A ceiling nothing goes over. Protects ears, speakers and your stream from peaks.</span><span class="de">Eine Grenze, über die nichts geht. Schützt Ohren, Lautsprecher und Stream vor Spitzen.</span></p>
         <div class="where"><span>Inputs</span><span>H</span><span>V</span></div></div>
-      <div class="fx" style="--c:#a78bfa"><h3><i class="grip"></i><span class="en">Room correction</span><span class="de">Raumkorrektur</span></h3>
+      <div class="fx rv" style="--c:#a78bfa"><h3><span class="en">Room correction</span><span class="de">Raumkorrektur</span></h3>
         <p><span class="en">Measured with a mic in a guided wizard: tames room resonances and lines up left and right speaker.</span><span class="de">Im Assistenten mit einem Mikro gemessen: zähmt Raumresonanzen und gleicht linken und rechten Lautsprecher an.</span></p>
         <div class="where"><span>H</span></div></div>
-      <div class="fx" style="--c:#ff6ac1"><h3><i class="grip"></i>Phase</h3>
+      <div class="fx rv" style="--c:#ff6ac1"><h3>Phase</h3>
         <p><span class="en">Flips the polarity, for a second mic on the same source or a miswired cable.</span><span class="de">Dreht die Polarität, für ein zweites Mikro an derselben Quelle oder ein falsch verdrahtetes Kabel.</span></p>
         <div class="where"><span>Inputs</span><span>H</span><span>V</span></div></div>
-      <div class="fx vst" style="--c:var(--text)"><h3><i class="grip"></i><span class="en">VST3 plugins</span><span class="de">VST3-Plugins</span></h3>
+      <div class="fx rv" style="--c:linear-gradient(90deg,var(--accent),var(--accent2))"><h3 style="color:var(--text)"><span class="en">VST3 plugins</span><span class="de">VST3-Plugins</span></h3>
         <p><span class="en">Any VST3 effect, anywhere in the chain, with its own editor. Plugins are scanned safely, a crashing one is skipped.</span><span class="de">Jeder VST3-Effekt, an jeder Stelle der Kette, mit eigenem Editor. Plugins werden sicher gescannt, ein abstürzendes wird übersprungen.</span></p>
         <div class="where"><span>Inputs</span><span>H</span><span>V</span></div></div>
     </div>
@@ -492,30 +641,31 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 <section class="block" id="features">
   <div class="wrap">
     <p class="eyebrow">Features</p>
-    <h2 class="h2"><span class="en">What Hydra can do.</span><span class="de">Was Hydra kann.</span></h2>
-    <p class="sub"><span class="en">Pick a feature to see the details.</span><span class="de">Wähle ein Feature für die Details.</span></p>
+    <h2 class="h2"><span class="en">Everything a streamer, gamer or podcaster needs.</span><span class="de">Alles, was Streamer, Gamer und Podcaster brauchen.</span></h2>
+    <p class="sub"><span class="en">Pick a feature to see it in detail.</span><span class="de">Wähle ein Feature, um es im Detail zu sehen.</span></p>
 
     <div class="feats">
       <div class="flist" role="tablist" aria-label="Features">
-        <button role="tab" data-f="latency" aria-selected="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><span class="en">Low-latency engine</span><span class="de">Latenzarme Engine</span></button>
-        <button role="tab" data-f="apps"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><span class="en">Capture single apps</span><span class="de">Einzelne Apps aufnehmen</span></button>
-        <button role="tab" data-f="cables"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h4l2-5 4 10 2-5h4"/></svg><span class="en">Virtual cables</span><span class="de">Virtuelle Kabel</span></button>
-        <button role="tab" data-f="eq"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 16c3 0 3-8 6-8s3 6 6 6 3-4 6-4"/></svg><span class="en">EQ with live spectrum</span><span class="de">EQ mit Live-Spektrum</span></button>
-        <button role="tab" data-f="sel"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg><span class="en">A separate mix per output</span><span class="de">Eigener Mix pro Ausgang</span></button>
-        <button role="tab" data-f="room"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10 12 3l9 7v10H3z"/><path d="M8 15c1.3-1.3 2.7-1.3 4 0s2.7 1.3 4 0"/></svg><span class="en">Room correction</span><span class="de">Raumkorrektur</span></button>
-        <button role="tab" data-f="link"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16a5 5 0 0 1 6 0"/><circle cx="12" cy="19.5" r="1"/></svg>Hydra Link</button>
-        <button role="tab" data-f="remote"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10 7v8M14 9v6"/></svg><span class="en">Phone &amp; tablet remote</span><span class="de">Handy &amp; Tablet als Fernbedienung</span></button>
-        <button role="tab" data-f="midi"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M7 6v7M12 6v7M17 6v7"/></svg><span class="en">MIDI &amp; hotkeys</span><span class="de">MIDI &amp; Tastenkürzel</span></button>
-        <button role="tab" data-f="scenes"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span class="en">Scenes</span><span class="de">Szenen</span></button>
-        <button role="tab" data-f="recorder"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>Recorder</button>
-        <button role="tab" data-f="finder"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg>Latency Finder &amp; Sync Delay</button>
-        <button role="tab" data-f="vm"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg><span class="en">Voicemeeter import</span><span class="de">Voicemeeter-Import</span></button>
+        <button role="tab" data-f="latency" aria-selected="true"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></span><span class="en">Low-latency engine</span><span class="de">Latenzarme Engine</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="apps"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span><span class="en">Capture single apps</span><span class="de">Einzelne Apps aufnehmen</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="cables"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h4l2-5 4 10 2-5h4"/></svg></span><span class="en">Virtual cables</span><span class="de">Virtuelle Kabel</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="eq"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 16c3 0 3-8 6-8s3 6 6 6 3-4 6-4"/></svg></span><span class="en">EQ with live spectrum</span><span class="de">EQ mit Live-Spektrum</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="sel"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></span><span class="en">A separate mix per output</span><span class="de">Eigener Mix pro Ausgang</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="room"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10 12 3l9 7v10H3z"/><path d="M8 15c1.3-1.3 2.7-1.3 4 0s2.7 1.3 4 0"/></svg></span><span class="en">Room correction</span><span class="de">Raumkorrektur</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="link"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16a5 5 0 0 1 6 0"/><circle cx="12" cy="19.5" r="1"/></svg></span>Hydra Link<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="remote"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10 7v8M14 9v6"/></svg></span><span class="en">Phone &amp; tablet remote</span><span class="de">Handy &amp; Tablet als Fernbedienung</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="recorder"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg></span>Recorder<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="finder"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg></span>Latency Finder &amp; Sync Delay<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="dsp"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 1v4M15 1v4M9 19v4M15 19v4M1 9h4M1 15h4M19 9h4M19 15h4"/></svg></span>DSP Load<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="midi"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M7 6v7M12 6v7M17 6v7"/></svg></span><span class="en">MIDI &amp; hotkeys</span><span class="de">MIDI &amp; Tastenkürzel</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="scenes"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span><span class="en">Scenes</span><span class="de">Szenen</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="vm"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></span><span class="en">Voicemeeter import</span><span class="de">Voicemeeter-Import</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
       </div>
 
       <div class="fdetail">
         <article data-f="latency">
           <h3><span class="en">Low-latency engine</span><span class="de">Latenzarme Engine</span></h3>
-          <div class="pic"><svg class="crop" viewBox="262 12 1040 44" role="img" aria-label="Hydra's status bar: ASIO, 48000 Hz, 64 samples, 10.5 ms I/O, DSP 3.4 %"><image href="screenshot.png" width="1951" height="1250"/></svg></div>
+          <div class="pic hx" data-g="status"></div>
           <p><span class="en">Hydra processes everything in the callback of your main device. Nothing waits in a queue unless it has to.</span><span class="de">Hydra rechnet alles im Callback deines Hauptgeräts. Nichts wartet in einer Warteschlange, wenn es nicht muss.</span></p>
           <ul>
             <li><b>ASIO, WASAPI exclusive, low-latency shared</b> <span class="en">and app capture, mixed freely.</span><span class="de">und App-Capture, frei gemischt.</span></li>
@@ -528,7 +678,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 
         <article data-f="apps" hidden>
           <h3><span class="en">Capture single apps</span><span class="de">Einzelne Apps aufnehmen</span></h3>
-          <div class="pic"><svg class="crop" viewBox="417 120 540 236" role="img" aria-label="Four Hydra input strips with the sources App: chrome, App: Discord, App: Game, App: Spotify"><image href="screenshot.png" width="1951" height="1250"/></svg></div>
+          <div class="pic hx" data-g="heads" data-o="3,4,5,6"></div>
           <p><span class="en">Put Spotify, a game or the browser on its own channel without any virtual cable. Windows hands Hydra exactly that app's sound.</span><span class="de">Leg Spotify, ein Spiel oder den Browser ohne virtuelles Kabel auf einen eigenen Kanal. Windows gibt Hydra genau den Ton dieser App.</span></p>
           <ul>
             <li><span class="en">Several apps can share one channel (tick them in the device picker).</span><span class="de">Mehrere Apps können sich einen Kanal teilen (in der Geräteauswahl anhaken).</span></li>
@@ -539,7 +689,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 
         <article data-f="cables" hidden>
           <h3><span class="en">Virtual cables in one click</span><span class="de">Virtuelle Kabel per Klick</span></h3>
-          <div class="pic"><svg class="crop" viewBox="1537 120 402 140" role="img" aria-label="Three virtual output strips: Stream, Discord, Recording, each on a Hydra Virtual cable"><image href="screenshot.png" width="1951" height="1250"/></svg></div>
+          <div class="pic hx" data-g="heads" data-o="out:3,4,5"></div>
           <p><span class="en">Other programs like OBS or Discord need a device to talk to. "Add a virtual cable to this output" is all you click: Hydra sets up the cable, names it after the channel ("Hydra Out 3 - Stream") and hides the side you don't need.</span><span class="de">Andere Programme wie OBS oder Discord brauchen ein Gerät. „Add a virtual cable to this output“ ist alles, was du klickst: Hydra richtet das Kabel ein, benennt es nach dem Kanal („Hydra Out 3 - Stream“) und versteckt die Seite, die du nicht brauchst.</span></p>
           <ul>
             <li><span class="en">Works with Virtual Audio Cable. Hydra talks to the cable directly via kernel streaming and steers its clock, so there is no resampling in between.</span><span class="de">Funktioniert mit Virtual Audio Cable. Hydra spricht das Kabel direkt per Kernel Streaming an und steuert seine Clock, dazwischen wird nichts resampelt.</span></li>
@@ -550,8 +700,8 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 
         <article data-f="eq" hidden>
           <h3><span class="en">EQ with live spectrum</span><span class="de">EQ mit Live-Spektrum</span></h3>
-          <div class="pic"><img src="eq.png" width="1375" height="750" alt="Hydra's large EQ window: curve with four bands, below it one column of controls per band and a column to add a band" loading="lazy"></div>
-          <p><span class="en">Click on the curve to add a band, drag it to move it. The large window shows what comes out of the EQ as a live spectrum, only while it is open.</span><span class="de">Klick auf die Kurve legt ein Band an, ziehen verschiebt es. Das große Fenster zeigt, was aus dem EQ kommt, als Live-Spektrum, nur solange es offen ist.</span></p>
+          <div class="pic hx" data-g="eq"></div>
+          <p><span class="en">Click on the curve to add a band and drag it where you need it. The large window shows what comes out of the EQ as a live spectrum, only while it is open.</span><span class="de">Ein Klick auf die Kurve legt ein Band an, ziehen verschiebt es. Das große Fenster zeigt, was aus dem EQ kommt, als Live-Spektrum, nur solange es offen ist.</span></p>
           <ul>
             <li><span class="en">16 bands: bell, notch, band pass, high/low cut, low/high shelf.</span><span class="de">16 Bänder: Glocke, Notch, Bandpass, High/Low Cut, Low/High Shelf.</span></li>
             <li><span class="en">The same EQ on inputs and outputs, presets as .hydraeq files.</span><span class="de">Derselbe EQ auf Inputs und Ausgängen, Presets als .hydraeq-Dateien.</span></li>
@@ -561,7 +711,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 
         <article data-f="sel" hidden>
           <h3><span class="en">A separate mix per output</span><span class="de">Eigener Mix pro Ausgang</span></h3>
-          <div class="pic narrow"><svg class="crop" viewBox="1110 115 830 830" role="img" aria-label="Hydra's output strips with SEL buttons, faders and meters"><image href="screenshot.png" width="1951" height="1250"/></svg></div>
+          <div class="pic narrow hx" data-g="sel"></div>
           <p><span class="en">Press SEL on an output and the input faders now set that output's own levels. Music quieter on stream than in your headphones, game louder for you than for Discord.</span><span class="de">Drück SEL auf einem Ausgang, und die Input-Fader stellen jetzt dessen eigene Pegel ein. Musik im Stream leiser als im Kopfhörer, Spiel für dich lauter als für Discord.</span></p>
           <ul>
             <li><span class="en">Monitoring: listen to any output's mix on your headphones with one click.</span><span class="de">Monitoring: Hör den Mix jedes Ausgangs mit einem Klick auf dem Kopfhörer.</span></li>
@@ -572,10 +722,11 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 
         <article data-f="room" hidden>
           <h3><span class="en">Room correction</span><span class="de">Raumkorrektur</span></h3>
-          <p><span class="en">Your room changes how your speakers sound. A guided wizard measures them with a microphone at one to nine listening positions and builds a correction that tames resonances, without chasing room ripple it can't fix.</span><span class="de">Dein Raum verändert, wie deine Lautsprecher klingen. Ein Assistent misst sie mit einem Mikrofon an einer bis neun Hörpositionen und baut eine Korrektur, die Resonanzen zähmt, ohne Raum-Welligkeit hinterherzujagen, die man nicht korrigieren kann.</span></p>
+          <div class="pic hx" data-g="waterfall"></div>
+          <p><span class="en">Your room changes how your speakers sound. A guided wizard measures them with a microphone at one to nine listening positions and builds a correction that tames resonances, without chasing room ripple it can't fix. The waterfall shows which frequencies keep ringing after the sound stops.</span><span class="de">Dein Raum verändert, wie deine Lautsprecher klingen. Ein Assistent misst sie mit einem Mikrofon an einer bis neun Hörpositionen und baut eine Korrektur, die Resonanzen zähmt, ohne Raum-Welligkeit hinterherzujagen, die man nicht korrigieren kann. Der Wasserfall zeigt, welche Frequenzen nachklingen, wenn der Ton schon vorbei ist.</span></p>
           <dl class="kv">
             <dt><span class="en">Measure</span><span class="de">Messen</span></dt><dd><span class="en">sweeps, optional near-field measurement, mic calibration files</span><span class="de">Sweeps, optional Nahfeldmessung, Mikro-Kalibrierdateien</span></dd>
-            <dt><span class="en">Analyse</span><span class="de">Analyse</span></dt><dd><span class="en">frequency response, waterfall, resonances, speaker positions</span><span class="de">Frequenzgang, Wasserfall, Resonanzen, Lautsprecherpositionen</span></dd>
+            <dt><span class="en">Analyse</span><span class="de">Analyse</span></dt><dd><span class="en">frequency response, waterfall, decay (RT60), resonances, speaker positions</span><span class="de">Frequenzgang, Wasserfall, Nachhall (RT60), Resonanzen, Lautsprecherpositionen</span></dd>
             <dt><span class="en">Correct</span><span class="de">Korrigieren</span></dt><dd><span class="en">filter bands plus left/right timing, zero latency, validate and refine</span><span class="de">Filterbänder plus Laufzeitausgleich links/rechts, ohne Latenz, prüfen und nachbessern</span></dd>
             <dt>VST3</dt><dd><span class="en">"Hydra Room Correction" uses the same corrections in your DAW</span><span class="de">„Hydra Room Correction“ nutzt dieselben Korrekturen in deiner DAW</span></dd>
           </dl>
@@ -589,7 +740,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
             <dt>LAN</dt><dd><span class="en">lossless PCM (16 / 24 / 32-bit float), a few milliseconds of buffer</span><span class="de">verlustfreies PCM (16 / 24 / 32 Bit float), wenige Millisekunden Puffer</span></dd>
             <dt><span class="en">Wi-Fi, internet</span><span class="de">WLAN, Internet</span></dt><dd><span class="en">Opus with error correction; via VPN (Tailscale, ZeroTier) or port forwarding</span><span class="de">Opus mit Fehlerkorrektur; über VPN (Tailscale, ZeroTier) oder Portweiterleitung</span></dd>
             <dt><span class="en">Security</span><span class="de">Sicherheit</span></dt><dd><span class="en">with a password everything is AES-256 encrypted; without one, Hydra never sends beyond your local network</span><span class="de">mit Passwort ist alles AES-256-verschlüsselt; ohne sendet Hydra nie über dein lokales Netz hinaus</span></dd>
-            <dt><span class="en">Clock</span><span class="de">Clock</span></dt><dd><span class="en">the receiver follows the sender's clock, no drift over hours</span><span class="de">der Empfänger folgt der Clock des Senders, keine Drift über Stunden</span></dd>
+            <dt>Clock</dt><dd><span class="en">the receiver follows the sender's clock, no drift over hours</span><span class="de">der Empfänger folgt der Clock des Senders, keine Drift über Stunden</span></dd>
           </dl>
           <p><span class="en">Hydra Link is Hydra's own protocol and only talks to Hydra and the Hydra Link app.</span><span class="de">Hydra Link ist Hydras eigenes Protokoll und spricht nur mit Hydra und der Hydra-Link-App.</span></p>
           <a class="more" href="#network"><span class="en">Hydra Link in the wiki →</span><span class="de">Hydra Link im Wiki →</span></a>
@@ -597,12 +748,39 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 
         <article data-f="remote" hidden>
           <h3><span class="en">Phone &amp; tablet remote</span><span class="de">Handy &amp; Tablet als Fernbedienung</span> <span class="tag">Beta</span></h3>
+          <div class="pic duo"><img src="remote-tablet.png" width="1760" height="1320" loading="lazy" alt="The remote on a tablet in landscape: vertical strips"><img src="remote-phone.png" width="780" height="1600" loading="lazy" alt="The remote on a phone in portrait: channels as a list"></div>
           <p><span class="en">Turn on Settings → Remote, scan the QR code and the browser on your phone becomes a mixer: faders with meters, mute, solo, routing, SEL and scenes. Nothing to install, it only works inside your home network and needs a code.</span><span class="de">Settings → Remote einschalten, QR-Code scannen, und der Browser deines Handys wird zum Mixer: Fader mit Metern, Mute, Solo, Routing, SEL und Szenen. Nichts zu installieren, es geht nur im Heimnetz und braucht einen Code.</span></p>
           <ul>
             <li><span class="en">Portrait: channels as a list. Landscape and tablets: vertical strips like in Hydra.</span><span class="de">Hochformat: Kanäle als Liste. Querformat und Tablet: senkrechte Kanalzüge wie in Hydra.</span></li>
             <li><span class="en">Faders move relative to your finger, so a touch never makes a level jump.</span><span class="de">Fader bewegen sich relativ zum Finger, eine Berührung lässt nie einen Pegel springen.</span></li>
           </ul>
-          <a class="more" href="#app"><span class="en">See it on phone and tablet ↓</span><span class="de">So sieht es auf Handy und Tablet aus ↓</span></a>
+          <a class="more" href="#remote"><span class="en">Remote in the wiki →</span><span class="de">Fernsteuerung im Wiki →</span></a>
+        </article>
+
+        <article data-f="recorder" hidden>
+          <h3>Recorder</h3>
+          <div class="pic hx" data-g="recorder"></div>
+          <p><span class="en">Record any virtual output to WAV (16, 24 or 32-bit float), right from the top bar or the inspector. Play WAV, FLAC, MP3 or Ogg files into any output, for example a jingle into the stream.</span><span class="de">Nimm jeden virtuellen Ausgang als WAV auf (16, 24 oder 32 Bit float), direkt aus der Top-Bar oder dem Inspector. Spiel WAV-, FLAC-, MP3- oder Ogg-Dateien auf jeden Ausgang, zum Beispiel einen Jingle in den Stream.</span></p>
+          <ul>
+            <li><span class="en">Waveform while recording, click to jump, loop.</span><span class="de">Wellenform schon beim Aufnehmen, Klick springt, Loop.</span></li>
+            <li><span class="en">Trim with the handles, "Cut" writes the file (the original goes to the recycle bin).</span><span class="de">Mit den Griffen trimmen, „Cut“ schreibt die Datei (das Original geht in den Papierkorb).</span></li>
+          </ul>
+          <a class="more" href="#recorder"><span class="en">Recorder in the wiki →</span><span class="de">Recorder im Wiki →</span></a>
+        </article>
+
+        <article data-f="finder" hidden>
+          <h3>Latency Finder &amp; Sync Delay</h3>
+          <div class="pic hx" data-g="latency"></div>
+          <p><span class="en">The Latency Finder shows every input-to-output path as a matrix. Click a cell to see each stage with its milliseconds: device buffer, driver, clock sync, effects, network.</span><span class="de">Der Latency Finder zeigt jeden Weg von Input zu Ausgang als Matrix. Ein Klick auf ein Feld zeigt jede Stufe mit ihren Millisekunden: Gerätepuffer, Treiber, Clock-Sync, Effekte, Netzwerk.</span></p>
+          <p><span class="en">Sync Delay lines things up: auto sync delays a group of channels to its slowest one, plus a manual delay of up to 500 ms, for example to match the camera on stream.</span><span class="de">Sync Delay bringt alles zusammen: Auto Sync verzögert eine Gruppe von Kanälen auf ihren langsamsten, dazu ein manuelles Delay bis 500 ms, zum Beispiel passend zur Kamera im Stream.</span></p>
+          <a class="more" href="#latency"><span class="en">Latency Finder in the wiki →</span><span class="de">Latency Finder im Wiki →</span></a>
+        </article>
+
+        <article data-f="dsp" hidden>
+          <h3>DSP Load</h3>
+          <div class="pic hx" data-g="dsp"></div>
+          <p><span class="en">See what costs CPU, per channel and per effect: one calm table in mixer order, the biggest consumers on top. It only measures while the window is open.</span><span class="de">Sieh, was CPU kostet, pro Kanal und pro Effekt: eine ruhige Tabelle in Mixer-Reihenfolge, die größten Verbraucher oben. Gemessen wird nur, solange das Fenster offen ist.</span></p>
+          <a class="more" href="#dsp"><span class="en">DSP Load in the wiki →</span><span class="de">DSP Load im Wiki →</span></a>
         </article>
 
         <article data-f="midi" hidden>
@@ -620,23 +798,6 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
           <h3><span class="en">Scenes</span><span class="de">Szenen</span></h3>
           <p><span class="en">Save the whole mixer as a scene ("Gaming", "Podcast", "Late night") and switch with one click, a MIDI button, a hotkey or from your phone. A scene stores every level, switch and effect setting; devices and plugins stay where they are.</span><span class="de">Speichere den ganzen Mixer als Szene („Gaming“, „Podcast“, „Late night“) und wechsle mit einem Klick, einer MIDI-Taste, einem Tastenkürzel oder vom Handy. Eine Szene speichert alle Pegel, Schalter und Effekteinstellungen; Geräte und Plugins bleiben, wo sie sind.</span></p>
           <a class="more" href="#scenes"><span class="en">Scenes in the wiki →</span><span class="de">Szenen im Wiki →</span></a>
-        </article>
-
-        <article data-f="recorder" hidden>
-          <h3>Recorder</h3>
-          <div class="pic narrow"><svg class="crop" viewBox="1316 12 276 44" role="img" aria-label="Hydra's recorder in the top bar: record, play, stop, time"><image href="screenshot.png" width="1951" height="1250"/></svg></div>
-          <p><span class="en">Record any virtual output to WAV (16, 24 or 32-bit float), right from the top bar. Play WAV, FLAC, MP3 or Ogg files into any output, for example a jingle into the stream.</span><span class="de">Nimm jeden virtuellen Ausgang als WAV auf (16, 24 oder 32 Bit float), direkt aus der Top-Bar. Spiel WAV-, FLAC-, MP3- oder Ogg-Dateien auf jeden Ausgang, zum Beispiel einen Jingle in den Stream.</span></p>
-          <ul>
-            <li><span class="en">Waveform while recording, trim handles, loop.</span><span class="de">Wellenform schon beim Aufnehmen, Trim-Griffe, Loop.</span></li>
-          </ul>
-          <a class="more" href="#recorder"><span class="en">Recorder in the wiki →</span><span class="de">Recorder im Wiki →</span></a>
-        </article>
-
-        <article data-f="finder" hidden>
-          <h3>Latency Finder &amp; Sync Delay</h3>
-          <p><span class="en">The Latency Finder shows every input-to-output path as a matrix. Click a cell to see each stage with its milliseconds: device buffer, driver, clock sync, network.</span><span class="de">Der Latency Finder zeigt jeden Weg von Input zu Ausgang als Matrix. Ein Klick auf ein Feld zeigt jede Stufe mit ihren Millisekunden: Gerätepuffer, Treiber, Clock-Sync, Netzwerk.</span></p>
-          <p><span class="en">Sync Delay lines things up: auto sync delays a group of channels to its slowest one, plus a manual delay of up to 500 ms, for example to match the camera on stream.</span><span class="de">Sync Delay bringt alles zusammen: Auto Sync verzögert eine Gruppe von Kanälen auf ihren langsamsten, dazu ein manuelles Delay bis 500 ms, zum Beispiel passend zur Kamera im Stream.</span></p>
-          <a class="more" href="#latency"><span class="en">Latency Finder in the wiki →</span><span class="de">Latency Finder im Wiki →</span></a>
         </article>
 
         <article data-f="vm" hidden>
@@ -657,25 +818,26 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 <!-- Phone & tablet -->
 <section class="block" id="app">
   <div class="wrap app-grid">
-    <div>
+    <div class="rv">
       <p class="eyebrow"><span class="en">Phone &amp; tablet</span><span class="de">Handy &amp; Tablet</span></p>
       <h2 class="h2"><span class="en">Your phone joins the mix.</span><span class="de">Dein Handy mischt mit.</span></h2>
-      <p class="sub" style="margin-bottom:22px"><span class="en">Control Hydra from the couch in any browser, and send audio to and from your phone with the Hydra Link app for Android.</span><span class="de">Steuere Hydra vom Sofa aus in jedem Browser, und schick Audio mit der Hydra-Link-App für Android aufs Handy und zurück.</span></p>
+      <p class="sub" style="margin-bottom:24px"><span class="en">Control Hydra from the couch in any browser, and send audio to and from your phone with the Hydra Link app for Android.</span><span class="de">Steuere Hydra vom Sofa aus in jedem Browser, und schick Audio mit der Hydra-Link-App für Android aufs Handy und zurück.</span></p>
       <ul class="ticks">
         <li><b><span class="en">Remote in the browser.</span><span class="de">Fernsteuerung im Browser.</span></b> <span class="en">Scan the QR code in Settings → Remote. Phones get a list, tablets the strips.</span><span class="de">QR-Code in Settings → Remote scannen. Handys bekommen eine Liste, Tablets die Kanalzüge.</span></li>
         <li><b><span class="en">Wireless monitor.</span><span class="de">Kabelloser Monitor.</span></b> <span class="en">Pick your phone as the output of a virtual bus and listen to that mix on it.</span><span class="de">Wähle dein Handy als Ausgang eines virtuellen Busses und hör diesen Mix darauf.</span></li>
         <li><b><span class="en">Phone as a microphone.</span><span class="de">Handy als Mikrofon.</span></b> <span class="en">The phone's mic shows up in Hydra as an input source.</span><span class="de">Das Mikro des Handys erscheint in Hydra als Input-Quelle.</span></li>
         <li><b><span class="en">Runs in the background.</span><span class="de">Läuft im Hintergrund.</span></b> <span class="en">Low-latency audio, keeps playing with the screen off.</span><span class="de">Audio mit geringer Latenz, spielt bei ausgeschaltetem Display weiter.</span></li>
       </ul>
-      <div class="cta">
+      <div class="cta" style="justify-content:flex-start">
         <a class="btn primary" data-dl="apk" href="https://github.com/TicT4x/Hydra-Mixer/releases/latest">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></svg>
           <span class="en">Get the Android app</span><span class="de">Android-App laden</span>
         </a>
         <a class="btn" href="#remote"><span class="en">Remote in the wiki</span><span class="de">Fernsteuerung im Wiki</span></a>
       </div>
       <p class="smallprint"><span class="en">Android 9 or newer, phone and PC on the same network. The app and the remote are in beta.</span><span class="de">Android 9 oder neuer, Handy und PC im selben Netzwerk. App und Fernsteuerung sind in der Beta.</span></p>
     </div>
-    <div class="devices">
+    <div class="devices rv">
       <div class="tablet"><img src="remote-tablet.png" width="1760" height="1320" alt="Hydra's remote control on a tablet in landscape: vertical strips for inputs, hardware and virtual outputs" loading="lazy"></div>
       <div class="phone"><img src="remote-phone.png" width="780" height="1600" alt="Hydra's remote control on a phone: inputs as a list with faders, solo and mute" loading="lazy"></div>
     </div>
@@ -687,11 +849,11 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
   <div class="wrap">
     <p class="eyebrow">Download</p>
     <h2 class="h2"><span class="en">Free. No installer, no account.</span><span class="de">Kostenlos. Ohne Installer, ohne Konto.</span></h2>
-    <p class="sub"><span class="en">The buttons always point to the latest release on </span><span class="de">Die Knöpfe zeigen immer auf das neueste Release auf </span><a href="https://github.com/TicT4x/Hydra-Mixer/releases">GitHub</a>.</p>
+    <p class="sub"><span class="en">The buttons always point to the latest release on GitHub.</span><span class="de">Die Knöpfe zeigen immer auf das neueste Release auf GitHub.</span></p>
     <div class="dl-grid">
-      <div class="dl">
+      <div class="dl rv">
         <div class="top">
-          <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10.5 4.4v7.1H3zM11.5 4.3 21 3v8.5h-9.5zM3 12.5h7.5v7.1L3 18.5zM11.5 12.5H21V21l-9.5-1.3z"/></svg></div>
+          <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10.5 4.4v7.1H3zM11.5 4.3 21 3v8.5h-9.5zM3 12.5h7.5v7.1L3 18.5zM11.5 12.5H21V21l-9.5-1.3z"/></svg></div>
           <div><h3>Hydra Mixer <span class="en">for Windows</span><span class="de">für Windows</span></h3><div class="meta" data-meta="win">Windows 10 / 11 · 64-bit</div></div>
         </div>
         <ul>
@@ -701,15 +863,15 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         </ul>
         <div class="acts">
           <a class="btn primary" data-dl="win" href="https://github.com/TicT4x/Hydra-Mixer/releases/latest">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
             <span class="en">Download</span><span class="de">Herunterladen</span>
           </a>
           <a class="alt" href="#install"><span class="en">Installation guide</span><span class="de">Installationsanleitung</span></a>
         </div>
       </div>
-      <div class="dl android">
+      <div class="dl android rv">
         <div class="top">
-          <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></svg></div>
+          <div class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M17.6 9.48 19.44 6.3a.38.38 0 0 0-.66-.38l-1.86 3.22a11.4 11.4 0 0 0-9.84 0L5.22 5.92a.38.38 0 0 0-.66.38L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52M7 15.25A1.25 1.25 0 1 1 8.25 14 1.25 1.25 0 0 1 7 15.25m10 0A1.25 1.25 0 1 1 18.25 14 1.25 1.25 0 0 1 17 15.25"/></svg></div>
           <div><h3>Hydra Link <span class="en">for Android</span><span class="de">für Android</span> <span class="tag">Beta</span></h3><div class="meta" data-meta="apk">Android 9+ · APK</div></div>
         </div>
         <ul>
@@ -719,16 +881,17 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         </ul>
         <div class="acts">
           <a class="btn primary" data-dl="apk" href="https://github.com/TicT4x/Hydra-Mixer/releases/latest">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
             <span class="en">Download APK</span><span class="de">APK herunterladen</span>
           </a>
-          <a class="alt" href="#android"><span class="en">Android app in the wiki</span><span class="de">Android-App im Wiki</span></a>
+          <a class="alt" href="#network">Hydra Link <span class="en">in the wiki</span><span class="de">im Wiki</span></a>
         </div>
       </div>
     </div>
     <p class="smallprint">
-      <span class="en">Windows may show a SmartScreen warning because the app is not code-signed (More info → Run anyway). Source code, older versions and changelog: </span><span class="de">Windows zeigt eventuell eine SmartScreen-Warnung, weil die App nicht signiert ist (Weitere Informationen → Trotzdem ausführen). Quellcode, ältere Versionen und Changelog: </span>
-      <a href="https://github.com/TicT4x/Hydra-Mixer">github.com/TicT4x/Hydra-Mixer</a>
+      <span class="en">Source code, older versions and changelog: </span><span class="de">Quellcode, ältere Versionen und Changelog: </span>
+      <a href="https://github.com/TicT4x/Hydra-Mixer/releases">GitHub Releases</a> ·
+      <span class="en">Windows may show a SmartScreen warning because the app is not code-signed (More info → Run anyway).</span><span class="de">Windows zeigt eventuell eine SmartScreen-Warnung, weil die App nicht signiert ist (Weitere Informationen → Trotzdem ausführen).</span>
     </p>
   </div>
 </section>
@@ -736,10 +899,10 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 <!-- Wiki teaser + FAQ -->
 <section class="block" id="learn">
   <div class="wrap split">
-    <div>
+    <div class="rv">
       <p class="eyebrow">Wiki</p>
-      <h2 class="h2"><span class="en">From download to your first mix.</span><span class="de">Vom Download zum ersten Mix.</span></h2>
-      <p style="color:var(--muted)"><span class="en">The wiki walks you through the setup step by step and explains every setting. Searchable, in English and German.</span><span class="de">Das Wiki führt Schritt für Schritt durch die Einrichtung und erklärt jede Einstellung. Durchsuchbar, auf Deutsch und Englisch.</span></p>
+      <h2 class="h2"><span class="en">From download to your first mix in 10 minutes.</span><span class="de">Vom Download zum ersten Mix in 10 Minuten.</span></h2>
+      <p style="color:var(--muted)"><span class="en">The wiki walks you through the setup step by step and explains every feature for later reference. Searchable, in English and German.</span><span class="de">Das Wiki führt Schritt für Schritt durch die Einrichtung und erklärt jede Funktion zum Nachschlagen. Durchsuchbar, auf Deutsch und Englisch.</span></p>
       <div class="doclist">
         <a href="#quickstart"><span class="en">Tutorial: first steps</span><span class="de">Tutorial: erste Schritte</span><small><span class="en">Master device, mic, game, outputs</span><span class="de">Master-Gerät, Mikro, Spiel, Ausgänge</span></small></a>
         <a href="#recipes"><span class="en">Recipes</span><span class="de">Rezepte</span><small><span class="en">Stream mix, push-to-talk, clean mic</span><span class="de">Stream-Mix, Push-to-Talk, sauberes Mikro</span></small></a>
@@ -748,7 +911,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
       </div>
       <a class="btn" href="#docs"><span class="en">Open the wiki</span><span class="de">Wiki öffnen</span> →</a>
     </div>
-    <div>
+    <div class="rv">
       <p class="eyebrow">FAQ</p>
       <details open>
         <summary><span class="en">Is Hydra Mixer really free?</span><span class="de">Ist Hydra Mixer wirklich kostenlos?</span></summary>
@@ -756,7 +919,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
       </details>
       <details>
         <summary><span class="en">How is it different from Voicemeeter?</span><span class="de">Was ist anders als bei Voicemeeter?</span></summary>
-        <p><span class="en">Latency comes first: the master device runs without extra buffers, effects add no delay. Apps can be captured directly, effects can be ordered freely, VST3 plugins sit in every chain, and there are up to 16 inputs and 8 + 8 outputs.</span><span class="de">Latenz steht an erster Stelle: Das Master-Gerät läuft ohne Zusatzpuffer, Effekte verzögern nicht. Apps lassen sich direkt aufnehmen, Effekte frei anordnen, VST3-Plugins sitzen in jeder Kette, und es gibt bis zu 16 Inputs und 8 + 8 Ausgänge.</span></p>
+        <p><span class="en">Latency comes first: the master device runs without extra buffers, effects add no delay. Apps can be captured directly, effects can be ordered freely, VST3 plugins sit in every channel, and every control can be learned by MIDI. Your Voicemeeter Potato setup can be imported.</span><span class="de">Latenz steht an erster Stelle: Das Master-Gerät läuft ohne Zusatzpuffer, Effekte fügen keine Verzögerung hinzu. Apps lassen sich direkt aufnehmen, Effekte frei sortieren, VST3-Plugins sitzen in jedem Kanal und jedes Bedienelement ist per MIDI lernbar. Dein Voicemeeter-Potato-Setup lässt sich importieren.</span></p>
       </details>
       <details>
         <summary><span class="en">Do I need virtual audio cables?</span><span class="de">Brauche ich virtuelle Audiokabel?</span></summary>
@@ -764,7 +927,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
       </details>
       <details>
         <summary><span class="en">What do H1 and V1 mean?</span><span class="de">Was bedeuten H1 und V1?</span></summary>
-        <p><span class="en">H outputs go to hardware (headphones, speakers), V outputs are virtual and feed other programs or the network. Every output can get its own icon and name.</span><span class="de">H-Ausgänge gehen auf Hardware (Kopfhörer, Lautsprecher), V-Ausgänge sind virtuell und speisen andere Programme oder das Netzwerk. Jeder Ausgang kann ein eigenes Icon und einen Namen bekommen.</span></p>
+        <p><span class="en">H outputs go to hardware (headphones, speakers), V outputs are virtual and feed other programs or the network. Every output can get its own icon and name.</span><span class="de">H-Ausgänge gehen an Hardware (Kopfhörer, Lautsprecher), V-Ausgänge sind virtuell und speisen andere Programme oder das Netzwerk. Jeder Ausgang kann ein eigenes Icon und einen Namen bekommen.</span></p>
       </details>
       <details>
         <summary><span class="en">Found a bug?</span><span class="de">Einen Fehler gefunden?</span></summary>
@@ -1244,7 +1407,7 @@ cd Hydra-Mixer
 <!-- ============================================================ -->
 <section id="inspector">
   <h2><span class="num">10</span>Inspector</h2>
-  <img class="shot" src="chain-mic.png" width="1440" height="285" loading="lazy" alt="Inspector with the effect chain of a microphone: denoiser, equalizer, gate, compressor">
+  <div class="hx shot" data-g="chain" style="overflow-x:auto"></div>
   <p>The inspector at the bottom shows the <b>effect chain</b> of the selected channel: one block per effect, in the order the signal passes through them. The rack scrolls sideways when it gets long.</p>
   <table>
     <thead><tr><th>Channel</th><th>Available blocks</th></tr></thead>
@@ -1295,7 +1458,7 @@ cd Hydra-Mixer
 <section id="eq">
   <h2><span class="num">12</span>Equalizer</h2>
   <p>Inputs and outputs have the same parametric EQ with <b>16 bands</b>. A band is only visible (as a coloured point) while it is in use. A new channel starts without points. A band you switch off keeps its values and shows as a hollow point. A chain can hold up to four EQs.</p>
-  <img class="shot" src="eq.png" width="1375" height="750" loading="lazy" alt="Large EQ window with four bands in use and a column to add a fifth">
+  <div class="hx shot" data-g="eq"></div>
   <h3>Working with the curve</h3>
   <table>
     <thead><tr><th>Action</th><th>Effect</th></tr></thead>
@@ -2266,7 +2429,7 @@ cd Hydra-Mixer
 <!-- ============================================================ -->
 <section id="inspector">
   <h2><span class="num">10</span>Inspector</h2>
-  <img class="shot" src="chain-mic.png" width="1440" height="285" loading="lazy" alt="Inspector mit der Effektkette eines Mikrofons: Denoiser, Equalizer, Gate, Kompressor">
+  <div class="hx shot" data-g="chain" style="overflow-x:auto"></div>
   <p>Der Inspector unten zeigt die <b>Effektkette</b> des ausgewählten Kanals: ein Block pro Effekt, in der Reihenfolge, in der das Signal sie durchläuft. Wird die Kette lang, scrollt das Rack seitwärts.</p>
   <table>
     <thead><tr><th>Kanal</th><th>Verfügbare Blöcke</th></tr></thead>
@@ -2317,7 +2480,7 @@ cd Hydra-Mixer
 <section id="eq">
   <h2><span class="num">12</span>Equalizer</h2>
   <p>Inputs und Ausgänge haben denselben parametrischen EQ mit <b>16 Bändern</b>. Ein Band ist nur sichtbar (als farbiger Punkt), wenn es benutzt wird. Ein neuer Kanal startet ohne Punkte. Ein ausgeschaltetes Band behält seine Werte und erscheint als hohler Punkt. Eine Kette kann bis zu vier EQs enthalten.</p>
-  <img class="shot" src="eq.png" width="1375" height="750" loading="lazy" alt="Großes EQ-Fenster mit vier benutzten Bändern und einer Spalte für ein fünftes">
+  <div class="hx shot" data-g="eq"></div>
   <h3>Bedienung der Kurve</h3>
   <table>
     <thead><tr><th>Aktion</th><th>Wirkung</th></tr></thead>
@@ -2949,6 +3112,7 @@ cd Hydra-Mixer
   </table>
 </section></template>
 
+<script src="hydra-ui.js"></script>
 <script>
 (function () {
   'use strict';
@@ -2980,6 +3144,7 @@ cd Hydra-Mixer
     if (spy) spy.disconnect();
     wikiEl.replaceChildren(document.getElementById('wiki-' + lang).content.cloneNode(true));
     navLinksEl.replaceChildren(document.getElementById('wiki-nav-' + lang).content.cloneNode(true));
+    if (window.HydraUI) window.HydraUI.renderAll(wikiEl);
     q.placeholder = T[lang].search;
     q.value = '';
     links = [...navLinksEl.querySelectorAll('a')];
@@ -3138,17 +3303,32 @@ cd Hydra-Mixer
   document.querySelectorAll('.rv').forEach(el => rv.observe(el));
 
 
-  /* ---------- Features: list left, detail right ---------- */
-  const ftabs = [...document.querySelectorAll('.flist [data-f]')];
+  /* ---------- Features: list + detail (desktop), accordion (mobile) ---------- */
+  const flist = document.querySelector('.flist'), fdetail = document.querySelector('.fdetail');
+  const ftabs = [...flist.querySelectorAll(':scope > button[data-f]')];
   const fpanes = [...document.querySelectorAll('.fdetail article[data-f]')];
+  const mobile = matchMedia('(max-width: 760px)');
+  let current = ftabs[0].dataset.f;
+  function placePanes() {
+    // Mobile: each detail sits right below its entry; desktop: all in the panel on the right.
+    fpanes.forEach(p => {
+      if (mobile.matches) ftabs.find(b => b.dataset.f === p.dataset.f).after(p);
+      else fdetail.append(p);
+    });
+  }
   function showFeature(f, focus) {
-    ftabs.forEach(b => { const on = b.dataset.f === f; b.setAttribute('aria-selected', on); b.tabIndex = on ? 0 : -1; if (on && focus) b.focus(); });
+    current = f;
+    ftabs.forEach(b => { const on = b.dataset.f === f; b.setAttribute('aria-selected', on); b.tabIndex = on || (!f && b === ftabs[0]) ? 0 : -1; if (on && focus) b.focus(); });
     fpanes.forEach(p => p.hidden = p.dataset.f !== f);
   }
   ftabs.forEach((b, i) => {
     b.addEventListener('click', () => {
+      if (mobile.matches && current === b.dataset.f) { showFeature(null); return; }   // accordion: tap again closes
       showFeature(b.dataset.f);
-      if (matchMedia('(max-width: 760px)').matches) b.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+      if (mobile.matches) requestAnimationFrame(() => {
+        const top = b.getBoundingClientRect().top;
+        if (top < 70) window.scrollBy({ top: top - 70, behavior: 'instant' });
+      });
     });
     b.addEventListener('keydown', e => {
       const d = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
@@ -3157,66 +3337,9 @@ cd Hydra-Mixer
       showFeature(ftabs[(i + d + ftabs.length) % ftabs.length].dataset.f, true);
     });
   });
-  showFeature(ftabs[0].dataset.f);
-
-  /* ---------- How it works: strip heads cut from screenshot.png, lines = their routing ----------
-     Coordinates match tools/Shots.cpp (example layout, 1951 x 1250 px at 125 %). */
-  (function routing() {
-    const host = document.getElementById('routing');
-    if (!host) return;
-    const NS = 'http://www.w3.org/2000/svg';
-    const W = 1100, H = 610;
-    const IMG = { href: 'screenshot.png', w: 1951, h: 1250 };
-    // Input strips: x in the screenshot, outputs they are routed to (index into OUTS), muted?
-    const INS = [[12, [0, 3]], [147, [1, 3]], [282, [0, 1]], [417, [0, 1]], [552, [1, 4]], [687, [0, 1, 3]], [822, [0, 1, 3]], [957, [2], true]];
-    const OUTS = [[1112, 'h'], [1247, 'h'], [1382, 'h'], [1537, 'v'], [1672, 'v'], [1807, 'v']];
-    const iw = 134, ih = 236, ow = 134, oh = 82, iy = 40, oy = 474;
-    const ix0 = (W - iw * INS.length) / 2;
-    const ox = [104, 238, 372, 594, 728, 862];
-    const el = (n, a) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); return e; };
-    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Routing of the example: which input strips feed which outputs' });
-    const crop = (sx, sy, w, h, x, y) => {
-      const s = el('svg', { x, y, width: w, height: h, viewBox: `${sx} ${sy} ${w} ${h}` });
-      s.append(el('image', { href: IMG.href, width: IMG.w, height: IMG.h }));
-      return s;
-    };
-    const col = k => k === 'h' ? 'var(--accent2)' : 'var(--virt)';
-    const lbl = (x, y, en, de, c) => [['en', en], ['de', de]].forEach(([l, t]) => {
-      const e = el('text', { x, y, fill: c, class: 'lbl ' + l }); e.textContent = t; svg.append(e);
-    });
-    const wires = el('g', {});
-    svg.append(wires);
-    lbl(ix0 + 4, 28, 'Inputs', 'Inputs', 'var(--accent)');
-    lbl(ox[0] + 4, oy + oh + 26, 'Hardware outputs', 'Hardware-Ausgänge', 'var(--accent2)');
-    lbl(ox[3] + 4, oy + oh + 26, 'Virtual outputs', 'Virtuelle Ausgänge', 'var(--virt)');
-    const byIn = INS.map(() => []), byOut = OUTS.map(() => []);
-    INS.forEach(([sx, routes, muted], i) => {
-      const x1 = ix0 + i * iw + iw / 2, y1 = iy + ih;
-      routes.forEach(o => {
-        const x2 = ox[o] + ow / 2, y2 = oy, my = (y1 + y2) / 2;
-        const p = el('path', { class: 'w' + (muted ? ' dash' : ''), d: `M${x1} ${y1} C${x1} ${my} ${x2} ${my} ${x2} ${y2}`, stroke: col(OUTS[o][1]) });
-        wires.append(p); byIn[i].push(p); byOut[o].push(p);
-      });
-    });
-    const node = (g, list) => {
-      const on = () => { svg.classList.add('focus'); list.forEach(p => p.classList.add('on')); };
-      const off = () => { svg.classList.remove('focus'); list.forEach(p => p.classList.remove('on')); };
-      g.addEventListener('mouseenter', on); g.addEventListener('mouseleave', off);
-      g.addEventListener('focus', on); g.addEventListener('blur', off);
-      g.setAttribute('tabindex', '0');
-    };
-    INS.forEach(([sx], i) => {
-      const g = el('g', { class: 'node' }), x = ix0 + i * iw;
-      g.append(crop(sx, 120, iw, ih, x, iy), el('rect', { class: 'hl', x: x + 1, y: iy + 1, width: iw - 2, height: ih - 2, rx: 4 }));
-      svg.append(g); node(g, byIn[i]);
-    });
-    OUTS.forEach(([sx], o) => {
-      const g = el('g', { class: 'node' });
-      g.append(crop(sx, 120, ow, oh, ox[o], oy), el('rect', { class: 'hl', x: ox[o] + 1, y: oy + 1, width: ow - 2, height: oh - 2, rx: 4 }));
-      svg.append(g); node(g, byOut[o]);
-    });
-    host.append(svg);
-  })();
+  placePanes();
+  showFeature(current);
+  mobile.addEventListener('change', () => { placePanes(); if (!mobile.matches && !current) showFeature(ftabs[0].dataset.f); });
 
   /* ---------- Start ---------- */
   document.title = T[lang].title;
