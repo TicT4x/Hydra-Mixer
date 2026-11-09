@@ -11,8 +11,6 @@
 
 ![Hydra Mixer](docs/screenshot.png)
 
-![Hydra Mixer, hardware output selected](docs/screenshot-output.png)
-
 **Wiki & tutorial:** https://tict4x.github.io/Hydra-Mixer/ (English / [Deutsch](https://tict4x.github.io/Hydra-Mixer/de/))
 
 > **Status: 0.6, early release.** The mixer, the UI and the DSP are complete and covered by offline tests.
