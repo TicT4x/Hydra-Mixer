@@ -131,9 +131,9 @@ void Chip::paint (juce::Graphics& g)
     g.setColour (underline ? (hover ? theme::raised : juce::Colours::transparentBlack)
                            : active ? colour.withAlpha (0.22f) : (hover ? theme::raised.brighter (0.06f) : theme::panel2));
     g.fillRoundedRectangle (r, 6.0f);
-    bool offline = false;
-    for (auto& s : status) offline |= s.kind == Marker::offline;
-    g.setColour (offline ? theme::mute.withAlpha (0.7f) : ! status.empty() ? theme::warn.withAlpha (0.8f)
+    bool offline = false, attention = false;
+    for (auto& s : status) { offline |= s.kind == Marker::offline; attention |= s.kind == Marker::attention || s.kind == Marker::dropouts; }
+    g.setColour (offline ? theme::mute.withAlpha (0.7f) : attention ? theme::warn.withAlpha (0.8f)
                  : active && ! underline ? colour.withAlpha (0.8f) : theme::outline);
     if (underline) g.fillRect (r.withTop (r.getBottom() - 1.0f));
     else           g.drawRoundedRectangle (r, 6.0f, 1.0f);
@@ -175,14 +175,16 @@ void Chip::paint (juce::Graphics& g)
 void Chip::setStatus (std::vector<Status> s)
 {
     // One dot per colour: dropouts and "needs attention" are both yellow and share a dot (and its tooltip).
+    // Order: red, yellow, green.
     std::vector<Status> merged;
-    for (int pass = 0; pass < 2; ++pass)
+    for (int pass = 0; pass < 3; ++pass)
     {
-        const bool red = pass == 0;
-        Status dot { red ? Marker::offline : Marker::attention, {} };
+        const bool red = pass == 0, green = pass == 2;
+        Status dot { red ? Marker::offline : green ? Marker::connected : Marker::attention, {} };
         bool any = false;
+        auto colourPass = [] (Marker k) { return k == Marker::offline ? 0 : k == Marker::connected ? 2 : 1; };
         for (auto& x : s)
-            if ((x.kind == Marker::offline) == red)
+            if (colourPass (x.kind) == pass)
             {
                 if (any) dot.tip << "\n\n";
                 dot.tip << x.tip;
@@ -219,8 +221,8 @@ juce::String Chip::getTooltip()
 
 void Chip::drawMarker (juce::Graphics& g, Marker kind, juce::Rectangle<float> r)
 {
-    // Red dot = offline, yellow dot = dropouts / needs attention, with a faint halo so it reads on any chip.
-    const auto c = kind == Marker::offline ? theme::mute : theme::warn;
+    // Red dot = offline, yellow dot = dropouts / needs attention, green = connected (Hydra Link), with a faint halo so it reads on any chip.
+    const auto c = kind == Marker::offline ? theme::mute : kind == Marker::connected ? theme::good : theme::warn;
     const auto d = juce::jmin (r.getWidth(), r.getHeight());
     const auto dot = juce::Rectangle<float> (d, d).withCentre (r.getCentre());
     g.setColour (c.withAlpha (0.25f));

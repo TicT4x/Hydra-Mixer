@@ -1585,21 +1585,52 @@ private:
 };
 
 //==============================================================================
+/** A tab whose page is built the first time it is shown. Why: building all nine pages up front (device lists, MIDI
+ *  ports, VAC queries, plugin list ...) made the first opening of the Settings window slow; now only the page that is
+ *  opened is built. Pages that take long to build are reported in hydra.log. */
+class LazyTab final : public juce::Component
+{
+public:
+    LazyTab (juce::String n, std::function<juce::Component*()> f) : name (std::move (n)), make (std::move (f)) {}
+    void visibilityChanged() override { build(); }
+    void resized() override { if (content != nullptr) content->setBounds (getLocalBounds()); }
+    void build()
+    {
+        if (content != nullptr || make == nullptr || ! isVisible()) return;
+        const double t0 = juce::Time::getMillisecondCounterHiRes();
+        content.reset (make());
+        make = nullptr;
+        addAndMakeVisible (*content);
+        content->setBounds (getLocalBounds());
+        const double ms = juce::Time::getMillisecondCounterHiRes() - t0;
+        if (ms > 40.0) logLine ("settings: building the page " + name + " took " + juce::String (juce::roundToInt (ms)) + " ms");
+    }
+
+private:
+    juce::String name;
+    std::function<juce::Component*()> make;
+    std::unique_ptr<juce::Component> content;
+};
+
 SettingsPanel::SettingsPanel (UiContext& c) : ctx (c)
 {
     addAndMakeVisible (tabs);
     tabs.setTabBarDepth (40);
+    auto add = [this] (const juce::String& name, std::function<juce::Component*()> make)
+    {
+        tabs.addTab (name, theme::panel, new LazyTab (name, std::move (make)), true);
+    };
     // Same order as SettingsPanel::Tab.
-    tabs.addTab ("General", theme::panel, new GeneralTab (c), true);
-    tabs.addTab ("Display", theme::panel, new DisplayTab (c), true);
-    tabs.addTab ("Audio Engine", theme::panel, new AudioTab (c, [this] { if (onEngineChanged) onEngineChanged(); }), true);
-    tabs.addTab ("Virtual Cables", theme::panel, new CablesTab (c, [this] { if (onEngineChanged) onEngineChanged(); }), true);
-    tabs.addTab ("Network", theme::panel, new NetworkTab (c), true);
-    tabs.addTab ("Remote", theme::panel, new RemoteTab (c), true);
-    tabs.addTab ("MIDI", theme::panel, new MidiTab (c), true);
-    tabs.addTab ("Plugins", theme::panel, new PluginTab (c), true);
-    tabs.addTab ("Backup & Transfer", theme::panel, new BackupTab (c, [this] { if (onSessionReplaced) onSessionReplaced(); },
-                                                                  [this] { if (onEngineChanged) onEngineChanged(); }), true);
+    add ("General", [this] { return new GeneralTab (ctx); });
+    add ("Display", [this] { return new DisplayTab (ctx); });
+    add ("Audio Engine", [this] { return new AudioTab (ctx, [this] { if (onEngineChanged) onEngineChanged(); }); });
+    add ("Virtual Cables", [this] { return new CablesTab (ctx, [this] { if (onEngineChanged) onEngineChanged(); }); });
+    add ("Network", [this] { return new NetworkTab (ctx); });
+    add ("Remote", [this] { return new RemoteTab (ctx); });
+    add ("MIDI", [this] { return new MidiTab (ctx); });
+    add ("Plugins", [this] { return new PluginTab (ctx); });
+    add ("Backup & Transfer", [this] { return new BackupTab (ctx, [this] { if (onSessionReplaced) onSessionReplaced(); },
+                                                                  [this] { if (onEngineChanged) onEngineChanged(); }); });
 }
 
 SettingsPanel::~SettingsPanel() = default;

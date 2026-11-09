@@ -1295,7 +1295,9 @@ void NetOutput::poll()
     if (codec == Codec::opus) t << " " << kbps << " kbit/s";
     t << " to " << dest.host;
     if (byName || ! dest.host.containsOnly ("0123456789.")) t << " (" << ipText (ipOf (to)) << ")";
-    if (nowMs() - fbAt.load() < 3000.0)
+    const bool heard = nowMs() - fbAt.load() < 3000.0;
+    idle = ! heard;   // shown as "not connected" in the mixer
+    if (heard)
         t << ", received with " << juce::String (fbLossPercent.load(), 1) << " % lost, " << juce::String (fbBufferMs.load(), 1) << " ms buffer";
     else
         t << ", nobody listening yet";

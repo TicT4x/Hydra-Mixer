@@ -1131,6 +1131,7 @@ void MainComponent::showToolsMenu()
 
 void MainComponent::openSettings (int tab)
 {
+    const double t0 = juce::Time::getMillisecondCounterHiRes();
     if (settingsWindow == nullptr)
     {
         auto* panel = new SettingsPanel (ctx);
@@ -1149,6 +1150,8 @@ void MainComponent::openSettings (int tab)
         p->showTab (tab);
     settingsWindow->setVisible (true);
     settingsWindow->toFront (true);
+    if (const double ms = juce::Time::getMillisecondCounterHiRes() - t0; ms > 100.0)
+        logLine ("settings: opening the window took " + juce::String (juce::roundToInt (ms)) + " ms");
 }
 
 void MainComponent::openMidiMap()

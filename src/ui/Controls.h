@@ -70,7 +70,7 @@ public:
     /** Status dots left of the name (device problems): red = offline, yellow = dropouts or something that
         needs attention. Problems of the same colour share one dot. The chip's tooltip starts with what the
         dots mean (dropouts: how many and when). */
-    enum class Marker { attention, offline, dropouts };
+    enum class Marker { attention, offline, dropouts, connected };   // connected: green dot (Hydra Link)
     struct Status { Marker kind; juce::String tip; };
     /** Replaces the status dots; repaints only if they changed. */
     void setStatus (std::vector<Status>);

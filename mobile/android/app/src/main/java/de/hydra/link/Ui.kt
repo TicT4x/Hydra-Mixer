@@ -18,6 +18,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
+import kotlin.math.exp
 import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.min
@@ -148,7 +149,7 @@ class Meter(context: Context, private val colour: Int) : View(context) {
     fun set(peak: Float) {
         val db = if (peak > 1e-6f) 20f * log10(peak) else -100f
         level = ((db + 60f) / 60f).coerceIn(0f, 1f)
-        invalidate()
+        postInvalidateOnAnimation()
     }
 
     override fun onMeasure(w: Int, h: Int) = setMeasuredDimension(MeasureSpec.getSize(w), (6 * resources.displayMetrics.density).toInt())
@@ -157,7 +158,10 @@ class Meter(context: Context, private val colour: Int) : View(context) {
         val now = System.nanoTime()
         val dt = min(0.2f, (now - last) / 1e9f)
         last = now
-        shown = max(level, shown - dt * 1.2f)
+        // glide towards the value (the app delivers ~10 per second): fast up, slower down
+        shown += (level - shown) * (1f - exp(-dt / (if (level > shown) 0.06f else 0.2f)))
+        if (shown < 0.003f) shown = 0f
+        if (kotlin.math.abs(level - shown) > 0.002f) postInvalidateOnAnimation()
         val r = height / 2f
         paint.color = Hc.bg
         rect.set(0f, 0f, width.toFloat(), height.toFloat())

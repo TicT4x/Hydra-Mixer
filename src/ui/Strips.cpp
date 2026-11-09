@@ -197,7 +197,13 @@ std::vector<Chip::Status> statusFor (const Engine& engine, const IoTarget& t, bo
     switch (h.state)
     {
         case State::none:
+            break;
         case State::ok:
+            if (t.kind == IoTarget::Kind::Network)
+            {
+                const auto how = engine.getIoLatency (t, input).transport;
+                out.push_back ({ Chip::Marker::connected, juce::String ("Hydra Link: connected.") + (how.isNotEmpty() ? "\n" + how : juce::String()) });
+            }
             break;
         case State::offline:
             out.push_back ({ Chip::Marker::offline,
@@ -206,6 +212,15 @@ std::vector<Chip::Status> statusFor (const Engine& engine, const IoTarget& t, bo
                                  + "\nIs it plugged in and not used exclusively by another app? Hydra retries every few seconds." });
             break;
         case State::waiting:
+            if (t.kind == IoTarget::Kind::Network)
+            {
+                out.push_back ({ Chip::Marker::attention,
+                                 input ? "Hydra Link: not connected. Nothing is received from " + name + ".\n"
+                                         "Is Hydra running on the other computer and does it send this stream?"
+                                       : juce::String ("Hydra Link: not connected. Nobody receives this output yet.\n"
+                                                       "On the other computer, choose this stream as the source of an input.") });
+                break;
+            }
             out.push_back ({ Chip::Marker::attention,
                              "Waiting for the app: " + t.deviceName + " is not running or plays no sound yet.\n"
                              "It is connected automatically as soon as it plays." });

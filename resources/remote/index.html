@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="theme-color" content="#0d0f13">
+<meta name="theme-color" content="#0a0c10">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -17,9 +17,9 @@
      the app switches views with hydra.setView() and gets the status through window.HydraApp). -->
 <style>
 :root {
-  --bg: #0d0f13; --panel: #151920; --panel2: #1b2029; --raised: #232935; --outline: #2a313e;
-  --text: #e8ebf1; --dim: #8b94a5; --faint: #5a6273;
-  --in: #35d0f4; --hw: #8d6cff; --virt: #ff6aa6; --mute: #ff4d5e; --solo: #ffc23f; --ok: #3ee08f;
+  --bg: #0a0c10; --panel: #13171e; --panel2: #191e27; --raised: #212733; --outline: #262d3a;
+  --text: #e8ebf1; --dim: #8f98a9; --faint: #5a6273;
+  --in: #35d0f4; --hw: #a288ff; --virt: #ff6aa6; --mute: #ff4d5e; --solo: #ffc23f; --ok: #3ee08f;
   --st: env(safe-area-inset-top, 0px); --sb: env(safe-area-inset-bottom, 0px);
   --sl: env(safe-area-inset-left, 0px); --sr: env(safe-area-inset-right, 0px);
   --r: 6px;
@@ -59,6 +59,8 @@ body.land nav { left: 0; top: 0; bottom: 0; width: calc(76px + var(--sl)); flex-
                 padding: calc(12px + var(--st)) 8px calc(12px + var(--sb)) calc(8px + var(--sl)); border-right: 1px solid var(--outline); align-items: stretch; }
 body.land nav button { height: 58px; }
 nav .grow { flex: 1; }
+body.port nav .grow { display: none; }
+body.port nav button { min-width: 0; }
 nav .brand { display: none; }
 body.land nav .brand { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 2px 0 10px; }
 body.land nav .brand .logo { width: 30px; height: 29px; }
@@ -74,95 +76,127 @@ body.land main { margin-left: calc(76px + var(--sl)); padding: calc(10px + var(-
 body.embed main { padding: 10px 12px 16px; margin-left: 0; }
 body.embed.land main { padding: 8px; }
 
-/* ---- portrait: channel rows ------------------------------------------------------------------------ */
-h2 { font-size: 11px; letter-spacing: .09em; color: var(--dim); font-weight: 700; margin: 8px 2px 8px;
-     text-transform: uppercase; display: flex; align-items: center; gap: 8px; }
-h2 i { flex: 1; height: 1px; background: var(--outline); }
-.list { display: grid; gap: 8px; }
+/* ---- cards, rows (portrait) ------------------------------------------------------------------------------- */
+/* ---- groups like Hydra's panes: coloured title, one panel with a coloured top edge, channels separated by lines -- */
+h2 { font-size: 15px; font-weight: 700; color: var(--c, var(--text)); margin: 10px 2px 8px; display: flex; align-items: center; gap: 8px; }
+h2 i { display: none; }
+.list { --c: var(--in); background: var(--panel); border-radius: 10px; border-top: 2px solid var(--c); overflow: hidden; }
 .list > * { min-width: 0; }
-@media (min-width: 640px) { body.port .list { grid-template-columns: 1fr 1fr; } }
-.card { position: relative; background: var(--panel); border: 1px solid var(--outline); border-radius: var(--r); overflow: hidden; }
-.card::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--c, var(--in)); }
-.row { padding: 10px 10px 10px 12px; }
-.line { display: flex; align-items: center; gap: 6px; }
-.name { flex: 1; min-width: 0; }
-.name b { display: block; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.name span { display: block; font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.badge { flex: none; min-width: 32px; height: 22px; padding: 0 6px; border-radius: 5px; display: grid; place-items: center;
+.card { position: relative; }
+.list > .card + .card { border-top: 1px solid var(--outline); }
+.card.sel { background: var(--panel2); box-shadow: inset 0 0 0 1.5px var(--c, var(--in)); border-radius: 10px; }
+.list > .card.sel + .card { border-top-color: transparent; }
+.row { display: flex; align-items: center; gap: 6px; padding: 9px 10px 9px 10px; cursor: pointer; }
+.row .name { flex: 0 0 28%; max-width: 150px; margin-right: 4px; }
+.row .hf { flex: 1; min-width: 0; }
+.name { min-width: 0; }
+.nm { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.nm b { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Hydra's channel tag: number (inputs) or output icon in the channel colour */
+.badge { flex: none; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 4px; display: grid; place-items: center;
          font-size: 11px; font-weight: 700; color: var(--bg); background: var(--c); }
-.badge .ic { width: 16px; height: 16px; }
+.badge .ic { width: 14px; height: 14px; }
+.badge.ol { background: color-mix(in srgb, var(--c) 22%, var(--panel2)); color: var(--c); }
 
-/* Hydra's strip buttons: dark, coloured when on */
-.sw { flex: none; height: 30px; min-width: 40px; padding: 0 8px; border-radius: 5px; border: 1px solid var(--outline);
-      background: var(--panel2); color: var(--dim); font-size: 11px; font-weight: 700; letter-spacing: .04em;
-      display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
-.sw.on { color: var(--bg); background: var(--c, var(--in)); border-color: transparent; }
+/* Hydra's strip buttons: small caps, dark, coloured when on */
+.sw { flex: none; height: 26px; min-width: 40px; padding: 0 8px; border-radius: 5px; border: 0;
+      background: var(--raised); color: var(--dim); font-size: 10px; font-weight: 700; letter-spacing: .05em;
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.sw.on { color: var(--bg); background: var(--c, var(--in)); }
 .sw.mute { --c: var(--mute); } .sw.solo { --c: var(--solo); }
 .sw .ic { width: 16px; height: 16px; }
-.sw.more { min-width: 30px; padding: 0; }
-.sw.more .ic { transition: transform .2s; }
-.row.open .sw.more .ic { transform: rotate(180deg); }
-.routes { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-.routes .sw { height: 28px; min-width: 40px; }
-.routes .gap { width: 6px; }
-.extra { display: none; }
-.row.open .extra { display: block; }
-.extra .line { margin-top: 8px; }
+.sw.sq { min-width: 46px; height: 26px; padding: 0 6px; }
+.sw.wide { height: 34px; justify-content: flex-start; padding: 0 10px; letter-spacing: 0; font-size: 12px; font-weight: 600; min-width: 0; text-align: left; }
+.sw.wide span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.locked .sw, body.locked .hf, body.locked .vf { cursor: default; }
 
-/* horizontal fader (rows) */
-.hf { position: relative; height: 38px; margin-top: 8px; border-radius: 5px; background: var(--bg);
-      border: 1px solid var(--outline); overflow: hidden; touch-action: pan-y; cursor: ew-resize; }
-.hf.small { height: 28px; }
-.hf .m { position: absolute; left: 0; width: 100%; height: 4px; clip-path: inset(0 100% 0 0);
-         background: linear-gradient(90deg, #2bd48a 0 64%, #f0c544 70% 74%, #ff4d5e 77%); }
-.hf .m.l { bottom: 8px; } .hf .m.r { bottom: 3px; }
-.hf .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--c); opacity: .16; pointer-events: none; }
-.hf .zero { position: absolute; top: 5px; bottom: 5px; width: 1px; background: var(--faint); }
-.hf .thumb { position: absolute; top: 3px; bottom: 3px; width: 6px; margin-left: -3px; border-radius: 3px; background: var(--c);
-             box-shadow: 0 0 0 2px var(--bg); }
-.hf .val { position: absolute; right: 8px; top: 4px; font: 600 12px/1 "Cascadia Mono", ui-monospace, Consolas, monospace;
-           color: var(--text); text-shadow: 0 0 4px var(--bg), 0 0 8px var(--bg); pointer-events: none; padding-top: 3px; }
-.hf .lbl { position: absolute; left: 8px; top: 7px; font-size: 11px; color: var(--dim); pointer-events: none; }
-.hf.muted .m, .vf.muted .m { filter: grayscale(1); opacity: .45; }
+/* little blocks: where the signal of a channel goes (lit = routed) */
+.rb { display: flex; gap: 6px; margin-top: 6px; }
+.rbrow { display: flex; gap: 2px; }
+.rb i { flex: none; width: 10px; height: 4px; border-radius: 1px; background: var(--raised); }
+.rb i.on { background: var(--c); }
+.strip .rb { flex-direction: column; align-items: center; gap: 2px; margin-top: 0; min-height: 10px; }
+.strip .rb i { width: 8px; }
 
-/* ---- landscape: vertical strips like Hydra ---------------------------------------------------------- */
-.mixer { display: flex; gap: 14px; height: 100%; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity;
+/* ---- fader: the track is the stereo level meter (Hydra's MeterView), the cap is Hydra's fader cap ----------- */
+.hf, .vf { position: relative; }
+.hf { height: 34px; touch-action: pan-y; cursor: ew-resize; }
+.vf { flex: 1; min-height: 90px; touch-action: pan-x; cursor: ns-resize; }
+.track { position: absolute; pointer-events: none; }
+.hf .track { left: 7px; right: 7px; top: 50%; height: 14px; margin-top: -7px; }
+.vf .track { top: 7px; bottom: 7px; left: 50%; width: 16px; margin-left: -8px; }
+.bar { position: absolute; background: var(--bg); border-radius: 2px; overflow: hidden; }
+.hf .bar { left: 0; right: 0; height: 6px; } .hf .bar.r { bottom: 0; }
+.vf .bar { top: 0; bottom: 0; width: 7px; } .vf .bar.r { right: 0; }
+.m { position: absolute; inset: 0; border-radius: 2px; background: var(--grad-h); clip-path: inset(0 100% 0 0); }
+.vf .m { background: var(--grad-v); clip-path: inset(100% 0 0 0); }
+.hold { position: absolute; background: rgba(232,235,241,.8); display: none; }
+.hf .hold { top: 0; bottom: 0; width: 1.5px; } .vf .hold { left: 0; right: 0; height: 1.5px; }
+.hf.muted .m, .vf.muted .m { background: rgba(90,98,115,.55); }
+.hf.muted .hold, .vf.muted .hold { background: var(--faint); }
+.tick { position: absolute; background: rgba(10,12,16,.55); }
+.hf .tick { top: 0; bottom: 0; width: 1px; } .vf .tick { left: 0; right: 0; height: 1px; }
+.thumb { position: absolute; border-radius: 3px; pointer-events: none; display: grid; place-items: center;
+         background: linear-gradient(#e2e6ee, #9aa3b3); box-shadow: 0 2px 3px rgba(0,0,0,.5); }
+.thumb::after { content: ""; background: var(--c, var(--in)); filter: brightness(.88); }
+.hf .thumb { top: 50%; width: 12px; height: 24px; margin: -12px 0 0 -6px; }
+.hf .thumb::after { width: 2px; height: 20px; }
+.vf .thumb { left: 50%; width: 30px; height: 12px; margin: -6px 0 0 -15px; }
+.vf .thumb::after { width: 26px; height: 2px; }
+.val { position: absolute; left: 50%; transform: translateX(-50%); padding: 3px 5px; border-radius: 4px; background: var(--raised);
+       font: 600 11px/1 "Cascadia Mono", ui-monospace, Consolas, monospace; color: var(--text); white-space: nowrap;
+       pointer-events: none; opacity: 0; transition: opacity .15s; z-index: 1; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+.hf .val { top: -6px; }
+.vf .val { top: 0; }
+.drag .val { opacity: 1; }
+
+/* ---- landscape: vertical strips like Hydra ---------------------------------------------------------------- */
+.mixer { display: flex; gap: 12px; height: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity;
          -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
 .mixer::-webkit-scrollbar { height: 6px; }
 .mixer::-webkit-scrollbar-thumb { background: var(--raised); border-radius: 3px; }
 .mixer::-webkit-scrollbar-track { background: transparent; }
 .mixer { scrollbar-width: thin; scrollbar-color: var(--raised) transparent; }
 body.land #viewMixer { height: 100%; }
-/* phones sideways: Gain / Pan only after a tap on the channel name, the fader gets the room */
-@media (max-height: 440px) { .strip .minis { display: none; } .strip.detail .minis { display: grid; } .strip .name { cursor: pointer; } }
 .group { display: flex; flex-direction: column; min-height: 0; }
-.group h2 { margin: 0 2px 6px; flex: none; }
-.group .strips { display: flex; gap: 6px; flex: 1; min-height: 0; }
-.strip { width: var(--sw, 96px); flex: none; display: flex; flex-direction: column; gap: 6px; padding: 9px 6px 6px; scroll-snap-align: start; }
-@media (min-width: 1000px) { .strip { --sw: 108px; } }
-.strip .name { flex: none; text-align: center; }
-.strip .name b { font-size: 13px; }
-.strip .routes { margin-top: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; }
-.strip .routes .sw { min-width: 0; height: 24px; padding: 0; font-size: 10px; }
-.strip .routes .sep { grid-column: 1 / -1; height: 2px; }
-.strip .sws { display: flex; gap: 4px; }
-.strip .sws .sw { flex: 1; min-width: 0; padding: 0; height: 26px; }
-.strip .badge { align-self: center; }
-.minis { display: grid; gap: 3px; }
-.hf.mini { height: 22px; margin: 0; }
-.hf.mini .lbl { top: 4px; left: 5px; font-size: 10px; }
-.hf.mini .val { top: 2px; right: 5px; font-size: 10px; }
-.vf { position: relative; flex: 1; min-height: 70px; border-radius: 5px; background: var(--bg); border: 1px solid var(--outline);
-      overflow: hidden; touch-action: pan-x; cursor: ns-resize; }
-.vf .m { position: absolute; bottom: 0; top: 0; width: 4px; clip-path: inset(100% 0 0 0);
-         background: linear-gradient(0deg, #2bd48a 0 64%, #f0c544 70% 74%, #ff4d5e 77%); }
-.vf .m.l { left: 5px; } .vf .m.r { left: 11px; }
-.vf .fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--c); opacity: .14; pointer-events: none; }
-.vf .zero { position: absolute; left: 18px; right: 6px; height: 1px; background: var(--faint); }
-.vf .thumb { position: absolute; left: 18px; right: 6px; height: 8px; margin-top: -4px; border-radius: 3px; background: var(--c);
-             box-shadow: 0 0 0 2px var(--bg); }
-.svalue { text-align: center; font: 600 11px/1 "Cascadia Mono", ui-monospace, Consolas, monospace; color: var(--text); }
+.group h2 { margin: 0 2px 6px; flex: none; font-size: 14px; }
+.group .strips { display: flex; flex: 1; min-height: 0; background: var(--panel); border-radius: 10px; border-top: 2px solid var(--c); }
+.strips > .strip + .strip { border-left: 1px solid var(--outline); }
+.strips > .strip.sel + .strip { border-left-color: transparent; }
+.strip { width: 72px; flex: none; display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 8px 6px 6px; scroll-snap-align: start; cursor: pointer; }
+.strip .nm { flex-direction: column; gap: 4px; }
+.strip .nm b { font-size: 12px; width: 100%; text-align: center; }
+.strip .sws { display: flex; gap: 4px; justify-content: center; }
+.strip .sws .sw { flex: 1; min-width: 0; padding: 0; height: 24px; font-size: 9px; letter-spacing: .02em; }
 
+/* ---- detail panel: right of the mixer (landscape), sheet at the bottom (portrait) ------------------------ */
+#panel { display: none; position: fixed; z-index: 4; background: var(--panel); border: 1px solid var(--outline); overflow-y: auto; -webkit-overflow-scrolling: touch; }
+body.panelopen:not(.scenesview) #panel { display: block; animation: pin .18s ease-out; }
+@keyframes pin { from { opacity: 0; transform: translateY(12px); } }
+body.land.panelopen:not(.scenesview) #panel { animation-name: pinr; }
+@keyframes pinr { from { opacity: 0; transform: translateX(16px); } }
+body.land #panel { top: 0; right: 0; bottom: 0; width: calc(250px + var(--sr)); padding: calc(10px + var(--st)) calc(12px + var(--sr)) calc(12px + var(--sb)) 12px; border-width: 0 0 0 1px; }
+body.land.panelopen:not(.scenesview) main { margin-right: calc(250px + var(--sr)); }
+body.land.panelopen:not(.scenesview) .banner { right: calc(260px + var(--sr)); }
+body.port #panel { left: 0; right: 0; bottom: calc(64px + var(--sb)); max-height: 52vh; padding: 12px 16px 14px; border-width: 1px 0 0; border-radius: 14px 14px 0 0; box-shadow: 0 -8px 24px rgba(0,0,0,.45); }
+body.port.embed #panel { bottom: 0; padding-bottom: calc(14px + var(--sb)); }
+body.port.panelopen:not(.scenesview) main { padding-bottom: calc(var(--ph, 260px) + 90px + var(--sb)); }
+.ph { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.ph b { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ph .x { width: 32px; height: 32px; border-radius: 8px; background: var(--panel2); border: 1px solid var(--outline); color: var(--dim); display: grid; place-items: center; }
+#panel h3 { margin: 12px 2px 6px; font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--dim); font-weight: 700; }
+#panel .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
+#panel .hint { margin: 6px 2px 0; font-size: 12px; color: var(--dim); }
+#panel .grid .sw, #panel > .sw { width: 100%; }
+
+/* ---- lock ---------------------------------------------------------------------------------------------------- */
+nav button.locked { color: var(--text); background: var(--raised); }
+nav button.locked .ic { color: var(--solo); }
+.fab { display: none; position: fixed; z-index: 6; right: calc(8px + var(--sr)); top: calc(6px + var(--st)); width: 34px; height: 34px; border-radius: 9px;
+       background: var(--panel2); border: 1px solid var(--outline); color: var(--dim); place-items: center; }
+body.embed .fab { display: grid; }
+.fab.locked { color: var(--solo); }
+body.land.panelopen:not(.scenesview) .fab { right: calc(258px + var(--sr)); }
 /* ---- scenes, sheets, overlays ------------------------------------------------------------------------ */
 .scenes { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .scene { position: relative; min-height: 66px; border-radius: var(--r); border: 1px solid var(--outline); background: var(--panel);
@@ -214,6 +248,8 @@ body.land .banner { position: fixed; left: calc(86px + var(--sl)); right: calc(1
   <symbol id="n-out" viewBox="0 0 24 24"><rect class="l" x="5.5" y="2.5" width="13" height="19" rx="2.5"/><circle class="l" cx="12" cy="15" r="4.2"/><circle class="f" cx="12" cy="7" r="1.7"/></symbol>
   <symbol id="n-mix" viewBox="0 0 24 24"><path class="l" d="M6 3v18M12 3v18M18 3v18"/><rect class="f" x="3.5" y="13" width="5" height="3.2" rx="1"/><rect class="f" x="9.5" y="6.5" width="5" height="3.2" rx="1"/><rect class="f" x="15.5" y="10.5" width="5" height="3.2" rx="1"/></symbol>
   <symbol id="n-scn" viewBox="0 0 24 24"><rect class="l" x="3" y="3.5" width="7.5" height="7.5" rx="2"/><rect class="l" x="13.5" y="3.5" width="7.5" height="7.5" rx="2"/><rect class="l" x="3" y="13" width="7.5" height="7.5" rx="2"/><rect class="l" x="13.5" y="13" width="7.5" height="7.5" rx="2"/></symbol>
+  <symbol id="lk-closed" viewBox="0 0 24 24"><rect class="l" x="5" y="11" width="14" height="10" rx="2.5"/><path class="l" d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="lk-open" viewBox="0 0 24 24"><rect class="l" x="5" y="11" width="14" height="10" rx="2.5"/><path class="l" d="M8 11V8a4 4 0 0 1 7.6-1.7"/></symbol>
   <symbol id="n-get" viewBox="0 0 24 24"><path class="l" d="M12 3.5v11M7.5 10l4.5 4.5 4.5-4.5M4.5 19.5h15"/></symbol>
 </svg>
 
@@ -238,9 +274,12 @@ body.land .banner { position: fixed; left: calc(86px + var(--sl)); right: calc(1
   <button data-view="scenes"><svg class="ic"><use href="#n-scn"/></svg>Scenes</button>
   <button id="getApp" hidden><svg class="ic"><use href="#n-get"/></svg>Install</button>
   <div class="grow"></div>
+  <button class="lockbtn" id="lockN"><svg class="ic"><use href="#lk-open"/></svg><span>Lock</span></button>
   <div class="stat"><span class="dsp" id="dsp2" hidden></span><span class="dot" id="dot2"></span></div>
 </nav>
 
+<aside id="panel"></aside>
+<button class="lockbtn fab" id="lockF" aria-label="Lock"><svg class="ic"><use href="#lk-open"/></svg></button>
 <div id="pair"><form class="box" id="pairForm" autocomplete="off">
   <svg class="logo"><use href="#logo"/></svg>
   <h1>Connect to Hydra</h1>
@@ -260,6 +299,12 @@ body.land .banner { position: fixed; left: calc(86px + var(--sl)); right: calc(1
 const SKEW = Math.log(0.5) / Math.log(45 / 72);
 const dbToPos = db => db <= -60 ? 0 : Math.pow(Math.min(1, (db + 60) / 72), SKEW);
 const ZERO = dbToPos(0);
+{ // Hydra's meter colours: good up to -12 dB, solo at -3 dB, mute at the top
+  const p12 = (dbToPos(-12) * 100).toFixed(1), p3 = (dbToPos(-3) * 100).toFixed(1);
+  const stops = "#3ee08f 0%, #3ee08f " + p12 + "%, #ffc23f " + p3 + "%, #ff4d5e 100%";
+  document.documentElement.style.setProperty("--grad-h", "linear-gradient(90deg, " + stops + ")");
+  document.documentElement.style.setProperty("--grad-v", "linear-gradient(0deg, " + stops + ")");
+}
 
 // ---- Hydra's output icons (ui/ChannelIcons.cpp, 24 x 24; l = stroked, f = filled) -------------------------
 const R = (x, y, w, h, r, c) => `<rect class="${c}" x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}"/>`;
@@ -307,10 +352,10 @@ function tellApp() {
   if (!window.HydraApp || !HydraApp.status) return;
   try {
     HydraApp.status(JSON.stringify({ connected: authed, name: state ? state.name : "", dsp: lastDsp,
-      paired: !$("pair").classList.contains("show"), view, scenes: state ? state.scenes.length : 0 }));
+      paired: !$("pair").classList.contains("show"), view, locked, scenes: state ? state.scenes.length : 0 }));
   } catch (e) {}
 }
-window.hydra = { setView: v => setView(v), reconnect: () => { retry = 0; connect(); } };
+window.hydra = { setView: v => setView(v), setLock: on => setLock(!!on), toggleLock: () => setLock(!locked), reconnect: () => { retry = 0; connect(); } };
 
 // ---- access code ------------------------------------------------------------------------------------------
 function takeCodeFromLink() {
@@ -428,40 +473,72 @@ const busColour = b => b.hw ? "var(--hw)" : "var(--virt)";
 const busFace = b => icon(b.icon) || esc(b.label);
 const selBus = () => state ? state.buses.find(b => Pm("bus." + b.code + ".sel").n >= 0.5) || null : null;
 
-function toggleButton(html, id, cls) {
+// ---- lock: only look, nothing can be changed ----------------------------------------------------------------
+let locked = false;
+try { locked = localStorage.getItem("hydra.lock") === "1"; } catch (e) {}
+function setLock(on) {
+  locked = on;
+  try { localStorage.setItem("hydra.lock", on ? "1" : "0"); } catch (e) {}
+  document.body.classList.toggle("locked", on);
+  document.querySelectorAll(".lockbtn").forEach(b => {
+    b.classList.toggle("locked", on);
+    b.querySelector("use").setAttribute("href", on ? "#lk-closed" : "#lk-open");
+    const t = b.querySelector("span"); if (t) t.textContent = on ? "Locked" : "Lock";
+    b.setAttribute("aria-label", on ? "Unlock" : "Lock");
+  });
+  if (on) pending.clear();
+  tellApp();
+}
+const nudgeLocked = () => toast("Locked: tap the lock to unlock");
+document.querySelectorAll(".lockbtn").forEach(b => b.onclick = () => setLock(!locked));
+
+const hasParam = id => DEMO || !!params[id];
+const panelBinds = [];            // bindings of the detail panel (removed when it is rebuilt)
+let selKey = null;                // channel shown in the detail panel: "in3" / "bus.A1"
+
+function toggleButton(html, id, cls, track) {
   const b = el("button", "sw " + (cls || ""), html);
-  b.onclick = () => { const p = Pm(id); p.n = p.n >= 0.5 ? 0 : 1; update(id); send({ t: "toggle", id }); };
-  bind(id, () => b.classList.toggle("on", Pm(id).n >= 0.5));
+  b.onclick = () => {
+    if (locked) { nudgeLocked(); return; }
+    const p = Pm(id); p.n = p.n >= 0.5 ? 0 : 1; update(id); send({ t: "toggle", id });
+  };
+  const fn = () => b.classList.toggle("on", Pm(id).n >= 0.5);
+  bind(id, fn);
+  if (track) panelBinds.push([id, fn]);
   return b;
 }
 
-/** A fader: horizontal (rows) or vertical (strips). Relative drag (a touch never makes the value jump), double tap = default. */
+/** A fader: horizontal (rows) or vertical (strips). The track is the level meter; relative drag (a touch never makes
+ *  the value jump), double tap = default. The value shows only while the fader is moved. */
 function fader(idFn, colour, opts = {}) {
   const vert = !!opts.vertical;
-  const f = el("div", vert ? "vf" : "hf" + (opts.small ? " small" : "") + (opts.mini ? " mini" : ""));
+  const f = el("div", vert ? "vf" : "hf");
   f.style.setProperty("--c", colour);
-  const ml = el("div", "m l"), mr = el("div", "m r"), fill = el("div", "fill"), thumb = el("div", "thumb");
-  const val = vert ? null : el("div", "val"), lbl = vert ? null : el("div", "lbl", opts.label || "");
-  const zp = opts.zeroPos ?? ZERO;
-  if (opts.zero !== false) { const z = el("div", "zero"); if (vert) z.style.bottom = zp * 100 + "%"; else z.style.left = zp * 100 + "%"; f.append(z); }
-  if (opts.meter === false) ml.hidden = mr.hidden = true;
-  f.append(fill, ml, mr, thumb);
-  if (!vert) f.append(val, lbl);
+  const track = el("div", "track"), thumb = el("div", "thumb"), val = el("div", "val");
+  const meters = [], holds = [];
+  for (const side of ["l", "r"]) {   // two bars like Hydra's MeterView, dark scale lines at 0 / -6 / -12 / -24 / -40 dB
+    const bar = el("div", "bar " + side), m = el("div", "m"), h = el("div", "hold");
+    bar.append(m, h);
+    for (const db of [0, -6, -12, -24, -40]) { const k = el("div", "tick"); k.style[vert ? "bottom" : "left"] = dbToPos(db) * 100 + "%"; bar.append(k); }
+    track.append(bar); meters.push(m); holds.push(h);
+  }
+  f.append(track, thumb, val);
+  const PAD = 7;                  // the track ends where the centre of the cap ends
+  let hideTimer = 0;
+  const showValue = () => { f.classList.add("drag"); clearTimeout(hideTimer); };
+  const hideValueLater = () => { clearTimeout(hideTimer); hideTimer = setTimeout(() => f.classList.remove("drag"), 700); };
   f.redraw = () => {
     const p = Pm(idFn());
-    if (vert) {
-      const usable = f.clientHeight - 10;
-      thumb.style.top = (5 + (1 - p.n) * usable) + "px";
-      fill.style.height = (5 + p.n * usable) + "px";
-    } else {
-      thumb.style.left = (p.n * 100) + "%";
-      fill.style.width = (p.n * 100) + "%";
-      val.textContent = p.v;
-    }
-    if (opts.valueEl) opts.valueEl.textContent = p.v;
+    const size = vert ? f.clientHeight : f.clientWidth;
+    const pos = PAD + (vert ? 1 - p.n : p.n) * Math.max(0, size - 2 * PAD);
+    thumb.style[vert ? "top" : "left"] = pos + "px";
+    val.textContent = p.v;
+    if (vert) val.style.top = Math.max(0, Math.min(size - 20, pos - 30)) + "px";
+    else val.style.left = Math.max(30, Math.min(size - 30, pos)) + "px";
   };
   let start = 0, startN = 0, pid = null, lastTap = 0, moved = false;
   f.addEventListener("pointerdown", e => {
+    if (locked) return;
     pid = e.pointerId; start = vert ? e.clientY : e.clientX; startN = Pm(idFn()).n; moved = false;
     touching.set(idFn(), 0);
   });
@@ -469,9 +546,9 @@ function fader(idFn, colour, opts = {}) {
     if (e.pointerId !== pid) return;
     const d = vert ? start - e.clientY : e.clientX - start;
     if (!moved && Math.abs(d) < 6) return;
-    if (!moved) { moved = true; try { f.setPointerCapture(pid); } catch (err) {} }
+    if (!moved) { moved = true; showValue(); try { f.setPointerCapture(pid); } catch (err) {} }
     const id = idFn(), p = Pm(id);
-    const size = vert ? f.clientHeight : f.clientWidth;
+    const size = (vert ? f.clientHeight : f.clientWidth) - 2 * PAD;
     p.n = Math.max(0, Math.min(1, startN + (e.shiftKey ? 0.25 : 1) * d / Math.max(40, size)));
     pending.set(id, p.n);
     f.redraw();
@@ -481,89 +558,98 @@ function fader(idFn, colour, opts = {}) {
     pid = null;
     const id = idFn();
     touching.set(id, performance.now());
+    if (moved) hideValueLater();
     if (!moved && e.type === "pointerup") {
       const now = performance.now();
-      if (now - lastTap < 350) { const p = Pm(id); p.n = p.d; f.redraw(); pending.delete(id); send({ t: "reset", id }); lastTap = 0; }
+      if (now - lastTap < 350) { const p = Pm(id); p.n = p.d; showValue(); f.redraw(); hideValueLater(); pending.delete(id); send({ t: "reset", id }); lastTap = 0; }
       else lastTap = now;
     }
   };
   f.addEventListener("pointerup", end);
   f.addEventListener("pointercancel", end);
   f.addEventListener("wheel", e => {   // mouse / trackpad
+    if (locked) return;
     e.preventDefault();
     const id = idFn(), p = Pm(id);
     p.n = Math.max(0, Math.min(1, p.n - Math.sign(e.deltaY) * 0.01));
-    pending.set(id, p.n); touching.set(id, performance.now()); f.redraw();
+    pending.set(id, p.n); touching.set(id, performance.now()); showValue(); f.redraw(); hideValueLater();
   }, { passive: false });
   f.vertical = vert;
-  f.meterL = ml; f.meterR = mr;
+  f.meterL = meters[0]; f.meterR = meters[1]; f.holdL = holds[0]; f.holdR = holds[1];
   return f;
 }
 
-function chevron() {
-  const b = el("button", "sw more", '<svg class="ic" viewBox="0 0 24 24"><use href="#chev"/></svg>');
-  b.setAttribute("aria-label", "More");
-  return b;
+/** Small blocks: one per output, lit when the channel is sent there. */
+function routeBlocks(s, big) {
+  const wrap = el("div", "rb" + (big ? " big" : ""));
+  for (const hw of [true, false]) {
+    const list = state.buses.filter(b => b.hw === hw);
+    if (!list.length) continue;
+    const row = el("div", "rbrow");
+    for (const b of list) {
+      const k = el("i");
+      k.style.setProperty("--c", busColour(b));
+      k.title = s.name + " → " + b.name;
+      bind(s.id + ".route." + b.code, () => k.classList.toggle("on", Pm(s.id + ".route." + b.code).n >= 0.5));
+      row.append(k);
+    }
+    wrap.append(row);
+  }
+  return wrap;
 }
 
-function routeButtons(s, compact) {
-  const routes = el("div", "routes");
-  let lastHw = null;
-  for (const b of state.buses) {
-    if (lastHw !== null && lastHw !== b.hw) routes.append(el(compact ? "span" : "span", compact ? "sep" : "gap"));
-    lastHw = b.hw;
-    const r = toggleButton(busFace(b), s.id + ".route." + b.code);
-    r.style.setProperty("--c", busColour(b));
-    r.title = s.name + " → " + b.name;
-    routes.append(r);
-  }
-  return routes;
+/** Hydra's strip header: number (inputs) or output icon in the channel colour, then the name. */
+function nameLine(s, b) {
+  const line = el("div", "nm");
+  const tag = el("div", "badge" + (b && b.icon && ICONS[b.icon] ? " ol" : ""), s ? String(state.inputs.indexOf(s) + 1) : busFace(b));
+  if (b) tag.style.setProperty("--c", busColour(b));
+  line.append(tag, el("b", null, esc(s ? s.name : b.name)));
+  return line;
 }
 
 function inputFaderId(s) { const b = selBus(); return b ? s.id + ".send." + b.code : s.id + ".gain"; }
 
+/** Tap on a channel (not on a button or fader) opens / closes its panel. */
+function selectable(card, key) {
+  card.dataset.key = key;
+  card.addEventListener("click", e => { if (!e.target.closest(".sw, .hf, .vf")) select(key); });
+}
+
 function buildRows() {
   const v = $("viewMixer");
-  const open = new Set([...document.querySelectorAll(".row.open")].map(c => c.dataset.key));
   const secIn = el("section"), secOut = el("section");
   secIn.dataset.sec = "in"; secOut.dataset.sec = "out";
-  secIn.append(el("h2", null, "Inputs<i></i>"));
+  secIn.append(el("h2", null, "Inputs"));
   const ins = el("div", "list");
   secIn.append(ins);
   for (const s of state.inputs) {
-    const c = el("div", "card row"); c.dataset.key = s.id;
-    if (open.has(s.id)) c.classList.add("open");
-    const head = el("div", "line");
-    const more = chevron(); more.onclick = () => c.classList.toggle("open");
-    head.append(el("div", "name", "<b>" + esc(s.name) + "</b><span>" + esc(s.src || "no source") + "</span>"),
-                toggleButton("M", s.id + ".mute", "mute"), toggleButton("S", s.id + ".solo", "solo"), more);
+    const c = el("div", "card row");
+    selectable(c, s.id);
+    const nm = el("div", "name");
+    nm.append(nameLine(s));
+    nm.append(routeBlocks(s, true));
     const fd = fader(() => inputFaderId(s), "var(--in)");
-    const extra = el("div", "extra");
-    const trim = fader(() => s.id + ".trim", "var(--in)", { small: true, label: "Gain", meter: false, zeroPos: 0.5 });
-    const pan = fader(() => s.id + ".pan", "var(--in)", { small: true, label: "Pan", meter: false, zeroPos: 0.5 });
-    const sw = el("div", "line");
-    sw.append(toggleButton("MONO", s.id + ".mono"), toggleButton("FX BYPASS", s.id + ".fx.bypass"));
-    extra.append(trim, pan, sw);
-    c.append(head, fd, routeButtons(s, false), extra);
+    c.append(nm, fd, toggleButton("SOLO", s.id + ".solo", "solo sq"), toggleButton("MUTE", s.id + ".mute", "mute sq"));
     ins.append(c);
-    bindFader(s, fd, trim, pan);
+    bindFader(s, fd);
   }
   if (!state.inputs.length) ins.append(el("div", "empty", "No inputs"));
   for (const hw of [true, false]) {
     const list = state.buses.filter(b => b.hw === hw);
     if (!list.length) continue;
-    secOut.append(el("h2", null, (hw ? "Hardware outputs" : "Virtual outputs") + "<i></i>"));
+    const h = el("h2", null, hw ? "Hardware Outputs" : "Virtual Outputs");
     const l = el("div", "list");
+    h.style.setProperty("--c", hw ? "var(--hw)" : "var(--virt)"); l.style.setProperty("--c", hw ? "var(--hw)" : "var(--virt)");
+    secOut.append(h);
     secOut.append(l);
     for (const b of list) {
       const id = "bus." + b.code;
-      const c = el("div", "card row"); c.dataset.key = id;
+      const c = el("div", "card row");
       c.style.setProperty("--c", busColour(b));
-      const head = el("div", "line");
-      head.append(el("div", "badge", busFace(b)), el("div", "name", "<b>" + esc(b.name) + "</b><span>" + esc(b.label) + "</span>"),
-                  toggleButton("SEL", id + ".sel"), toggleButton("MONO", id + ".mono"), toggleButton("MUTE", id + ".mute", "mute"));
+      selectable(c, id);
       const fd = fader(() => id + ".gain", busColour(b));
-      c.append(head, fd);
+      const nm = el("div", "name"); nm.append(nameLine(null, b));
+      c.append(nm, fd, toggleButton("MUTE", id + ".mute", "mute sq"));
       l.append(c);
       bindBus(b, fd);
     }
@@ -576,42 +662,36 @@ function buildStrips() {
   const mixer = el("div", "mixer");
   const group = (title, colour) => {
     const g = el("div", "group");
-    g.append(el("h2", null, title + "<i></i>"));
+    g.style.setProperty("--c", colour);
+    g.append(el("h2", null, title));
     const s = el("div", "strips");
     g.append(s);
     mixer.append(g);
     return s;
   };
-  const ins = group("Inputs");
+  const ins = group("Inputs", "var(--in)");
   for (const s of state.inputs) {
     const c = el("div", "card strip");
-    const value = el("div", "svalue");
-    const fd = fader(() => inputFaderId(s), "var(--in)", { vertical: true, valueEl: value });
-    const trim = fader(() => s.id + ".trim", "var(--in)", { mini: true, label: "Gain", meter: false, zeroPos: 0.5 });
-    const pan = fader(() => s.id + ".pan", "var(--in)", { mini: true, label: "Pan", meter: false, zeroPos: 0.5 });
-    const minis = el("div", "minis"); minis.append(trim, pan);
+    selectable(c, s.id);
+    const fd = fader(() => inputFaderId(s), "var(--in)", { vertical: true });
     const sws = el("div", "sws");
-    sws.append(toggleButton("M", s.id + ".mute", "mute"), toggleButton("S", s.id + ".solo", "solo"), toggleButton("MO", s.id + ".mono"));
-    const nm = el("div", "name", "<b>" + esc(s.name) + "</b><span>" + esc(s.src || "no source") + "</span>");
-    nm.onclick = () => { c.classList.toggle("detail"); fd.redraw(); };
-    c.append(nm, minis, routeButtons(s, true), fd, value, sws);
-    c.title = s.src || "";
+    sws.append(toggleButton("SOLO", s.id + ".solo", "solo"), toggleButton("MUTE", s.id + ".mute", "mute"));
+    c.append(nameLine(s), routeBlocks(s, false), fd, sws);
     ins.append(c);
-    bindFader(s, fd, trim, pan);
+    bindFader(s, fd);
   }
   for (const hw of [true, false]) {
     const list = state.buses.filter(b => b.hw === hw);
     if (!list.length) continue;
-    const g = group(hw ? "Hardware outputs" : "Virtual outputs");
+    const g = group(hw ? "Hardware Outputs" : "Virtual Outputs", hw ? "var(--hw)" : "var(--virt)");
     for (const b of list) {
       const id = "bus." + b.code;
       const c = el("div", "card strip");
       c.style.setProperty("--c", busColour(b));
-      const value = el("div", "svalue");
-      const fd = fader(() => id + ".gain", busColour(b), { vertical: true, valueEl: value });
-      const top = el("div", "sws"); top.append(toggleButton("SEL", id + ".sel"), toggleButton("MO", id + ".mono"));
-      const bottom = el("div", "sws"); bottom.append(toggleButton("MUTE", id + ".mute", "mute"));
-      c.append(el("div", "badge", busFace(b)), el("div", "name", "<b>" + esc(b.name) + "</b><span>" + esc(b.label) + "</span>"), top, fd, value, bottom);
+      selectable(c, id);
+      const fd = fader(() => id + ".gain", busColour(b), { vertical: true });
+      const sws = el("div", "sws"); sws.append(toggleButton("MUTE", id + ".mute", "mute"));
+      c.append(nameLine(null, b), fd, sws);
       g.append(c);
       bindBus(b, fd);
     }
@@ -619,26 +699,81 @@ function buildStrips() {
   v.append(mixer);
 }
 
-function bindFader(s, fd, trim, pan) {
+function bindFader(s, fd) {
   bind(s.id + ".gain", fd.redraw);
   for (const b of state.buses) bind(s.id + ".send." + b.code, fd.redraw);
-  bind(s.id + ".trim", trim.redraw);
-  bind(s.id + ".pan", pan.redraw);
   bind(s.id + ".mute", () => fd.classList.toggle("muted", Pm(s.id + ".mute").n >= 0.5));
-  meterEls.push({ fader: fd, l: 0, r: 0, input: true });
+  meterEls.push({ fader: fd, l: 0, r: 0, sl: -1, sr: -1, input: true });
 }
 
 function bindBus(b, fd) {
   const id = "bus." + b.code;
   bind(id + ".gain", fd.redraw);
   bind(id + ".mute", () => fd.classList.toggle("muted", Pm(id + ".mute").n >= 0.5));
-  bind(id + ".sel", () => fd.closest(".card").classList.toggle("selbus", Pm(id + ".sel").n >= 0.5));
-  meterEls.push({ fader: fd, l: 0, r: 0, input: false });
+  meterEls.push({ fader: fd, l: 0, r: 0, sl: -1, sr: -1, input: false });
+}
+
+// ---- detail panel -------------------------------------------------------------------------------------------
+function select(key) { selKey = selKey === key ? null : key; renderPanel(); }
+
+function renderPanel() {
+  for (const [id, fn] of panelBinds) { const a = bindings.get(id); if (a) { const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1); } }
+  panelBinds.length = 0;
+  const pn = $("panel");
+  pn.innerHTML = "";
+  let s = null, b = null;
+  if (state && selKey) {
+    s = state.inputs.find(x => x.id === selKey) || null;
+    b = s ? null : state.buses.find(x => "bus." + x.code === selKey) || null;
+  }
+  if (!s && !b) selKey = null;
+  document.querySelectorAll("[data-key]").forEach(c => c.classList.toggle("sel", c.dataset.key === selKey));
+  document.body.classList.toggle("panelopen", !!selKey);
+  if (!selKey) return;
+
+  const head = el("div", "ph");
+  if (b) { const bd = el("div", "badge", busFace(b)); bd.style.setProperty("--c", busColour(b)); head.append(bd); }
+  head.append(el("b", null, esc(s ? s.name : b.name)));
+  const x = el("button", "x", '<svg class="ic" viewBox="0 0 24 24"><path class="l" d="M6 6l12 12M18 6L6 18"/></svg>');
+  x.setAttribute("aria-label", "Close");
+  x.onclick = () => select(selKey);
+  head.append(x);
+  pn.append(head);
+
+  if (s) {
+    for (const hw of [true, false]) {
+      const list = state.buses.filter(k => k.hw === hw);
+      if (!list.length) continue;
+      pn.append(el("h3", null, "Send to · " + (hw ? "Hardware" : "Virtual")));
+      const g = el("div", "grid");
+      for (const k of list) {
+        const r = toggleButton(busFace(k) + "<span>" + esc(k.name) + "</span>", s.id + ".route." + k.code, "wide", true);
+        r.style.setProperty("--c", busColour(k));
+        g.append(r);
+      }
+      pn.append(g);
+    }
+    if (hasParam(s.id + ".fx.bypass")) { pn.append(el("h3", null, "Effects")); pn.append(toggleButton("Bypass effects", s.id + ".fx.bypass", "wide", true)); }
+  } else {
+    const id = "bus." + b.code;
+    pn.append(el("h3", null, "Level setting"));
+    const sel = toggleButton("Set levels of this output", id + ".sel", "wide", true);
+    sel.style.setProperty("--c", busColour(b));
+    pn.append(sel, el("div", "hint", "While on, the input faders set how loud each input is sent to this output."));
+    if (hasParam(id + ".fx.bypass")) { pn.append(el("h3", null, "Effects")); pn.append(toggleButton("Bypass effects", id + ".fx.bypass", "wide", true)); }
+  }
+  requestAnimationFrame(() => {
+    document.documentElement.style.setProperty("--ph", pn.offsetHeight + "px");
+    const card = document.querySelector('[data-key="' + selKey + '"]');
+    if (card && !land) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    meterEls.forEach(m => m.fader.redraw());
+  });
 }
 
 function build() {
   if (!state) return;
   bindings.clear();
+  panelBinds.length = 0;
   meterEls.length = 0;
   $("viewMixer").innerHTML = "";
   if (land) buildStrips(); else buildRows();
@@ -651,16 +786,17 @@ function build() {
   state.scenes.forEach((name, i) => {
     const b = el("button", "scene" + (i === state.scene ? " on" : ""), "<small>" + String(i + 1).padStart(2, "0") + "</small>" + esc(name || "Scene " + (i + 1)));
     b.onclick = () => {
+      if (locked) { nudgeLocked(); return; }
       send({ t: "scene", i });
       [...sc.children].forEach((x, k) => x.classList.toggle("on", k === i));
       toast(name || "Scene " + (i + 1));
     };
     sc.append(b);
   });
+  renderPanel();
   applyViewVisibility();
   refreshSel();
 }
-
 function refreshSel() {
   const b = selBus();
   const ban = $("selBanner");
@@ -668,7 +804,7 @@ function refreshSel() {
   if (b) {
     ban.style.setProperty("--c", busColour(b));
     $("selText").textContent = "Input faders set the levels to " + b.label + (b.name !== b.label ? " (" + b.name + ")" : "");
-    $("selDone").onclick = () => { const id = "bus." + b.code + ".sel"; Pm(id).n = 0; update(id); send({ t: "toggle", id }); refreshSel(); };
+    $("selDone").onclick = () => { if (locked) { nudgeLocked(); return; } const id = "bus." + b.code + ".sel"; Pm(id).n = 0; update(id); send({ t: "toggle", id }); refreshSel(); };
     $("selDone").style.setProperty("--c", busColour(b));
   }
   if (!state) return;
@@ -684,12 +820,25 @@ function frame(now) {
   for (const [id, n] of pending) send({ t: "set", id, n: Math.round(n * 10000) / 10000 });
   pending.clear();
   const fresh = meterBytes && now - meterTime < 500;
+  const kUp = 1 - Math.exp(-dt / 0.04), kDown = 1 - Math.exp(-dt / 0.18);
   for (let k = 0; k < meterEls.length; ++k) {
     const m = meterEls[k];
     const ok = fresh && meterBytes.length > 3 + 3 * k;
     const l = ok ? byteToPos(meterBytes[1 + 3 * k]) : 0, r = ok ? byteToPos(meterBytes[2 + 3 * k]) : 0;
-    m.l = Math.max(l, m.l - dt * 1.2); m.r = Math.max(r, m.r - dt * 1.2);
+    // Hydra sends ~25 values per second: glide between them (fast up, a bit slower down) instead of stepping
+    m.l += (l - m.l) * (l > m.l ? kUp : kDown); m.r += (r - m.r) * (r > m.r ? kUp : kDown);
+    if (m.l < 0.003) m.l = 0; if (m.r < 0.003) m.r = 0;
+    for (const c of ["l", "r"]) {
+      const v = c === "l" ? l : r, hk = "h" + c, tk = "t" + c;
+      if (v >= (m[hk] || 0)) { m[hk] = v; m[tk] = 1.2; }
+      else if ((m[tk] -= dt) <= 0) m[hk] = Math.max(m[c], m[hk] - 0.6 * dt);
+    }
+    if (Math.abs(m.l - m.sl) < 0.002 && Math.abs(m.r - m.sr) < 0.002 && Math.abs(m.hl - m.shl) < 0.002 && Math.abs(m.hr - m.shr) < 0.002) continue;
+    m.sl = m.l; m.sr = m.r; m.shl = m.hl; m.shr = m.hr;
     const f = m.fader;
+    const prop = f.vertical ? "bottom" : "left";
+    f.holdL.style.display = m.hl > 0.01 ? "block" : "none"; f.holdL.style[prop] = (m.hl * 100).toFixed(1) + "%";
+    f.holdR.style.display = m.hr > 0.01 ? "block" : "none"; f.holdR.style[prop] = (m.hr * 100).toFixed(1) + "%";
     if (f.vertical) {
       f.meterL.style.clipPath = "inset(" + (100 - m.l * 100).toFixed(1) + "% 0 0 0)";
       f.meterR.style.clipPath = "inset(" + (100 - m.r * 100).toFixed(1) + "% 0 0 0)";
@@ -722,6 +871,7 @@ function applyLayout() {
   applyViewVisibility();
 }
 function applyViewVisibility() {
+  document.body.classList.toggle("scenesview", view === "scenes");
   $("viewMixer").hidden = view === "scenes";
   $("viewScenes").hidden = view !== "scenes";
   document.querySelectorAll("#viewMixer section").forEach(s => s.hidden = (view === "in" && s.dataset.sec !== "in") || (view === "out" && s.dataset.sec !== "out"));
@@ -731,6 +881,7 @@ function applyViewVisibility() {
 function setView(v) {
   if (land && (v === "in" || v === "out")) v = "mix";
   if (!land && v === "mix") v = "in";
+  if (v !== view && selKey) { selKey = null; renderPanel(); }
   view = v;
   try { localStorage.setItem("hydra.view", v); } catch (e) {}
   applyViewVisibility();
@@ -781,10 +932,10 @@ function startDemo() {
     const id = "in" + (i + 1);
     fdr(id + ".gain", [-4, -10, -18, -8][i]); p[id + ".trim"] = { n: .5, v: "0.0 dB", d: .5, k: "c" };
     p[id + ".pan"] = { n: .5, v: "0.00", d: .5, k: "c" };
-    tg(id + ".mute", i === 3); tg(id + ".solo", false); tg(id + ".mono", i === 0); tg(id + ".fx.bypass", false);
+    tg(id + ".mute", i === 3); tg(id + ".solo", false); tg(id + ".fx.bypass", false);
     bus.forEach((b, k) => { tg(id + ".route." + b[0], (i + k) % 2 === 0 || k === 0); fdr(id + ".send." + b[0], 0); });
   });
-  bus.forEach((b, k) => { const id = "bus." + b[0]; fdr(id + ".gain", [0, -6, -3, 0][k]); tg(id + ".mute", false); tg(id + ".mono", false); tg(id + ".sel", false); tg(id + ".fx.bypass", false); });
+  bus.forEach((b, k) => { const id = "bus." + b[0]; fdr(id + ".gain", [0, -6, -3, 0][k]); tg(id + ".mute", false); tg(id + ".sel", false); tg(id + ".fx.bypass", false); });
   tg("mon.on", false);
   authed = true;
   applyState({ t: "state", name: "STUDIO-PC", version: "demo",
@@ -808,6 +959,7 @@ function demoCommand(o) {
   if (o.t === "reset" && p) { p.n = p.d; if (/gain|send/.test(o.id)) p.v = "0.0 dB"; update(o.id); }
 }
 
+setLock(locked);
 connect();
 </script>
 </body>
