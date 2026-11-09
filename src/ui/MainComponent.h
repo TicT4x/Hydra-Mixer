@@ -198,8 +198,6 @@ public:
     /** Screenshot tool (tools/Shots.cpp) only: select a channel / advance the meters without a window and v-sync. */
     void demoSelect (int index)       { select (index); }
     void demoMeterFrame (double t)    { meterFrame (t); }
-    juce::Rectangle<int> demoInspectorBounds() const { return inspector.getBounds(); }
-    UiContext& demoContext()          { return ctx; }
 
     /** Set by the application: preferences changed / quit requested from the UI. */
     std::function<void()> onPrefsChanged, onShutdown;
