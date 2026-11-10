@@ -9,7 +9,7 @@
   built with C++20 and JUCE (ASIO, WASAPI, VST3, MIDI).
 </p>
 
-![Hydra Mixer](docs/screenshot.png)
+![Hydra Mixer](https://hydra-mixer.de/screenshot.png)
 
 **Wiki & tutorial:** https://tict4x.github.io/Hydra-Mixer/ (English / [Deutsch](https://tict4x.github.io/Hydra-Mixer/de/))
 
@@ -176,7 +176,6 @@ cd Hydra-Mixer
 ```
 
 - App: `build\Release\HydraMixer_artefacts\Release\Hydra Mixer.exe`
-- Tests: `build\Release\HydraTests_artefacts\Release\HydraTests.exe`
 
 ## License
 

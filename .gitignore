@@ -17,3 +17,14 @@ external/onnxruntime/
 # Virtual Audio Cable full version (installer from the vendor, reference only).
 # license.txt: no redistribution without a license, so it must never land in the repo.
 external/vac471full/
+
+# Kept locally, not part of the repository (only the code that builds Hydra is in git).
+# The website lives on the gh-pages branch.
+/tests/
+/tools/Shots.cpp
+/tools/guitarsep/
+/notes/
+/exports/
+/docs/
+/CLAUDE.md
+/.claude/

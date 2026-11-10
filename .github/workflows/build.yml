@@ -41,8 +41,3 @@ jobs:
           name: HydraMixer-win64-${{ github.sha }}
           path: dist/
 
-      - name: Offline tests
-        shell: pwsh
-        run: |
-          & "build/Release/HydraTests_artefacts/Release/HydraTests.exe"
-          if ($LASTEXITCODE -ne 0) { throw "HydraTests failed ($LASTEXITCODE)" }

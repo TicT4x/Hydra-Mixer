@@ -164,6 +164,8 @@ if(MSVC)
     endif()
 endif()
 
+# Offline tests (local only, not in the repository): built when tests/ exists.
+if(EXISTS "${CMAKE_SOURCE_DIR}/tests")
 # Offline DSP tests (run: build\<cfg>\HydraTests_artefacts\<cfg>\HydraTests.exe)
 juce_add_console_app(HydraTests PRODUCT_NAME "HydraTests")
 target_sources(HydraTests PRIVATE tests/DenoiserTest.cpp tests/SessionTest.cpp tests/MidiRangeTest.cpp tests/AppCaptureTest.cpp tests/LedTest.cpp tests/RecorderTest.cpp tests/AsioSecondaryTest.cpp tests/UndoTest.cpp tests/ReorderTest.cpp tests/SceneTest.cpp tests/SyncDelayTest.cpp tests/RoomAnalysisTest.cpp tests/CorrectionTest.cpp tests/DeviceNamesTest.cpp tests/FxChainTest.cpp tests/CorrectionPoolTest.cpp tests/VacTest.cpp tests/VacStreamTest.cpp tests/NetLinkTest.cpp tests/RemoteTest.cpp tests/LinkLiteTest.cpp tests/StemsTest.cpp
@@ -181,11 +183,12 @@ if(HYDRA_STEMS)   # StemsTest compares the DLLs unpacked from the exe with these
 endif()
 # The tests keep several Engine objects on the stack (several 100 KB each since the EQ has 16 bands): 16 MB stack.
 target_link_options(HydraTests PRIVATE /STACK:16777216)
+endif()
 
-# Screenshot tool (docs/screenshot*.png): renders the UI with an example layout offscreen. Not part of the release.
+# Screenshot tool (local only, website screenshots): renders the UI with an example layout offscreen. Not part of the release.
 # Configure with -DHYDRA_SHOTS=ON, run: HydraShots.exe <output folder>
 option(HYDRA_SHOTS "Build the screenshot tool" OFF)
-if(HYDRA_SHOTS)
+if(HYDRA_SHOTS AND EXISTS "${CMAKE_SOURCE_DIR}/tools/Shots.cpp")
     juce_add_console_app(HydraShots PRODUCT_NAME "HydraShots")
     set(SHOT_SOURCES ${HYDRA_SOURCES})
     list(FILTER SHOT_SOURCES EXCLUDE REGEX "/src/Main\.cpp$")
