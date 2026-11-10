@@ -560,6 +560,14 @@ void Knob::drag (const juce::MouseEvent& e)
     param.setNormalised (dragStartNorm + d);
 }
 
+void Knob::setGlow (float v)
+{
+    v = v < 0.0f ? -1.0f : juce::jmin (1.0f, v);
+    if (std::abs (v - glow) < 0.01f && (v > 0.0f) == (glow > 0.0f)) return;
+    glow = v;
+    repaint();
+}
+
 void Knob::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
@@ -583,11 +591,23 @@ void Knob::paint (juce::Graphics& g)
 
     juce::Path bgArc, valArc;
     bgArc.addCentredArc (c.x, c.y, rad - 2.0f, rad - 2.0f, 0.0f, a0, a1, true);
+    const juce::PathStrokeType stroke (3.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
     g.setColour (theme::bg);
-    g.strokePath (bgArc, juce::PathStrokeType (3.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.strokePath (bgArc, stroke);
+    if (glow >= 0.0f)
+    {
+        // The track lights up with the level: a faint tint at rest, bright with a soft halo on loud parts.
+        if (glow > 0.0f)
+        {
+            g.setColour (accent.withAlpha (0.22f * glow));
+            g.strokePath (bgArc, juce::PathStrokeType (3.5f + 5.0f * glow, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+        g.setColour (accent.withAlpha (0.14f + 0.62f * glow));
+        g.strokePath (bgArc, stroke);
+    }
     valArc.addCentredArc (c.x, c.y, rad - 2.0f, rad - 2.0f, 0.0f, juce::jmin (startAng, ang), juce::jmax (startAng, ang), true);
-    g.setColour (accent);
-    g.strokePath (valArc, juce::PathStrokeType (3.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.setColour (glow > 0.0f ? accent.brighter (0.6f * glow) : accent);
+    g.strokePath (valArc, stroke);
 
     const float inner = rad - 7.0f;
     g.setColour (theme::raised);

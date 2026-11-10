@@ -1,3 +1,4 @@
+#include "UiWatch.h"
 #include "MainComponent.h"
 #include "CableManager.h"
 #include "state/VacCables.h"
@@ -1131,6 +1132,7 @@ void MainComponent::showToolsMenu()
 
 void MainComponent::openSettings (int tab)
 {
+    UiActivity busy ("settings: opening the window");
     const double t0 = juce::Time::getMillisecondCounterHiRes();
     if (settingsWindow == nullptr)
     {
@@ -1147,7 +1149,10 @@ void MainComponent::openSettings (int tab)
         makeToolWindow (settingsWindow, "Hydra Mixer - Settings", panel, 1040, 680);
     }
     if (auto* p = dynamic_cast<SettingsPanel*> (settingsWindow->getContentComponent()))
+    {
         p->showTab (tab);
+        p->measureFirstPaint (t0);
+    }
     settingsWindow->setVisible (true);
     settingsWindow->toFront (true);
     if (const double ms = juce::Time::getMillisecondCounterHiRes() - t0; ms > 100.0)

@@ -11,6 +11,9 @@ Voicemeeter*Setup*.zip
 *.log
 .claude/settings.local.json
 
+# ONNX Runtime + DirectML binaries for the Stems effect (tools/fetch-onnxruntime.ps1 fetches them).
+external/onnxruntime/
+
 # Virtual Audio Cable full version (installer from the vendor, reference only).
 # license.txt: no redistribution without a license, so it must never land in the repo.
 external/vac471full/

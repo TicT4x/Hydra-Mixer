@@ -1,6 +1,7 @@
 #include "Inspector.h"
 #include "state/ChannelClipboard.h"
 #include <juce_dsp/juce_dsp.h>
+#include <deque>
 
 namespace hydra
 {
@@ -75,15 +76,42 @@ struct DragGrip final : juce::Component, juce::SettableTooltipClient
     bool dragging = false;
 };
 
+/** Opens a larger window: the expand symbol (EQ, Correction; the settings window of the other effects). */
+class ExpandButton final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    std::function<void()> onClick;
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (1.0f);
+        g.setColour (hover ? theme::raised.brighter (0.1f) : theme::raised);
+        g.fillRoundedRectangle (r, 5.0f);
+        g.setColour (hover ? theme::text : theme::textDim);
+        const auto c = r.getCentre();
+        const float s = 4.5f;
+        juce::Path p;
+        p.startNewSubPath (c.x - s, c.y + s); p.lineTo (c.x + s, c.y - s);       // diagonal
+        p.startNewSubPath (c.x + s - 3.5f, c.y - s); p.lineTo (c.x + s, c.y - s); p.lineTo (c.x + s, c.y - s + 3.5f);
+        p.startNewSubPath (c.x - s, c.y + s - 3.5f); p.lineTo (c.x - s, c.y + s); p.lineTo (c.x - s + 3.5f, c.y + s);
+        g.strokePath (p, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override { if (e.mouseWasClicked() && onClick) onClick(); }
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
+
+private:
+    bool hover = false;
+};
+
 /** Rounded section with title, optional ON toggle (headerSlot) and optional settings gear. In an effect
     chain it also has a drag grip on its title and a remove button (enableChainControls). */
 struct Section : juce::Component
 {
     Section (juce::String t, juce::Colour c) : title (std::move (t)), colour (c)
     {
-        gear.showArrow = false;
-        gear.centred = true;
-        gear.setTooltip ("More settings");
+        gear.setTooltip ("All settings in a window");
     }
 
     void enableGear (std::function<void()> onClick)
@@ -132,14 +160,34 @@ struct Section : juce::Component
         titleArea.setRight ((float) titleRight());
         g.setColour (colour);
         g.setFont (titleFont());
+        if (beta)
+        {
+            const float tw = juce::GlyphArrangement::getStringWidth (titleFont(), title.toUpperCase());
+            const float textW = juce::jmin (tw, titleArea.getWidth() - kBetaWidth - 6.0f);
+            g.drawFittedText (title.toUpperCase(), titleArea.withWidth (textW).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+            drawBeta (g, juce::Rectangle<float> (titleArea.getX() + textW + 6.0f, titleArea.getCentreY() - 7.0f, kBetaWidth, 14.0f), colour);
+            return;
+        }
         g.drawFittedText (title.toUpperCase(), titleArea.toNearestInt(), juce::Justification::centredLeft, 1, 1.0f);
+    }
+
+    static constexpr float kBetaWidth = 34.0f;
+    static void drawBeta (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c)
+    {
+        g.setColour (c.withAlpha (0.16f));
+        g.fillRoundedRectangle (r, 4.0f);
+        g.setColour (c.withAlpha (0.7f));
+        g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, 1.0f);
+        g.setColour (c);
+        g.setFont (theme::font (9.0f, true));
+        g.drawText ("BETA", r, juce::Justification::centred);
     }
 
     /** Narrowest width at which the title fits next to the header controls. */
     int minimumWidth() const
     {
         const int text = juce::GlyphArrangement::getStringWidthInt (titleFont(), title.toUpperCase());
-        return 13 + (chained ? 16 : 0) + text + 4 + (gear.isVisible() ? 28 : 0) + headerExtra + 44 + (chained ? 26 : 0) + 10 + 4;
+        return 13 + (chained ? 16 : 0) + text + (beta ? (int) kBetaWidth + 6 : 0) + 4 + (gear.isVisible() ? 28 : 0) + headerExtra + 44 + (chained ? 26 : 0) + 10 + 4;
     }
 
     /** Right-click on the section (not on a control): the block menu. */
@@ -147,7 +195,7 @@ struct Section : juce::Component
 
     void resized() override
     {
-        gear.setBounds (headerSlot().withRight (beforeSwitch()).withLeft (beforeSwitch() - 24));
+        gear.setBounds (headerSlot().withRight (beforeSwitch()).withLeft (beforeSwitch() - 26));
         if (chained)
         {
             remove.setBounds (getLocalBounds().reduced (8, 7).removeFromTop (20).removeFromRight (22));
@@ -175,9 +223,10 @@ struct Section : juce::Component
 
     juce::String title;
     juce::Colour colour;
+    bool beta = false;   // a small "BETA" tag after the title
     juce::Rectangle<int> subCard;   // optional framed area behind some controls
     juce::Colour subCardColour;
-    Chip gear { "...", theme::text };
+    ExpandButton gear;
     TrashButton remove;
     DragGrip grip;
     std::function<void()> onMenu;   // block menu (copy, cut, paste ...)
@@ -362,34 +411,6 @@ private:
 
 //==============================================================================
 /** Small icon button: two diagonal arrows ("open larger"). */
-class ExpandButton final : public juce::Component, public juce::SettableTooltipClient
-{
-public:
-    std::function<void()> onClick;
-
-    void paint (juce::Graphics& g) override
-    {
-        auto r = getLocalBounds().toFloat().reduced (1.0f);
-        g.setColour (hover ? theme::raised.brighter (0.1f) : theme::raised);
-        g.fillRoundedRectangle (r, 5.0f);
-        g.setColour (hover ? theme::text : theme::textDim);
-        const auto c = r.getCentre();
-        const float s = 4.5f;
-        juce::Path p;
-        p.startNewSubPath (c.x - s, c.y + s); p.lineTo (c.x + s, c.y - s);       // diagonal
-        p.startNewSubPath (c.x + s - 3.5f, c.y - s); p.lineTo (c.x + s, c.y - s); p.lineTo (c.x + s, c.y - s + 3.5f);
-        p.startNewSubPath (c.x - s, c.y + s - 3.5f); p.lineTo (c.x - s, c.y + s); p.lineTo (c.x - s + 3.5f, c.y + s);
-        g.strokePath (p, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    }
-
-    void mouseUp (const juce::MouseEvent& e) override { if (e.mouseWasClicked() && onClick) onClick(); }
-    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
-    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
-
-private:
-    bool hover = false;
-};
-
 //==============================================================================
 /** Import / export / clear of one EQ (instance k) of a channel. Copy / paste: right-click the block. */
 void showEqMenu (UiContext& ctx, int channel, int k, juce::Component& target)
@@ -1003,6 +1024,844 @@ public:
     uint32_t modeVersion = 0;
 };
 
+//==============================================================================
+/** Inputs whose chain has the Stems effect. */
+std::vector<int> stemsChannels (const Engine& e)
+{
+    std::vector<int> v;
+    for (int i = 0; i < kMaxInputs; ++i)
+        if (e.isInputActive (i) && e.inputs[(size_t) i].plugins.hasBuiltin (Fx::stems)) v.push_back (i);
+    return v;
+}
+
+/** Why the model of a mode does not run (empty while it runs). */
+juce::String stemsProblem (const stems::Service::Status& st, stems::Model m)
+{
+    using S = stems::Service::State;
+    switch (st.state)
+    {
+        case S::unavailable: return "Not available in this build";
+        case S::noModel:     return stems::Service::modelFile (m).existsAsFile() ? "Starting..." : "Model not downloaded yet: click here";
+        case S::downloading: return "Downloading " + juce::String (juce::roundToInt (st.progress * 100.0f)) + " %";
+        case S::preparing:   return "Preparing the model";
+        case S::loading:     return "Loading onto the GPU";
+        case S::failed:      return "Error: " + st.message;
+        case S::ready:       break;
+    }
+    return {};
+}
+
+/** GPU load of the separation (like the DSP meter in the top bar): label, slim bar, percentage. */
+class GpuBar final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    /** Target; the bar glides there (~0.25 s, VBlank, only while moving), the number changes once a second (mean of
+        the last second), like the other live displays. */
+    void setLoad (float l) { target = juce::jmax (0.0f, l); }
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds();
+        g.setColour (theme::textDim);
+        g.setFont (theme::font (11.0f));
+        g.drawText ("GPU", r.removeFromLeft (28), juce::Justification::centredLeft);
+        auto text = r.removeFromRight (38);
+        auto bar = r.withSizeKeepingCentre (r.getWidth(), 6).toFloat();
+        g.setColour (theme::bg);
+        g.fillRoundedRectangle (bar, 3.0f);
+        g.setColour (load < 0.5f ? theme::good : load < 0.8f ? theme::solo : theme::mute);
+        g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * juce::jlimit (0.0f, 1.0f, load)), 3.0f);
+        g.setColour (theme::text);
+        g.drawText (juce::String (juce::roundToInt (number * 100.0f)) + " %", text, juce::Justification::centredRight);
+    }
+
+private:
+    void frame (double t)
+    {
+        const float dt = last > 0.0 ? (float) juce::jlimit (0.0, 0.1, t - last) : 1.0f / 60.0f;
+        if (last <= 0.0) { load = number = target; repaint(); }   // first frame: no glide from 0
+        last = t;
+        if (secondStart <= 0.0) secondStart = t;
+        sum += target * dt;
+        sumT += dt;
+        bool changed = false;
+        if (t - secondStart >= 1.0)
+        {
+            const float mean = sum / juce::jmax (1.0e-3f, sumT);
+            sum = sumT = 0.0f;
+            secondStart = t;
+            if (std::abs (mean - number) >= 0.005f) { number = mean; changed = true; }
+        }
+        const float before = load;
+        load += (target - load) * (1.0f - std::exp (-dt / 0.25f));
+        if (std::abs (target - load) < 0.002f) load = target;
+        if (changed || std::abs (load - before) > 0.0005f) repaint();
+    }
+    float load = 0.0f, target = 0.0f, number = 0.0f, sum = 0.0f, sumT = 0.0f;
+    double last = 0.0, secondStart = 0.0;
+    juce::VBlankAttachment vblank { this, [this] (double t) { if (isShowing()) frame (t); } };
+};
+
+/** The latency of the separation, large, with a line below (mode, or a warning). */
+class StemsLatency final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    void set (double seconds, const juce::String& line, juce::Colour lineColour)
+    {
+        if (seconds == shownSeconds && line == shownLine && lineColour == colour) return;
+        shownSeconds = seconds; shownLine = line; colour = lineColour;
+        repaint();
+    }
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds();
+        const bool twoLines = r.getHeight() >= 30;
+        auto big = twoLines ? r.removeFromTop (r.getHeight() * 3 / 5) : r.removeFromLeft (52);
+        g.setColour (theme::text);
+        g.setFont (theme::font (twoLines ? 17.0f : 15.0f, true));
+        g.drawText (juce::String (shownSeconds, 1) + " s", big, juce::Justification::bottomLeft, false);
+        g.setColour (colour);
+        g.setFont (theme::font (10.5f));
+        g.drawFittedText (shownLine, r, twoLines ? juce::Justification::topLeft : juce::Justification::centredLeft, 1, 0.85f);
+    }
+
+private:
+    double shownSeconds = -1.0;
+    juce::String shownLine;
+    juce::Colour colour = theme::textDim;
+};
+
+/** How much of the last 30 s played unseparated (the GPU was late): differences of the instance's running count. */
+struct MissWindow
+{
+    double seconds (const stems::Instance* inst)
+    {
+        if (inst == nullptr) { history.clear(); return 0.0; }
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        const auto count = inst->getMissedSamples();
+        if (! history.empty() && count < history.back().second) history.clear();   // a new instance
+        history.emplace_back (now, count);
+        while (history.size() > 1 && now - history.front().first > 30000.0) history.pop_front();
+        return (double) (count - history.front().second) / juce::jmax (1.0, inst->getSampleRate());
+    }
+    std::deque<std::pair<double, uint64_t>> history;
+};
+
+/** Latency the channel has (or will have) in its mode with the GPU setting of the mode's model. */
+double stemsLatencySeconds (const Engine& e, const InputStrip& s)
+{
+    const int mode = juce::roundToInt (s.stems.mode->get());
+    if (const auto* inst = s.stems.live.load(); inst != nullptr && inst->getMode() == mode && inst->getLatencySamples() > 0)
+        return inst->getLatencySamples() / juce::jmax (1.0, inst->getSampleRate());
+    const auto m = stems::modelFor (mode);
+    return stems::timingFor (mode, e.stemsTuning (m), stems::Service::referenceMs (m)).latency();
+}
+
+/** Shared by block and window: latency line, GPU bar and their tooltips from the current state. */
+void updateStemsInfo (const Engine& e, const InputStrip& s, StemsLatency& latency, GpuBar& gpu, MissWindow& misses)
+{
+    auto& svc = stems::Service::get();
+    const int mode = juce::roundToInt (s.stems.mode->get());
+    const auto model = stems::modelFor (mode);
+    const auto tuning = e.stemsTuning (model);
+    const auto others = stemsChannels (e);
+    juce::String line = s.stems.mode->choices[mode] + (stems::hasGuitar (mode) ? juce::String() : " (no guitar)")
+                      + (tuning.automatic ? juce::String() : ", GPU " + juce::String (juce::roundToInt (tuning.share * 100.0f)) + " %");
+    auto colour = theme::textDim;
+    if (others.size() > 1)
+    {
+        juce::StringArray names;
+        for (int i : others) if (i != s.index) names.add ("In " + juce::String (i + 1));
+        line = "Also on " + names.joinIntoString (", ") + ": shares the GPU";
+        colour = theme::warn;
+    }
+    const auto* inst = s.stems.live.load();
+    if (const double missed = misses.seconds (inst); missed >= 0.05)
+    {
+        line = juce::String (missed, 1) + " s unseparated in the last 30 s";
+        colour = theme::warn;
+    }
+    latency.set (stemsLatencySeconds (e, s), line, colour);
+    latency.setTooltip ("The channel plays this much later while Stems is on: the model listens a little ahead.\n"
+                        "Auto: Live ~1.3 s (HT-Demucs, no guitar), Fast ~2.2 s, Balanced ~2.8 s, Best ~3.6 s (BS-RoFormer).\n"
+                        "More GPU for a model (Stems window) = less latency.\n\n"
+                        "\"Unseparated\": when the GPU is late (other programs, several channels), that part plays the\n"
+                        "original instead of a dropout. Counted over the last 30 s.");
+    const double total = svc.getLoad(), own = inst != nullptr ? svc.loadOf (*inst) : svc.loadOf (mode, tuning);
+    gpu.setLoad ((float) total);
+    gpu.setTooltip ("GPU time the separation needs, all channels with Stems together (this channel: about "
+                    + juce::String (juce::roundToInt (own * 100.0)) + " %). Over 100 % the GPU cannot keep up and parts play unseparated.");
+}
+
+/** Mute + solo of one stem (small, side by side). */
+struct StemSwitches
+{
+    StemSwitches (UiContext& c, StemsFx& fx, int k)
+        : mute (c, *fx.mute[(size_t) k], "M", theme::mute), solo (c, *fx.solo[(size_t) k], "S", theme::solo)
+    {
+        mute.setTooltip ("Mute " + stems::stemName (k).toLowerCase());
+        solo.setTooltip ("Solo " + stems::stemName (k).toLowerCase() + " (only soloed stems play; Shift + click: several at once)");
+        solo.exclusiveGroup = [&fx] { return std::vector<Param*> (fx.solo.begin(), fx.solo.end()); };
+    }
+    void addTo (juce::Component& parent) { parent.addAndMakeVisible (mute); parent.addAndMakeVisible (solo); }
+    void setBounds (juce::Rectangle<int> r)
+    {
+        mute.setBounds (r.removeFromLeft (r.getWidth() / 2).reduced (1, 0));
+        solo.setBounds (r.reduced (1, 0));
+    }
+    void setAlpha (float a) { mute.setAlpha (a); solo.setAlpha (a); }
+    Toggle mute, solo;
+};
+
+constexpr const char* kStemLabels[] = { "VOCALS", "DRUMS", "BASS", "GUITAR", "REST" };
+constexpr const char* kNoGuitarTip = "Live mode does not separate guitar: it is part of the rest";
+
+/** Level of one stem after its gain, in the scale of its fader (grey while it does not play). */
+class StemMeter final : public juce::Component
+{
+public:
+    StemMeter (StemsFx& f, int k) : fx (f), stem (k) { setInterceptsMouseClicks (false, false); }
+    void paint (juce::Graphics& g) override
+    {
+        auto bar = getLocalBounds().toFloat();
+        g.setColour (theme::bg);
+        g.fillRoundedRectangle (bar, 2.0f);
+        if (shown <= 0.0f) return;
+        float gains[stems::numStems];
+        fx.gains (gains);
+        g.setColour (gains[stem] > 0.0f ? theme::stemColour (stem) : theme::textFaint);
+        g.fillRoundedRectangle (bar.withTop (bar.getBottom() - bar.getHeight() * shown), 2.0f);
+    }
+
+private:
+    void frame (double t)
+    {
+        const float dt = last > 0.0 ? (float) juce::jlimit (0.0, 0.1, t - last) : 1.0f / 60.0f;
+        last = t;
+        const float pk = fx.takePeak (stem) * dbToGain (fx.gain[(size_t) stem]->get());
+        const auto& range = fx.gain[(size_t) stem]->range;
+        const float target = pk > 1.0e-4f ? range.convertTo0to1 (juce::jlimit (range.start, range.end, gainToDb (pk))) : 0.0f;
+        level = target > level ? target : level + (target - level) * (1.0f - std::exp (-dt / 0.35f));
+        if (std::abs (level - shown) > 0.004f || (level < 0.004f && shown != 0.0f))
+        {
+            shown = level < 0.004f ? 0.0f : level;
+            repaint();
+        }
+    }
+    StemsFx& fx;
+    int stem;
+    float level = 0.0f, shown = 0.0f;
+    double last = 0.0;
+    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
+};
+
+/** Horizontal slider for a GPU share (%): track, fill, thumb, value. Dragging it while Auto is on switches Auto off. */
+class ShareSlider final : public ParamControl
+{
+public:
+    ShareSlider (UiContext& c, Param& p, Param& autoParam) : ParamControl (c, p), autoMode (autoParam)
+    {
+        setTooltip ("GPU share per channel: more = the model runs more often = less latency (and more GPU load)");
+    }
+    void paint (juce::Graphics& g) override
+    {
+        const bool manual = ! autoMode.isOn();
+        auto r = getLocalBounds().toFloat();
+        auto text = r.removeFromRight (44.0f);
+        auto t = r.reduced (8.0f, 0.0f).withSizeKeepingCentre (r.getWidth() - 16.0f, 6.0f);
+        g.setColour (theme::bg);
+        g.fillRoundedRectangle (t, 3.0f);
+        const float x = t.getX() + param.getNormalised() * t.getWidth();
+        const auto c = theme::fxStems.withAlpha (manual ? 1.0f : 0.35f);
+        g.setColour (c);
+        g.fillRoundedRectangle (t.withRight (x), 3.0f);
+        g.setColour (manual ? theme::text : theme::textFaint);
+        g.fillEllipse (juce::Rectangle<float> (12.0f, 12.0f).withCentre ({ x, t.getCentreY() }));
+        g.setFont (theme::font (11.5f));
+        g.drawText (manual ? param.toText().replace (".0 %", " %") : juce::String ("Auto"), text, juce::Justification::centredRight);
+    }
+    void pollParams() override
+    {
+        ParamControl::pollParams();
+        if (const auto v = param.getVersion() + autoMode.getVersion(); v != shown) { shown = v; repaint(); }
+    }
+
+private:
+    void press (const juce::MouseEvent& e) override { setFrom (e); }
+    void drag (const juce::MouseEvent& e) override  { setFrom (e); }
+    void setFrom (const juce::MouseEvent& e)
+    {
+        if (autoMode.isOn()) autoMode.set (0.0f);
+        const float w = (float) getWidth() - 44.0f - 16.0f;
+        param.setNormalised (juce::jlimit (0.0f, 1.0f, ((float) e.x - 8.0f) / juce::jmax (1.0f, w)));
+    }
+    Param& autoMode;
+    uint32_t shown = 0;
+};
+
+/** Blurs an image (component effect): scaled down, box-blurred, scaled up. Cheap enough for a few repaints a second. */
+class BlurEffect final : public juce::ImageEffectFilter
+{
+public:
+    void applyEffect (juce::Image& src, juce::Graphics& dest, float scale, float alpha) override
+    {
+        const int w = src.getWidth(), h = src.getHeight();
+        if (w <= 0 || h <= 0) return;
+        constexpr int kDown = 4;
+        const int sw = juce::jmax (1, w / kDown), sh = juce::jmax (1, h / kDown);
+        juce::Image small (juce::Image::ARGB, sw, sh, true, juce::SoftwareImageType());
+        {
+            juce::Graphics sg (small);
+            sg.setImageResamplingQuality (juce::Graphics::mediumResamplingQuality);
+            sg.drawImage (src, 0, 0, sw, sh, 0, 0, w, h);
+        }
+        boxBlur (small, juce::jmax (1, juce::roundToInt (2.0f * scale)));
+        dest.setOpacity (alpha);
+        dest.setImageResamplingQuality (juce::Graphics::mediumResamplingQuality);
+        dest.drawImage (small, 0, 0, w, h, 0, 0, sw, sh);
+    }
+
+private:
+    /** Three passes of a horizontal + vertical box blur (~ Gaussian). Premultiplied ARGB. */
+    static void boxBlur (juce::Image& img, int radius)
+    {
+        juce::Image::BitmapData d (img, juce::Image::BitmapData::readWrite);
+        const int w = d.width, h = d.height;
+        std::vector<uint32_t> line ((size_t) juce::jmax (w, h)), out (line.size());
+        auto pass = [&] (int count, auto&& at)
+        {
+            const int div = 2 * radius + 1;
+            for (int i = 0; i < count; ++i)
+                line[(size_t) i] = *reinterpret_cast<const uint32_t*> (at (i));
+            for (int i = 0; i < count; ++i)
+            {
+                uint32_t sum[4] {};
+                for (int k = -radius; k <= radius; ++k)
+                {
+                    const uint32_t px = line[(size_t) juce::jlimit (0, count - 1, i + k)];
+                    for (int c = 0; c < 4; ++c) sum[c] += (px >> (8 * c)) & 0xffu;
+                }
+                uint32_t v = 0;
+                for (int c = 0; c < 4; ++c) v |= (sum[c] / (uint32_t) div) << (8 * c);
+                out[(size_t) i] = v;
+            }
+            for (int i = 0; i < count; ++i) *reinterpret_cast<uint32_t*> (at (i)) = out[(size_t) i];
+        };
+        for (int it = 0; it < 3; ++it)
+        {
+            for (int y = 0; y < h; ++y) pass (w, [&] (int x) { return d.getPixelPointer (x, y); });
+            for (int x = 0; x < w; ++x) pass (h, [&] (int y) { return d.getPixelPointer (x, y); });
+        }
+    }
+};
+
+/** A container whose content can be blurred (behind the loading overlay). */
+class BlurBox final : public juce::Component
+{
+public:
+    BlurBox() { setInterceptsMouseClicks (false, true); }
+    void setBlurred (bool b)
+    {
+        if (b == (getComponentEffect() != nullptr)) return;
+        setComponentEffect (b ? &effect : nullptr);
+        repaint();
+    }
+    std::function<void (juce::Graphics&)> onPaint;
+    void paint (juce::Graphics& g) override { if (onPaint) onPaint (g); }
+
+private:
+    BlurEffect effect;
+};
+
+/** Over the blurred stem controls while the model loads (or the stream starts): a veil, a spinner and a line. Takes
+    the clicks so nothing behind it moves meanwhile. The spinner animates only while visible. */
+class StemsLoading final : public juce::Component
+{
+public:
+    void set (bool spin, const juce::String& line)
+    {
+        if (spin == spinning && line == text) return;
+        spinning = spin;
+        text = line;
+        repaint();
+    }
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        g.setColour (theme::panel2.withAlpha (0.45f));
+        g.fillRoundedRectangle (r, 4.0f);
+        const bool compact = r.getHeight() < 110.0f;
+        const float size = compact ? 18.0f : 30.0f;
+        auto textArea = compact ? r.withTrimmedLeft (size + 10.0f) : r.withTop (r.getCentreY() + size * 0.5f + 6.0f).withHeight (18.0f);
+        g.setFont (theme::font (compact ? 11.0f : 12.5f, true));
+        const float tw = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text);
+        const auto c = compact ? juce::Point<float> (r.getCentreX() - (tw + size + 10.0f) * 0.5f + size * 0.5f, r.getCentreY())
+                               : r.getCentre().translated (0.0f, -6.0f);
+        if (compact) textArea = juce::Rectangle<float> (c.x + size * 0.5f + 10.0f, r.getY(), tw + 4.0f, r.getHeight());
+        if (spinning)
+        {
+            const float rad = size * 0.5f - 2.0f;
+            juce::Path track, arc;
+            track.addCentredArc (c.x, c.y, rad, rad, 0.0f, 0.0f, juce::MathConstants<float>::twoPi, true);
+            g.setColour (theme::fxStems.withAlpha (0.2f));
+            g.strokePath (track, juce::PathStrokeType (3.0f));
+            const float a = (float) phase * juce::MathConstants<float>::twoPi;
+            arc.addCentredArc (c.x, c.y, rad, rad, 0.0f, a, a + 1.9f, true);
+            g.setColour (theme::fxStems);
+            g.strokePath (arc, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+        else if (compact) textArea = r;
+        g.setColour (theme::text);
+        g.drawText (text, textArea.toNearestInt(), compact && spinning ? juce::Justification::centredLeft : juce::Justification::centred, true);
+    }
+
+private:
+    void frame (double t)
+    {
+        if (! spinning || ! isShowing()) { last = 0.0; return; }
+        if (last > 0.0) phase = std::fmod (phase + (t - last) * 0.9, 1.0);
+        last = t;
+        repaint();
+    }
+    bool spinning = false;
+    juce::String text;
+    double phase = 0.0, last = 0.0;
+    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
+};
+
+/** What the stem controls show over themselves: nothing while the separation runs (or the effect is off), else a
+    line (spin: something is in progress: loading, downloading, the first window). */
+struct StemsCover
+{
+    bool show = false, spin = false;
+    juce::String line;
+};
+StemsCover stemsCover (const InputStrip& s)
+{
+    StemsCover c;
+    const auto& fx = s.stems;
+    if (! fx.on->isOn() || s.fxBypass->isOn()) return c;
+    const int mode = juce::roundToInt (fx.mode->get());
+    const auto model = stems::modelFor (mode);
+    const auto st = stems::Service::get().getStatus (model);
+    const juce::String name = juce::String (stems::modelInfo (model).name).upToFirstOccurrenceOf (",", false, false);
+    using S = stems::Service::State;
+    c.show = true;
+    c.spin = true;
+    switch (st.state)
+    {
+        case S::unavailable: c.spin = false; c.line = "Not available in this build"; break;
+        case S::failed:      c.spin = false; c.line = "Error: see the model below"; break;
+        case S::downloading: c.line = "Downloading " + name + "  " + juce::String (juce::roundToInt (st.progress * 100.0f)) + " %"; break;
+        case S::preparing:   c.line = "Preparing " + name; break;
+        case S::loading:     c.line = "Loading " + name + " onto the GPU"; break;
+        case S::noModel:
+            if (stems::Service::modelFile (model).existsAsFile()) c.line = "Loading " + name + " onto the GPU";
+            else { c.spin = false; c.line = "Download " + name + " below to separate"; }
+            break;
+        case S::ready:
+        {
+            const auto* inst = fx.live.load();
+            if (inst != nullptr && inst->getMode() == mode && inst->isStarting())
+                c.line = "Separation starts in " + juce::String (inst->secondsUntilWet(), 1) + " s";
+            else c.show = false;
+            break;
+        }
+    }
+    return c;
+}
+
+/** Window of the Stems effect: latency mode, a fader + level + mute / solo per stem, the models. */
+class StemsPanel final : public AdvancedPanel
+{
+public:
+    StemsPanel (UiContext& c, InputStrip& s)
+        : ctx (c), strip (s), fx (s.stems), mode (c, *fx.mode, theme::fxStems, { "Live", "Fast", "Balanced", "Best" }, stems::modeOrder()),
+          on (c, *fx.on, "ON", theme::fxStems)
+    {
+        for (juce::Component* k : std::initializer_list<juce::Component*> { &mode, &on, &info, &latency, &gpu, &mixBox })
+            addAndMakeVisible (k);
+        addChildComponent (loading);
+        mixBox.onPaint = [this] (juce::Graphics& g) { paintNames (g); };
+        for (int k = 0; k < stems::numStems; ++k)
+        {
+            auto& f = faders.emplace_back (std::make_unique<Fader> (c, *fx.gain[(size_t) k], theme::stemColour (k)));
+            auto& m = meters.emplace_back (std::make_unique<StemMeter> (fx, k));
+            auto& sw = switches.emplace_back (std::make_unique<StemSwitches> (c, fx, k));
+            mixBox.addAndMakeVisible (*f);
+            mixBox.addAndMakeVisible (*m);
+            sw->addTo (mixBox);
+        }
+        for (int m = 0; m < stems::kNumModels; ++m)
+        {
+            auto& b = modelButtons.emplace_back (std::make_unique<Chip> ("", theme::fxStems));
+            b->showArrow = false;
+            b->centred = true;
+            auto& d = deleteButtons.emplace_back (std::make_unique<TrashButton>());
+            const auto model = (stems::Model) m;
+            b->onClick = [model]
+            {
+                auto& svc = stems::Service::get();
+                const auto st = svc.getStatus (model).state;
+                if (st == stems::Service::State::downloading || st == stems::Service::State::preparing) svc.cancelDownload (model);
+                else svc.startDownload (model);
+            };
+            d->setTooltip ("Delete this model");
+            d->onClick = [this, model]
+            {
+                dialog::confirm (this, dialog::Kind::danger, "Delete the model?",
+                                 juce::String (stems::modelInfo (model).name) + " is deleted. Channels using it then play unseparated "
+                                 "until it is downloaded again.", "Delete", [model] { stems::Service::get().removeModel (model); });
+            };
+            addAndMakeVisible (*b);
+            addChildComponent (*d);
+            auto& au = autoToggles.emplace_back (std::make_unique<Toggle> (c, *c.engine.stemsAuto[(size_t) m], "AUTO", theme::fxStems));
+            au->setTooltip ("Auto: the usual latency of each mode (Live 1.3 s ... Best 3.6 s). Off: set the GPU share yourself");
+            auto& sh = shareSliders.emplace_back (std::make_unique<ShareSlider> (c, *c.engine.stemsGpu[(size_t) m], *c.engine.stemsAuto[(size_t) m]));
+            addAndMakeVisible (*au);
+            addAndMakeVisible (*sh);
+        }
+        on.setTooltip ("Switch the separation on or off");
+        info.setText ("The Stem Separator (beta) splits the channel into vocals, drums, bass, guitar and the rest. The rest is what remains "
+                      "after the others, so nothing is lost: all at 0 dB = the original.\n\n"
+                      "Live: HT-Demucs (4 stems, guitar stays in the rest), ~1.3 s late, much lighter on the GPU.\n"
+                      "Fast / Balanced / Best: BS-RoFormer SW (6 stems, piano and other instruments are part of the rest), "
+                      "2.2 / 2.8 / 3.6 s late; Best is the cleanest.\n\n"
+                      "The channel plays late so the model can hear what comes next: meant for playback you play or sing along to. "
+                      "If the GPU is late, that part plays unseparated instead of a dropout.");
+        fx.meterUsers.fetch_add (1);
+        setSize (720, 2 * kPad + kModeCard + kGap + kStemsCard + kGap + kModelsCard);
+        tick();
+    }
+    ~StemsPanel() override { fx.meterUsers.fetch_sub (1); }
+
+    void resized() override
+    {
+        cards.clear();
+        auto r = getLocalBounds().reduced (kPad);
+        const auto top = r.removeFromTop (kModeCard);
+        auto modeArea = card (top, "Latency mode");
+        on.setBounds (captionSlot (top, 44));
+        info.setBounds (captionSlot (top, 20, 52).withSizeKeepingCentre (InfoButton::kSize, InfoButton::kSize));
+        mode.setBounds (modeArea.removeFromTop (30));
+        modeArea.removeFromTop (6);
+        gpu.setBounds (modeArea.removeFromRight (240).withSizeKeepingCentre (240, 18));
+        latency.setBounds (modeArea);
+        r.removeFromTop (kGap);
+
+        auto mix = card (r.removeFromTop (kStemsCard), "Stems");
+        mixBox.setBounds (mix);
+        loading.setBounds (mix);
+        mix = mixBox.getLocalBounds();
+        mix.removeFromTop (16);   // names (painted)
+        const int n = stems::numStems, colW = mix.getWidth() / n;
+        names.clear();
+        for (int k = 0; k < n; ++k)
+        {
+            auto col = juce::Rectangle<int> (mix.getX() + k * colW, mix.getY(), colW, mix.getHeight()).reduced (8, 0);
+            names.push_back (col.withY (col.getY() - 16).withHeight (16));
+            switches[(size_t) k]->setBounds (col.removeFromBottom (22).withSizeKeepingCentre (juce::jmin (col.getWidth(), 64), 22));
+            col.removeFromBottom (6);
+            auto f = col.withSizeKeepingCentre (juce::jmin (col.getWidth(), 70), col.getHeight());
+            meters[(size_t) k]->setBounds (f.removeFromRight (6).reduced (0, 8));
+            faders[(size_t) k]->setBounds (f);
+        }
+        r.removeFromTop (kGap);
+
+        auto models = card (r, "Models");
+        modelRows.clear();
+        gpuRows.clear();
+        for (int m = 0; m < stems::kNumModels; ++m)
+        {
+            auto row = models.removeFromTop (kModelRow);
+            auto gpuRow = row.removeFromBottom (26);
+            auto buttons = row.removeFromRight (190);
+            deleteButtons[(size_t) m]->setBounds (buttons.removeFromRight (28).withSizeKeepingCentre (28, 26));
+            buttons.removeFromRight (6);
+            modelButtons[(size_t) m]->setBounds (buttons.withSizeKeepingCentre (buttons.getWidth(), 26));
+            modelRows.push_back (row);
+            gpuRow.removeFromLeft (34);   // "GPU" (painted)
+            autoToggles[(size_t) m]->setBounds (gpuRow.removeFromLeft (52).withSizeKeepingCentre (52, 22));
+            gpuRow.removeFromLeft (8);
+            shareSliders[(size_t) m]->setBounds (gpuRow.removeFromLeft (300));
+            gpuRows.push_back (gpuRow.withTrimmedLeft (12));   // resulting latency (painted)
+        }
+    }
+
+    void paintNames (juce::Graphics& g)
+    {
+        g.setFont (theme::font (11.0f, true));
+        const bool guitar = stems::hasGuitar (juce::roundToInt (fx.mode->get()));
+        for (int k = 0; k < (int) names.size(); ++k)
+        {
+            g.setColour (theme::stemColour (k).withAlpha (k == stems::guitar && ! guitar ? 0.35f : 1.0f));
+            g.drawText (kStemLabels[k], names[(size_t) k], juce::Justification::centred);
+        }
+    }
+
+    void paintOverChildren (juce::Graphics& g) override
+    {
+        for (int m = 0; m < (int) modelRows.size(); ++m)
+        {
+            const auto model = (stems::Model) m;
+            const auto& inf = stems::modelInfo (model);
+            const auto& st = status[(size_t) m];
+            auto r = modelRows[(size_t) m].reduced (0, 4);
+            g.setColour (theme::text);
+            g.setFont (theme::font (12.0f, true));
+            g.drawText (juce::String (inf.name) + (m == (int) stems::Model::demucs ? "  -  Live" : "  -  Fast, Balanced, Best")
+                        + "   (" + juce::String (inf.bytes / 1000000) + " MB)", r.removeFromTop (17), juce::Justification::centredLeft);
+            g.setFont (theme::font (11.0f));
+            g.setColour (theme::textFaint);
+            g.drawFittedText (inf.license, r.removeFromTop (15), juce::Justification::centredLeft, 1, 0.9f);
+            auto problem = stemsProblem (st, model);
+            if (st.state == stems::Service::State::noModel)
+                problem = stems::Service::modelFile (model).existsAsFile() ? "Downloaded: loads onto the GPU when a channel uses this mode"
+                                                                           : "Not downloaded yet";
+            g.setColour (st.state == stems::Service::State::failed ? theme::warn : theme::textDim);
+            g.drawFittedText (problem.isNotEmpty() ? problem.replace (": click here", "")
+                                                   : (st.device.isNotEmpty() ? st.device : juce::String ("GPU")) + ": "
+                                                     + juce::String (juce::roundToInt (st.inferenceMs)) + " ms per "
+                                                     + juce::String (inf.samples / 44100.0, 1) + "-s piece",
+                              r.removeFromTop (15), juce::Justification::centredLeft, 1, 0.9f);
+            // GPU setting: what latency it gives in the model's modes.
+            if (juce::isPositiveAndBelow (m, (int) gpuRows.size()))
+            {
+                const auto gr = gpuRows[(size_t) m];
+                g.setColour (theme::textDim);
+                g.drawText ("GPU", gr.withX (modelRows[(size_t) m].getX()).withWidth (34), juce::Justification::centredLeft);
+                const auto tuning = ctx.engine.stemsTuning (model);
+                const double ref = stems::Service::referenceMs (model);
+                juce::StringArray lat;
+                for (int mode : stems::modeOrder())
+                    if (stems::modelFor (mode) == model)
+                        lat.add (stems::modeNames()[mode] + " " + juce::String (stems::timingFor (mode, tuning, ref).latency(), 2) + " s");
+                g.setColour (tuning.automatic ? theme::textFaint : theme::text);
+                g.drawFittedText ("Latency: " + lat.joinIntoString (", "), gr, juce::Justification::centredLeft, 1, 0.85f);
+            }
+        }
+    }
+
+private:
+    static constexpr int kModeCard = kCaption + 30 + 6 + 40 + 8;
+    static constexpr int kStemsCard = kCaption + 16 + 230 + 8;
+    static constexpr int kModelRow = 54 + 30;
+    static constexpr int kModelsCard = kCaption + 2 * kModelRow + 8;
+
+    void tick() override
+    {
+        updateStemsInfo (ctx.engine, strip, latency, gpu, misses);
+        auto& svc = stems::Service::get();
+        using S = stems::Service::State;
+        juce::String key;
+        for (int m = 0; m < stems::kNumModels; ++m)
+        {
+            const auto model = (stems::Model) m;
+            status[(size_t) m] = svc.getStatus (model);
+            const auto& st = status[(size_t) m];
+            const bool busy = st.state == S::downloading || st.state == S::preparing;
+            const bool have = stems::Service::modelFile (model).existsAsFile();
+            auto& b = *modelButtons[(size_t) m];
+            const bool failed = st.state == S::failed;
+            const juce::String text = busy ? "Cancel download" : have ? "Download again" : "Download";
+            if (b.text != text) { b.text = text; b.repaint(); }
+            b.setVisible (st.state != S::unavailable && (busy || ! have || failed));
+            deleteButtons[(size_t) m]->setVisible (have && ! busy);
+            key << stemsProblem (st, model) << st.device << juce::roundToInt (st.inferenceMs) << (int) have
+                << ctx.engine.stemsGpu[(size_t) m]->getVersion() << ctx.engine.stemsAuto[(size_t) m]->getVersion();
+        }
+        const bool guitar = stems::hasGuitar (juce::roundToInt (fx.mode->get()));
+        const float a = guitar ? 1.0f : 0.35f;
+        faders[stems::guitar]->setAlpha (a);
+        switches[stems::guitar]->setAlpha (a);
+        faders[stems::guitar]->setTooltip (guitar ? juce::String() : kNoGuitarTip);
+        key << (int) guitar;
+        if (key != shownKey) { shownKey = key; repaint(); mixBox.repaint(); }
+        const auto cover = stemsCover (strip);
+        loading.set (cover.spin, cover.line);
+        loading.setVisible (cover.show);
+        mixBox.setBlurred (cover.show);
+    }
+
+    UiContext& ctx;
+    InputStrip& strip;
+    StemsFx& fx;
+    ChoiceSegments mode;
+    Toggle on;
+    InfoButton info;
+    StemsLatency latency;
+    GpuBar gpu;
+    BlurBox mixBox;
+    StemsLoading loading;
+    std::vector<std::unique_ptr<Fader>> faders;
+    std::vector<std::unique_ptr<StemMeter>> meters;
+    std::vector<std::unique_ptr<StemSwitches>> switches;
+    std::vector<std::unique_ptr<Chip>> modelButtons;
+    std::vector<std::unique_ptr<TrashButton>> deleteButtons;
+    std::vector<std::unique_ptr<Toggle>> autoToggles;
+    std::vector<std::unique_ptr<ShareSlider>> shareSliders;
+    std::vector<juce::Rectangle<int>> names, modelRows, gpuRows;
+    MissWindow misses;
+    std::array<stems::Service::Status, stems::kNumModels> status;
+    juce::String shownKey;
+};
+
+/** Lights up the arc of each knob of the block in its stem's colour with the stem's level (after gain, mute and solo).
+    Smooth: fast rise (~25 ms), slow fall (~0.3 s); a knob repaints only when its glow changed. No painting itself. */
+class StemGlow final : public juce::Component
+{
+public:
+    explicit StemGlow (StemsFx& f) : fx (f)
+    {
+        setInterceptsMouseClicks (false, false);
+        fx.meterUsers.fetch_add (1);
+    }
+    ~StemGlow() override { fx.meterUsers.fetch_sub (1); }
+    void setKnobs (std::vector<Knob*> k) { knobs = std::move (k); for (auto* kn : knobs) kn->setGlow (0.0f); }
+
+private:
+    void frame (double t)
+    {
+        const float dt = last > 0.0 ? (float) juce::jlimit (0.0, 0.1, t - last) : 1.0f / 60.0f;
+        last = t;
+        float gains[stems::numStems];
+        fx.gains (gains);
+        for (int k = 0; k < stems::numStems && k < (int) knobs.size(); ++k)
+        {
+            const float pk = fx.takePeak (k, StemsFx::block) * gains[k];
+            // Brightness over -42 .. -6 dB (music sits there), a little curved so quiet parts still show.
+            const float target = pk > 1.0e-5f ? std::sqrt (juce::jlimit (0.0f, 1.0f, (gainToDb (pk) + 42.0f) / 36.0f)) : 0.0f;
+            float& v = level[(size_t) k];
+            v += (target - v) * (1.0f - std::exp (-dt / (target > v ? 0.025f : 0.3f)));
+            knobs[(size_t) k]->setGlow (v < 0.01f ? 0.0f : v);
+        }
+    }
+    StemsFx& fx;
+    std::vector<Knob*> knobs;
+    std::array<float, stems::numStems> level {};
+    double last = 0.0;
+    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
+};
+
+/** The Stems block: a level and mute / solo per stem, the latency (large) and the GPU load. */
+class StemsUnit final : public juce::Component
+{
+public:
+    StemsUnit (UiContext& c, InputStrip& s, const juce::String& title)
+        : ctx (c), strip (s), fx (s.stems), section (title, theme::fxStems), on (c, *fx.on, "ON", theme::fxStems), glow (s.stems)
+    {
+        addAndMakeVisible (section);
+        section.addAndMakeVisible (glow);
+        section.addAndMakeVisible (on);
+        section.addAndMakeVisible (knobBox);
+        section.addChildComponent (loading);
+        std::vector<Knob*> lit;
+        for (int k = 0; k < stems::numStems; ++k)
+        {
+            auto& knob = knobs.emplace_back (std::make_unique<Knob> (c, *fx.gain[(size_t) k], kStemLabels[k], theme::stemColour (k)));
+            auto& sw = switches.emplace_back (std::make_unique<StemSwitches> (c, fx, k));
+            knobBox.addAndMakeVisible (*knob);
+            sw->addTo (knobBox);
+            lit.push_back (knob.get());
+        }
+        glow.setKnobs (std::move (lit));
+        for (juce::Component* k : std::initializer_list<juce::Component*> { &latency, &gpu, &statusChip }) section.addChildComponent (k);
+        latency.setInterceptsMouseClicks (true, false);
+        statusChip.showArrow = false;
+        statusChip.onClick = [this] { openPanel(); };
+        statusChip.setTooltip ("Models and latency mode");
+        section.enableGear ([this] { openPanel(); });
+        tick (true);
+    }
+    Section& getSection() noexcept { return section; }
+
+    void resized() override
+    {
+        section.setBounds (getLocalBounds());
+        on.setBounds (section.headerSlot());
+        auto cc = section.content();
+        // Knobs + switches take what they need (~100 px); the rest goes to the latency / GPU line (up to two lines).
+        auto info = cc.removeFromBottom (juce::jlimit (22, 40, cc.getHeight() - 100));
+        statusChip.setBounds (info.withSizeKeepingCentre (info.getWidth(), juce::jmin (info.getHeight(), 26)));
+        // Top: latency (large) on the left, the GPU bar fills the rest; below: the mode / warning line, full width.
+        latency.setBounds (info);
+        const int big = info.getHeight() >= 30 ? info.getHeight() * 3 / 5 : info.getHeight();
+        gpu.setBounds (info.withHeight (big).withTrimmedLeft (70).withSizeKeepingCentre (info.getWidth() - 70, 18));
+        cc.removeFromBottom (4);
+        const int n = stems::numStems, gap = 4;
+        const int w = (cc.getWidth() - gap * (n - 1)) / n;
+        auto row = cc.removeFromBottom (18);
+        cc.removeFromBottom (2);
+        const int knobH = juce::jmin (cc.getHeight(), 76);
+        const auto box = cc.withTop (cc.getBottom() - knobH).getUnion (row);
+        knobBox.setBounds (box);
+        loading.setBounds (box);
+        for (int k = 0; k < n; ++k)
+        {
+            const int x = cc.getX() + k * (w + gap) - box.getX();
+            knobs[(size_t) k]->setBounds ({ x, cc.getBottom() - knobH - box.getY(), w, knobH });
+            switches[(size_t) k]->setBounds ({ x, row.getY() - box.getY(), w, row.getHeight() });
+        }
+        glow.setBounds ({});
+    }
+
+    /** Called with the rack's meters (~60 Hz); 6 Hz is enough here. */
+    void tick (bool now = false)
+    {
+        if (! now && ++ticks % 10 != 0) return;
+        const int mode = juce::roundToInt (fx.mode->get());
+        const auto model = stems::modelFor (mode);
+        const auto st = stems::Service::get().getStatus (model);
+        const auto problem = stemsProblem (st, model);
+        const bool running = problem.isEmpty();
+        statusChip.setVisible (! running);
+        latency.setVisible (running);
+        gpu.setVisible (running);
+        if (! running)
+        {
+            const auto colour = st.state == stems::Service::State::failed ? theme::warn : theme::fxStems;
+            const auto text = (mode == stems::kLiveMode ? "Live: " : "") + problem;
+            if (text != statusChip.text || colour != statusChip.colour)
+            {
+                statusChip.text = text;
+                statusChip.colour = colour;
+                statusChip.repaint();
+            }
+        }
+        else updateStemsInfo (ctx.engine, strip, latency, gpu, misses);
+        const auto cover = stemsCover (strip);
+        loading.set (cover.spin, running ? cover.line : juce::String());
+        loading.setVisible (cover.show);
+        knobBox.setBlurred (cover.show);
+        const bool guitar = stems::hasGuitar (mode);
+        const float a = guitar ? 1.0f : 0.35f;
+        if (knobs[stems::guitar]->getAlpha() != a)
+        {
+            knobs[stems::guitar]->setAlpha (a);
+            switches[stems::guitar]->setAlpha (a);
+            knobs[stems::guitar]->setTooltip (guitar ? juce::String() : kNoGuitarTip);
+        }
+    }
+
+private:
+    void openPanel() { ctx.openPanel (std::make_unique<StemsPanel> (ctx, strip), section.title + "  -  " + strip.name); }
+
+    UiContext& ctx;
+    InputStrip& strip;
+    StemsFx& fx;
+    Section section;
+    Toggle on;
+    StemGlow glow;
+    BlurBox knobBox;
+    StemsLoading loading;
+    std::vector<std::unique_ptr<Knob>> knobs;
+    std::vector<std::unique_ptr<StemSwitches>> switches;
+    StemsLatency latency;
+    GpuBar gpu;
+    Chip statusChip { "", theme::fxStems };
+    MissWindow misses;
+    int ticks = 0;
+};
+
 class CompUnit final : public juce::Component
 {
 public:
@@ -1341,6 +2200,16 @@ private:
                         u.comp = std::move (p);
                         break;
                     }
+                    case Fx::stems:
+                    {
+                        auto st = std::make_unique<StemsUnit> (ctx, e.inputs[(size_t) channel], title);
+                        sec = &st->getSection();
+                        sec->beta = true;
+                        u.tick = [p = st.get()] { p->tick(); };
+                        u.width = 300;
+                        u.comp = std::move (st);
+                        break;
+                    }
                     case Fx::correction:
                     {
                         auto c = std::make_unique<CorrectionSection> (ctx, channel, colour);
@@ -1472,13 +2341,34 @@ private:
             int used = 0;
             for (int k = 0; k < Engine::maxInstances (f); ++k) used += chain.hasBuiltin (f, k) ? 1 : 0;
             const bool full = used >= Engine::maxInstances (f);
-            m.addItem (fxName (f) + (full ? "   (" + juce::String (used) + " in the chain, the most possible)" : juce::String()), ! full, false,
+            m.addItem (fxName (f) + (f == Fx::stems ? "  (beta)" : "") + (full ? "   (" + juce::String (used) + " in the chain, the most possible)" : juce::String()), ! full, false,
                        [safe, f, index]
             {
                 if (safe == nullptr) return;
-                safe->ctx.engine.addBuiltin (safe->channel, f, index < 0 ? safe->chain.size() : index);
-                safe->rebuild();
-                if (index < 0) safe->view.setViewPosition (safe->row.getWidth(), 0);
+                auto add = [safe, f, index]
+                {
+                    if (safe == nullptr) return;
+                    safe->ctx.engine.addBuiltin (safe->channel, f, index < 0 ? safe->chain.size() : index);
+                    safe->rebuild();
+                    if (index < 0) safe->view.setViewPosition (safe->row.getWidth(), 0);
+                };
+                // Stems on a second channel: each one needs its own share of the GPU.
+                if (f == Fx::stems)
+                    if (const auto others = stemsChannels (safe->ctx.engine); ! others.empty())
+                    {
+                        auto& e = safe->ctx.engine;
+                        juce::StringArray names;
+                        for (int i : others) names.add ("In " + juce::String (i + 1) + " (" + e.inputs[(size_t) i].name + ")");
+                        const double each = stems::Service::get().loadOf (juce::roundToInt (e.inputs[(size_t) others[0]].stems.mode->get()));
+                        dialog::confirm (safe.getComponent(), dialog::Kind::warning, "The Stem Separator is already in use",
+                                         names.joinIntoString (", ") + (others.size() == 1 ? " already separates" : " already separate")
+                                         + " with the Stem Separator. Every channel with it needs its own share of the GPU"
+                                         + (each > 0.0 ? " (about " + juce::String (juce::roundToInt (each * 100.0)) + " % each in its mode on this GPU)" : juce::String())
+                                         + ". If the GPU cannot keep up, parts play unseparated.\n\nThe Live mode needs much less.",
+                                         "Add anyway", add);
+                        return;
+                    }
+                add();
             });
         }
         m.addSeparator();
@@ -2242,6 +3132,8 @@ private:
     uint64_t seenVersion = 0;
 };
 } // namespace
+
+std::unique_ptr<juce::Component> makeStemsPanel (UiContext& c, InputStrip& s) { return std::make_unique<StemsPanel> (c, s); }
 
 //==============================================================================
 EqGraph::EqGraph (UiContext& c, ParamEq& e, juce::Colour col, bool lg) : ctx (c), eq (e), colour (col), large (lg)

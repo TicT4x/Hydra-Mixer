@@ -199,6 +199,9 @@ public:
 
     /** Label above the knob and the value always shown below it (click it to type a value). */
     bool alwaysShowValue = false;
+    /** Lights up the knob's arc track in its colour, 0..1 (a level, e.g. the Stems block). Negative = a plain knob.
+        Repaints only when the value changed visibly. */
+    void setGlow (float v);
 
 private:
     void press (const juce::MouseEvent&) override;
@@ -208,6 +211,7 @@ private:
 
     juce::String label;
     juce::Colour accent;
+    float glow = -1.0f;
     float dragStartNorm = 0;
     bool hover = false, dragging = false;
 };
@@ -235,12 +239,19 @@ public:
     bool soft = false;      // Deep theme: "on" is a strong tint with a frame and white text instead of a full colour (routing, LIM)
     int choiceValue = -1;
     Icon icon;
+    /** Solo-like: switching it on with a click switches these others off; with Shift held, they stay (several at
+        once). Only mouse clicks (MIDI and hotkeys toggle just this one). */
+    std::function<std::vector<Param*>()> exclusiveGroup;
 
 private:
-    void press (const juce::MouseEvent&) override
+    void press (const juce::MouseEvent& e) override
     {
-        if (choiceValue >= 0) param.set ((float) choiceValue);
-        else                  param.toggle();
+        if (choiceValue >= 0) { param.set ((float) choiceValue); return; }
+        const bool turnsOn = ! param.isOn();
+        param.toggle();
+        if (turnsOn && exclusiveGroup && ! e.mods.isShiftDown())
+            for (auto* p : exclusiveGroup())
+                if (p != &param && p->isOn()) p->set (0.0f);
     }
     bool isLit() const { return choiceValue >= 0 ? juce::roundToInt (param.get()) == choiceValue : param.isOn(); }
     void timerCallback() override;

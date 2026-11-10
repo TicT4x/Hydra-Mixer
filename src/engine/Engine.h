@@ -5,6 +5,7 @@
 #include "core/Denoiser.h"
 #include "core/Correction.h"
 #include "IoStreams.h"
+#include "Stems.h"
 #include "PluginChain.h"
 #include "Recorder.h"
 #include "RoomMeasure.h"
@@ -98,6 +99,28 @@ struct LimiterFx
     dsp::Limiter dsp;
 };
 
+/** Stems (engine/Stems.h): one per input. Its state exists only while the effect is in the chain. */
+struct StemsFx
+{
+    Param *on {}, *mode {};
+    std::array<Param*, stems::numStems> gain {}, mute {}, solo {};
+    /** Linear gain of each stem: mute = 0; while any stem is soloed, only soloed ones play (also a muted one). In Live mode (no
+        guitar) the guitar follows the rest, which contains it. Any thread. */
+    void gains (float* out) const noexcept;
+    /** Levels of the stems (before their gains, peak since the last take) for two readers: the window (0) and the
+        block's knobs (1). Measured only while meterUsers > 0 (one atomic read per block otherwise). */
+    enum Reader { window = 0, block = 1, numReaders };
+    std::atomic<int> meterUsers { 0 };
+    std::array<std::atomic<float>, numReaders * stems::numStems> peaks {};
+    float takePeak (int stem, Reader r = window) noexcept
+    {
+        return peaks[(size_t) (r * stems::numStems + stem)].exchange (0.0f, std::memory_order_relaxed);
+    }
+    std::unique_ptr<stems::Instance> inst;            // message thread
+    std::atomic<stems::Instance*> live { nullptr };   // what the audio thread reads
+    bool wasOn = false;                               // audio thread: processed in the previous block
+};
+
 //==============================================================================
 struct InputStrip
 {
@@ -117,6 +140,7 @@ struct InputStrip
     std::array<DenoiserFx, kFxInstances> denoisers;
     std::array<LimiterFx, kFxInstances> limiters;   // off by default, added from the effect menu (9.11.)
     std::array<Param*, kFxInstances> phases {};   // phase invert blocks
+    StemsFx stems;                                  // source separation (once per input)
     Param *fxBypass {};
     Param *syncOn {}, *delayMs {};   // Sync Delay: automatic alignment with the input sync group / manual delay
     std::array<Param*, kMaxBuses> route {};
@@ -162,8 +186,10 @@ struct InputStrip
         return -1.0f;
     }
 
-    /** Processing latency added inside this strip (denoiser + plugins), in samples. */
+    /** Processing latency added inside this strip by its denoisers, in samples. */
     std::atomic<int> dspLatency { 0 };
+    /** Latency of the Stems effect, in samples (0 while it is off or has no model yet). */
+    std::atomic<int> stemsLatency { 0 };
     DspTimes dspTimes;
 
     // audio-thread state
@@ -228,6 +254,13 @@ public:
     std::array<InputStrip, kMaxInputs> inputs;
     std::array<Bus, kMaxBuses> buses;
     Recorder recorder;
+
+    /** Stems: GPU setting per model (stems.<model>.auto, stems.<model>.gpu in %), the same for every channel. */
+    std::array<Param*, stems::kNumModels> stemsAuto {}, stemsGpu {};
+    stems::Tuning stemsTuning (stems::Model m) const noexcept
+    {
+        return { stemsAuto[(size_t) m]->isOn(), stemsGpu[(size_t) m]->get() * 0.01f };
+    }
 
     /** Monitoring: while a bus is selected (SEL), its signal replaces the normal mix of the monitor bus. */
     Param *monOn {}, *monBus {};
@@ -416,7 +449,7 @@ public:
     /** Built-in effects a channel can have (selection index scheme: inputs, then buses), in their usual order. */
     std::vector<Fx> allowedFx (int channel) const;
     /** How many instances of f a channel can have (correction: 1). */
-    static int maxInstances (Fx f) noexcept { return f == Fx::correction ? 1 : kFxInstances; }
+    static int maxInstances (Fx f) noexcept { return f == Fx::correction || f == Fx::stems ? 1 : kFxInstances; }
     PluginChain& chainFor (int channel) noexcept
     {
         return channel < kMaxInputs ? inputs[(size_t) channel].plugins : buses[(size_t) (channel - kMaxInputs)].plugins;
@@ -438,6 +471,9 @@ public:
     void ensureBuiltins();
     /** Creates the RNNoise state of a denoiser instance that does not have one yet (message thread). */
     void prepareDenoiser (DenoiserFx&);
+    /** Creates / frees the Stems state of an input when the effect enters / leaves its chain (message thread). */
+    void prepareStems (InputStrip&);
+    void releaseStems (InputStrip&);
 
     //--------------------------------------------------------------------------
     // Correction (room + speaker / headphone) of a channel, selection index scheme (inputs, then buses).
@@ -553,6 +589,8 @@ private:
     uint64_t masterSeenCallbacks = 0;
     std::vector<float> playL, playR;
     std::array<float, kMaxBuses> lastPlayRoute {};
+
+    std::vector<std::pair<std::unique_ptr<stems::Instance>, uint64_t>> stemsGraveyard;   // freed once the audio thread let go
 
     std::unique_ptr<MeasureRun> measureOwned;     // message thread; the audio thread reads 'measureLive'
     std::atomic<MeasureRun*> measureLive { nullptr };

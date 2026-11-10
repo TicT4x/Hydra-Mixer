@@ -40,6 +40,14 @@ inline const juce::Colour fxComp       { 0xffff8f4d };
 inline const juce::Colour fxLimiter    { 0xffff6a7d };
 inline const juce::Colour fxCorrection { 0xffa78bfa };
 inline const juce::Colour fxPhase      { 0xffff6ac1 };
+inline const juce::Colour fxStems      { 0xff56e0c8 };
+/** Colour of each stem of the Stems effect (vocals, drums, bass, guitar, rest). */
+inline juce::Colour stemColour (int s)
+{
+    static const juce::Colour c[] = { juce::Colour (0xffff6ac1), juce::Colour (0xffffa53d), juce::Colour (0xff8d6cff),
+                                      juce::Colour (0xffffd84a), juce::Colour (0xff35c8f4) };
+    return c[juce::jlimit (0, 4, s)];
+}
 // Menus (highlight, tick mark): the middle of the logo's cyan -> violet gradient.
 inline const juce::Colour fx { 0xff6cacfa };
 

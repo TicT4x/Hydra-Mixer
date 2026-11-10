@@ -609,7 +609,8 @@ double LatencyView::inputSideMs (int i) const
     const auto& s = e.inputs[(size_t) i];
     std::vector<Node> nodes;
     addPlugins (e, nodes, s.plugins, *s.fxBypass, i);
-    return it->second + (s.denoiserActive() ? samplesToMs (e, s.dspLatency.load()) : 0.0) + sum (nodes) + e.getChannelDelayMs (i);
+    return it->second + (s.denoiserActive() ? samplesToMs (e, s.dspLatency.load()) : 0.0) + samplesToMs (e, s.stemsLatency.load())
+         + sum (nodes) + e.getChannelDelayMs (i);
 }
 
 double LatencyView::busSideMs (int b) const
@@ -664,6 +665,15 @@ LatencyView::Flow LatencyView::build (int b) const
                                     "RNNoise, " + s.dnMode->choices[mode] + " mode. It analyses the sound in 10 ms frames;\n"
                                     "the latency mode sets how far it looks ahead (Ultra Low 0 ms ... Native HQ 30 ms):\n"
                                     "more look-ahead = cleaner result." });
+        }
+        if (const int stemsLat = s.stemsLatency.load(); stemsLat > 0)
+        {
+            const int mode = juce::roundToInt (s.stems.mode->get());
+            lane.nodes.push_back ({ "Stem Separator", "Source separation, " + s.stems.mode->choices[mode] + " mode",
+                                    samplesToMs (e, stemsLat), kDenoiser, i,
+                                    "The Stem Separator splits the channel in pieces of a few seconds on the GPU. It plays the channel\n"
+                                    "late so the model can hear what comes next (Live ~1.3 s, Fast ~2.2 s, Balanced ~2.8 s,\n"
+                                    "Best ~3.6 s): meant for playback you play along to, not for live sources." });
         }
         addPlugins (e, lane.nodes, s.plugins, *s.fxBypass, i);
         addSyncDelay (e, lane.nodes, i, i);

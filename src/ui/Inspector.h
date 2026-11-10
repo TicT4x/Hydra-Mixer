@@ -115,6 +115,9 @@ private:
     LayoutAnimator animator { *this, 0.07 };   // the bands rearrange smoothly when the window size changes
 };
 
+/** The window of an input's Stems effect (Inspector uses it; the screenshot tool renders it offscreen). */
+std::unique_ptr<juce::Component> makeStemsPanel (UiContext&, InputStrip&);
+
 //==============================================================================
 /** Bottom panel showing the details of the selected input, bus or the recorder. */
 class Inspector final : public juce::Component

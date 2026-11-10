@@ -60,6 +60,27 @@ if(MSVC)
     target_compile_options(opus PRIVATE /W0)
 endif()
 
+# ONNX Runtime with DirectML (MIT) + DirectML (Microsoft, redistributable) for the Stems effect (src/engine/Stems.*).
+# Fetched by tools/fetch-onnxruntime.ps1 into external/onnxruntime (not in git). The DLLs are loaded at run time from
+# next to the exe (no import library), so the app also starts without them; without the folder Stems is compiled out.
+set(HYDRA_ORT_DIR "${CMAKE_SOURCE_DIR}/external/onnxruntime")
+if(EXISTS "${HYDRA_ORT_DIR}/include/onnxruntime_c_api.h" AND EXISTS "${HYDRA_ORT_DIR}/bin/onnxruntime.dll")
+    set(HYDRA_STEMS 1)
+else()
+    set(HYDRA_STEMS 0)
+    message(STATUS "Stems: no ONNX Runtime in external/onnxruntime (run tools/fetch-onnxruntime.ps1) - effect compiled out")
+endif()
+function(hydra_use_stems target)
+    target_compile_definitions(${target} PRIVATE HYDRA_STEMS=${HYDRA_STEMS})
+    if(HYDRA_STEMS)
+        target_include_directories(${target} PRIVATE "${HYDRA_ORT_DIR}/include")
+        # Copied when configuring (build.ps1 configures every time), not as a post-build step: those run through
+        # cmd, which breaks on the "&" in the project path. JUCE puts the exe into <target>_artefacts/<config>.
+        file(COPY "${HYDRA_ORT_DIR}/bin/onnxruntime.dll" "${HYDRA_ORT_DIR}/bin/DirectML.dll"
+             DESTINATION "${CMAKE_BINARY_DIR}/${target}_artefacts/${CMAKE_BUILD_TYPE}")
+    endif()
+endfunction()
+
 # Hydra Remote: the web app for phones / tablets, compiled into the exe (src/remote/RemoteControl.cpp serves it).
 juce_add_binary_data(HydraRemoteData HEADER_NAME RemoteData.h NAMESPACE RemoteData
     SOURCES resources/remote/index.html resources/remote/manifest.webmanifest resources/icon.png)
@@ -120,6 +141,7 @@ target_link_libraries(HydraMixer
         juce::juce_recommended_config_flags
         $<$<NOT:$<BOOL:${HYDRA_FAST}>>:juce::juce_recommended_lto_flags>)
 hydra_precompile_headers(HydraMixer)
+hydra_use_stems(HydraMixer)
 
 if(MSVC)
     # Realtime audio: aggressive optimisation, AVX2 vectorisation, fast float maths.
@@ -136,15 +158,16 @@ endif()
 
 # Offline DSP tests (run: build\<cfg>\HydraTests_artefacts\<cfg>\HydraTests.exe)
 juce_add_console_app(HydraTests PRODUCT_NAME "HydraTests")
-target_sources(HydraTests PRIVATE tests/DenoiserTest.cpp tests/SessionTest.cpp tests/MidiRangeTest.cpp tests/AppCaptureTest.cpp tests/LedTest.cpp tests/RecorderTest.cpp tests/AsioSecondaryTest.cpp tests/UndoTest.cpp tests/ReorderTest.cpp tests/SceneTest.cpp tests/SyncDelayTest.cpp tests/RoomAnalysisTest.cpp tests/CorrectionTest.cpp tests/DeviceNamesTest.cpp tests/FxChainTest.cpp tests/CorrectionPoolTest.cpp tests/VacTest.cpp tests/VacStreamTest.cpp tests/NetLinkTest.cpp tests/RemoteTest.cpp tests/LinkLiteTest.cpp
-    src/core/Denoiser.cpp src/core/RoomAnalysis.cpp src/core/Correction.cpp src/engine/Engine.cpp src/engine/IoStreams.cpp src/engine/VacStream.cpp src/engine/NetLink.cpp src/core/NetCodec.cpp src/core/NetCrypto.cpp src/remote/QrCode.cpp src/remote/RemoteServer.cpp src/remote/RemoteControl.cpp src/linkcore/LinkLite.cpp src/engine/AsioSecondary.cpp src/engine/Recorder.cpp src/engine/PluginChain.cpp
+target_sources(HydraTests PRIVATE tests/DenoiserTest.cpp tests/SessionTest.cpp tests/MidiRangeTest.cpp tests/AppCaptureTest.cpp tests/LedTest.cpp tests/RecorderTest.cpp tests/AsioSecondaryTest.cpp tests/UndoTest.cpp tests/ReorderTest.cpp tests/SceneTest.cpp tests/SyncDelayTest.cpp tests/RoomAnalysisTest.cpp tests/CorrectionTest.cpp tests/DeviceNamesTest.cpp tests/FxChainTest.cpp tests/CorrectionPoolTest.cpp tests/VacTest.cpp tests/VacStreamTest.cpp tests/NetLinkTest.cpp tests/RemoteTest.cpp tests/LinkLiteTest.cpp tests/StemsTest.cpp
+    src/core/StemDsp.cpp src/engine/Stems.cpp src/core/Denoiser.cpp src/core/RoomAnalysis.cpp src/core/Correction.cpp src/engine/Engine.cpp src/engine/IoStreams.cpp src/engine/VacStream.cpp src/engine/NetLink.cpp src/core/NetCodec.cpp src/core/NetCrypto.cpp src/remote/QrCode.cpp src/remote/RemoteServer.cpp src/remote/RemoteControl.cpp src/linkcore/LinkLite.cpp src/engine/AsioSecondary.cpp src/engine/Recorder.cpp src/engine/PluginChain.cpp
     src/midi/MidiMapper.cpp src/midi/Hotkeys.cpp src/state/Session.cpp src/state/VoicemeeterImport.cpp src/state/UndoHistory.cpp src/state/Scenes.cpp src/state/RoomMeasurements.cpp src/state/DeviceNames.cpp src/state/ChannelClipboard.cpp src/state/CorrectionPool.cpp src/state/VacControl.cpp src/state/VacCables.cpp)
 target_include_directories(HydraTests PRIVATE "${CMAKE_SOURCE_DIR}/src")
 target_compile_definitions(HydraTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_definitions(HydraTests PRIVATE JUCE_ASIO=1 JUCE_PLUGINHOST_VST3=1 JUCE_PLUGINHOST_LV2=0 JUCE_PLUGINHOST_LADSPA=0)
-target_link_libraries(HydraTests PRIVATE juce::juce_audio_utils juce::juce_audio_processors juce::juce_gui_extra rnnoise opus avrt ole32 uuid mmdevapi ws2_32 iphlpapi bcrypt crypt32 HydraRemoteData
+target_link_libraries(HydraTests PRIVATE juce::juce_audio_utils juce::juce_audio_processors juce::juce_gui_extra juce::juce_dsp rnnoise opus avrt ole32 uuid mmdevapi ws2_32 iphlpapi bcrypt crypt32 HydraRemoteData
                       PUBLIC juce::juce_recommended_config_flags)
 hydra_precompile_headers(HydraTests)
+hydra_use_stems(HydraTests)
 # The tests keep several Engine objects on the stack (several 100 KB each since the EQ has 16 bands): 16 MB stack.
 target_link_options(HydraTests PRIVATE /STACK:16777216)
 
@@ -162,6 +185,7 @@ if(HYDRA_SHOTS)
         JUCE_DISPLAY_SPLASH_SCREEN=0 JUCE_REPORT_APP_USAGE=0)
     target_link_libraries(HydraShots PRIVATE juce::juce_audio_utils juce::juce_audio_processors juce::juce_audio_devices juce::juce_gui_extra juce::juce_dsp
         rnnoise opus avrt ole32 uuid mmdevapi ws2_32 iphlpapi bcrypt crypt32 HydraRemoteData PUBLIC juce::juce_recommended_config_flags)
+    hydra_use_stems(HydraShots)
     target_compile_options(HydraShots PRIVATE /W3 /permissive- /Zc:__cplusplus /MP /O2 /arch:AVX2 /fp:fast)
     target_link_options(HydraShots PRIVATE /STACK:16777216)
 endif()

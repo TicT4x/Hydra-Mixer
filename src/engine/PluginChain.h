@@ -33,9 +33,11 @@ private:
 
 /** Built-in effects that sit in a channel's effect chain next to the plugins. A channel can have each of them
     up to kFxInstances times (correction once); every instance has its own parameters (Engine).
-    Inputs offer denoiser, EQ, gate, compressor, phase; buses EQ, limiter and (hardware outputs) correction. */
-enum class Fx : int { plugin = -1, denoiser = 0, eq, gate, comp, correction, limiter, phase, numBuiltins };
+    Inputs offer stems, denoiser, EQ, gate, compressor, phase; buses EQ, limiter and (hardware outputs) correction.
+    builtinMask holds kFxInstances bits per effect: 8 effects fill its 32 bits. */
+enum class Fx : int { plugin = -1, denoiser = 0, eq, gate, comp, correction, limiter, phase, stems, numBuiltins };
 constexpr int kFxInstances = 4;
+static_assert ((int) Fx::numBuiltins * kFxInstances <= 32, "PluginChain::builtinMask has 32 bits");
 
 /** Id in session files ("eq", "gate", ...) and display name ("Equalizer", ...). */
 juce::String fxId (Fx);

@@ -348,6 +348,13 @@ InputStripView::InputStripView (UiContext& c, int i)
       mute (c, *strip.mute, "MUTE", theme::mute),
       meter (strip.meter)
 {
+    solo.exclusiveGroup = [&e = c.engine]
+    {
+        std::vector<Param*> v;
+        for (auto& s : e.inputs) v.push_back (s.solo);
+        return v;
+    };
+    solo.setTooltip ("Solo (Shift + click: solo several channels at once)");
     for (auto* comp : std::initializer_list<juce::Component*> { &header, &source, &trim, &pan,
                                                                &mono, &solo, &mute, &meter, &dbLabel })
         addAndMakeVisible (comp);

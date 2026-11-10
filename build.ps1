@@ -15,6 +15,12 @@ Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments "-ar
 
 $root = $PSScriptRoot
 
+# ONNX Runtime + DirectML for the Stems effect (not in git): fetched once; without it Stems is compiled out.
+if (-not (Test-Path (Join-Path $root "external\onnxruntime\bin\onnxruntime.dll"))) {
+    try { & (Join-Path $root "tools\fetch-onnxruntime.ps1") }
+    catch { Write-Warning "ONNX Runtime konnte nicht geladen werden ($_): Stems wird ohne gebaut." }
+}
+
 # Copies finished artefacts to build\Complete or build\Fast.
 function Publish-Build([string]$Folder, [string[]]$Items) {
     $dest = Join-Path $root "build\$Folder"
@@ -78,8 +84,10 @@ if ($build.Contains("&")) {
     Copy-Item -Recurse -Force $from $to
 }
 if ($result -eq 0) {
+    # Stems: ONNX Runtime + DirectML next to the exe (if this build has them).
+    $ortDlls = @(Get-Item (Join-Path $build "HydraMixer_artefacts\$Config\*.dll") -ErrorAction SilentlyContinue | ForEach-Object FullName)
     Publish-Build "Complete" (@(
         (Join-Path $build "HydraMixer_artefacts\$Config\Hydra Mixer.exe"),
-        (Join-Path $build "HydraRoomCorrection_artefacts\$Config\VST3\Hydra Room Correction.vst3")) + $apk)
+        (Join-Path $build "HydraRoomCorrection_artefacts\$Config\VST3\Hydra Room Correction.vst3")) + $ortDlls + $apk)
 }
 exit $result

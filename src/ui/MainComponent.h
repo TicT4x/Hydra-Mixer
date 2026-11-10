@@ -162,6 +162,8 @@ public:
     bool keyPressed (const juce::KeyPress&) override;
 
     void openSettings (int tab = 0);
+    /** The window became active / inactive: only the window buttons change (they dim). */
+    void repaintWindowControls() { for (auto* b : { &top.minimiseBtn, &top.maximiseBtn, &top.closeBtn }) b->repaint(); }
     /** Lays the strips out again (e.g. "Fill window" was switched). */
     void stripLayoutChanged();
     void openMidiMap();
@@ -198,6 +200,7 @@ public:
     /** Screenshot tool (tools/Shots.cpp) only: select a channel / advance the meters without a window and v-sync. */
     void demoSelect (int index)       { select (index); }
     void demoMeterFrame (double t)    { meterFrame (t); }
+    std::unique_ptr<juce::Component> demoStemsPanel (int input) { return makeStemsPanel (ctx, ctx.engine.inputs[(size_t) input]); }
 
     /** Set by the application: preferences changed / quit requested from the UI. */
     std::function<void()> onPrefsChanged, onShutdown;

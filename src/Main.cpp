@@ -7,6 +7,7 @@
 #include "engine/NetLink.h"
 #include "remote/RemoteControl.h"
 #include "ui/Dialog.h"
+#include "ui/UiWatch.h"
 #include <random>
 
 #include <windows.h>
@@ -127,7 +128,9 @@ public:
     {
         juce::DocumentWindow::activeWindowStatusChanged();
         removeNativeWindowBorder (*this);   // also here: JUCE may have recreated the native window since it was shown
-        repaint(); // window buttons dim when inactive
+        // Only the window buttons dim when inactive. Why not repaint(): that redrew the whole mixer (all strips,
+        // meters, the inspector) every time another window got the focus, e.g. right when the settings opened.
+        if (auto* mc = getMain()) mc->repaintWindowControls();
     }
 
     int getDesktopWindowStyleFlags() const override
@@ -323,6 +326,7 @@ public:
                  + juce::String (loaded ? "loaded" : "not found / defaults"));
         checkMasterAfterStart();
         startTimer (1000);
+        uiWatch = std::make_unique<UiWatch>();
         // Keeps the autostart entry pointing at this exe (rebuilt / moved); off the critical startup path.
         // schtasks.exe can take seconds: on a background thread, the window stays responsive.
         juce::Timer::callAfterDelay (8000, [] { juce::Thread::launch ([] { Autostart::refreshIfMoved(); }); });
@@ -331,6 +335,7 @@ public:
     void shutdown() override
     {
         stopTimer();
+        uiWatch.reset();
         if (engine == nullptr) return;   // device name helper
         save();
         engine->removeChangeListener (&changeCounter);
@@ -346,6 +351,7 @@ public:
         midi.reset();
         session.reset();
         engine.reset();
+        stems::Service::shutdown();   // the separation worker and its GPU model (no channel uses it any more)
         net::Hub::get().stop();   // closes Hydra Link's port (its streams are gone with the engine)
         poller.reset();
         juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
@@ -655,12 +661,16 @@ private:
 
     void timerCallback() override
     {
-        retryMaster();
-        tickPairing();
+        { UiActivity a ("app timer: master retry"); retryMaster(); }
+        { UiActivity a ("app timer: pairing"); tickPairing(); }
         deviceNamer->useTask = session->prefs.renameNoPrompt;
-        if (! session->waitingForMaster) deviceNamer->tick (session->prefs.renameDevices, session->prefs.vacAutoName);
+        if (! session->waitingForMaster) { UiActivity a ("app timer: device names"); deviceNamer->tick (session->prefs.renameDevices, session->prefs.vacAutoName); }
         if (! session->waitingForMaster)
+        {
+            UiActivity a ("app timer: cable visibility");
             vacCables->tickHiding (session->prefs.vacHideOwnSide, session->prefs.vacHideUnused, session->vacHidden);
+        }
+        UiActivity a ("app timer: autosave");
 
         // Debounced autosave: write ~2 s after the last change.
         const auto key = stateKey();
@@ -690,6 +700,7 @@ private:
     std::unique_ptr<RemoteControl> remoteControl;
     std::unique_ptr<MainWindow> window;
     std::unique_ptr<TrayIcon> tray;
+    std::unique_ptr<UiWatch> uiWatch;
     juce::String shownLayoutKey;
     ChangeCounter changeCounter;
     juce::String lastState, pendingState;

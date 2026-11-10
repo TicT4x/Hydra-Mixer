@@ -17,6 +17,9 @@ juce::NormalisableRange<float> faderRange()
     return r;
 }
 
+/** Level of one stem: the range of a channel fader (-60 dB = off, up to +12 dB), so its fader has the same scale. */
+juce::NormalisableRange<float> stemGainRange() { return faderRange(); }
+
 juce::NormalisableRange<float> logRange (float lo, float hi)
 {
     return { lo, hi,
@@ -60,6 +63,20 @@ dsp::CompSettings CompFx::settings() const
     c.makeupDb = makeup->get();
     c.autoMakeup = autoGain->isOn();
     return c;
+}
+
+void StemsFx::gains (float* out) const noexcept
+{
+    const bool guitar = stems::hasGuitar (juce::roundToInt (mode->get()));
+    auto idx = [guitar] (int k) { return ! guitar && k == stems::guitar ? (int) stems::rest : k; };   // Live: guitar = rest
+    bool anySolo = false;
+    for (int k = 0; k < stems::numStems; ++k) anySolo = anySolo || (solo[(size_t) idx (k)]->isOn());
+    for (int k = 0; k < stems::numStems; ++k)
+    {
+        const auto i = (size_t) idx (k);
+        const bool audible = anySolo ? solo[i]->isOn() : ! mute[i]->isOn();   // a soloed stem plays even if muted
+        out[k] = audible ? dbToGain (gain[i]->get()) : 0.0f;
+    }
 }
 
 dsp::DenoiserSettings DenoiserFx::settings() const
@@ -115,7 +132,8 @@ Engine::~Engine()
     stopTimer();
     closeMaster();
     opener.reset();   // finishes closing what it was given (it uses the device types)
-    for (auto& s : inputs) { s.plugins.clear(); }
+    for (auto& s : inputs) { s.plugins.clear(); releaseStems (s); }
+    stemsGraveyard.clear();
     for (auto& b : buses)  { b.plugins.clear(); }
 }
 
@@ -177,6 +195,21 @@ void Engine::createParams()
             lim.on      = &params.addToggle (lp + "on", lbl ("Limiter") + "On");
             lim.ceiling = &params.add (lp + "ceiling", lbl ("Limiter") + "Ceiling", ParamType::Continuous, linRange (-30, 0, 0.1f), 0.0f, " dB");
         }
+        {
+            // Stems: ids "in1.stems.on", "in1.stems.mode", "in1.stems.vocals" (gain), "in1.stems.vocals.mute" ...
+            auto& st = s.stems;
+            const auto sp = p + fxPart (Fx::stems, 0) + ".";
+            st.on   = &params.addToggle (sp + "on", n + "Stem Separator On");
+            st.mode = &params.addChoice (sp + "mode", n + "Stem Separator Latency Mode", stems::modeNames(), stems::kDefaultMode);
+            for (int k = 0; k < stems::numStems; ++k)
+            {
+                const auto name = stems::stemName (k);
+                st.gain[(size_t) k] = &params.add (sp + name.toLowerCase(), n + "Stem Separator " + name, ParamType::Continuous,
+                                                   stemGainRange(), 0.0f, " dB");
+                st.mute[(size_t) k] = &params.addToggle (sp + name.toLowerCase() + ".mute", n + "Stem Separator " + name + " Mute");
+                st.solo[(size_t) k] = &params.addToggle (sp + name.toLowerCase() + ".solo", n + "Stem Separator " + name + " Solo");
+            }
+        }
         s.fxBypass   = &params.addToggle (p + "fx.bypass", n + "FX Bypass");
         s.syncOn     = &params.addToggle (p + "sync", n + "Sync Delay Auto");
         s.delayMs    = &params.add (p + "delay", n + "Sync Delay", ParamType::Continuous,
@@ -217,6 +250,14 @@ void Engine::createParams()
         bus.syncOn   = &params.addToggle (p + "sync", n + "Sync Delay Auto");
         bus.delayMs  = &params.add (p + "delay", n + "Sync Delay", ParamType::Continuous,
                                     linRange (0, (float) dsp::DelayLine::kMaxMs, 0.1f), 0.0f, " ms");
+    }
+
+    for (int m = 0; m < stems::kNumModels; ++m)
+    {
+        const juce::String id = m == (int) stems::Model::roformer ? "roformer" : "demucs";
+        const juce::String name = m == (int) stems::Model::roformer ? "Stem Separator BS-RoFormer GPU" : "Stem Separator HT-Demucs GPU";
+        stemsAuto[(size_t) m] = &params.addToggle ("stems." + id + ".auto", name + " Auto", true);
+        stemsGpu[(size_t) m]  = &params.add ("stems." + id + ".gpu", name + " Share", ParamType::Continuous, linRange (10, 100, 1.0f), 50.0f, " %");
     }
 
     monOn  = &params.addToggle ("mon.on", "Monitor Selected Bus");
@@ -725,6 +766,7 @@ void Engine::updateSyncDelays()
             if (s.active->isOn() && s.source.kind != IoTarget::Kind::None)
                 if (const double dev = getIoLatencyMs (s.source, true); dev >= 0.0)
                     ms = dev + (s.denoiserActive() ? 1000.0 * s.dspLatency.load() / juce::jmax (1.0, sampleRate) : 0.0)
+                       + 1000.0 * s.stemsLatency.load() / juce::jmax (1.0, sampleRate)
                        + pluginLatencyMs (s.plugins, *s.fxBypass);
         }
         else
@@ -865,7 +907,7 @@ void Engine::prepareChains()
 std::vector<Fx> Engine::allowedFx (int ch) const
 {
     // In their usual order (where ensureBuiltins inserts them).
-    if (ch < kMaxInputs) return { Fx::phase, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::limiter };
+    if (ch < kMaxInputs) return { Fx::stems, Fx::phase, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::limiter };
     if (isHwBus (ch - kMaxInputs)) return { Fx::correction, Fx::phase, Fx::eq, Fx::comp, Fx::limiter };
     return { Fx::phase, Fx::eq, Fx::comp, Fx::limiter };
 }
@@ -873,7 +915,7 @@ std::vector<Fx> Engine::allowedFx (int ch) const
 juce::String Engine::fxPart (Fx f, int k)
 {
     const juce::String base = f == Fx::denoiser ? "dn" : f == Fx::eq ? "eq" : f == Fx::gate ? "gate" : f == Fx::comp ? "comp"
-                            : f == Fx::limiter ? "lim" : f == Fx::phase ? "phase" : "corr";
+                            : f == Fx::limiter ? "lim" : f == Fx::phase ? "phase" : f == Fx::stems ? "stems" : "corr";
     return k == 0 ? base : base + juce::String (k + 1);
 }
 
@@ -892,6 +934,7 @@ Param* Engine::fxOnParam (int ch, Fx f, int k) const
             case Fx::comp:     return s.comps[i].on;
             case Fx::phase:    return s.phases[i];
             case Fx::limiter:  return s.limiters[i].on;
+            case Fx::stems:    return s.stems.on;
             default:           return nullptr;
         }
     }
@@ -949,6 +992,7 @@ int Engine::addBuiltin (int ch, Fx f, int index)
         if (chain.hasBuiltin (f, k)) continue;
         if (f == Fx::denoiser) prepareDenoiser (inputs[(size_t) ch].denoisers[(size_t) k]);
         for (auto* p : fxParams (ch, f, k)) p->reset();   // a fresh instance
+        if (f == Fx::stems) prepareStems (inputs[(size_t) ch]);
         chain.addBuiltin (f, k, index >= 0 ? index : usualIndex (chain, f, allowedFx (ch)));
         on->set (1.0f);
         return k;
@@ -963,6 +1007,29 @@ void Engine::removeBuiltin (int ch, Fx f, int k)
     for (auto* p : fxParams (ch, f, k)) p->reset();
     if (auto* on = fxOnParam (ch, f, k)) on->set (0.0f);   // e.g. the first limiter is on by default
     if (f == Fx::correction) setCorrection (ch, {});
+    if (f == Fx::stems && ch < kMaxInputs) releaseStems (inputs[(size_t) ch]);
+}
+
+void Engine::prepareStems (InputStrip& s)
+{
+    auto& st = s.stems;
+    if (st.inst != nullptr) return;
+    auto inst = std::make_unique<stems::Instance>();
+    inst->prepare (sampleRate);
+    stems::Service::get().add (*inst);
+    st.inst = std::move (inst);
+    st.live.store (st.inst.get(), std::memory_order_release);
+}
+
+void Engine::releaseStems (InputStrip& s)
+{
+    auto& st = s.stems;
+    if (st.inst == nullptr) return;
+    st.live.store (nullptr, std::memory_order_release);
+    stems::Service::get().remove (*st.inst);
+    s.stemsLatency.store (0);
+    // ~20 MB of buffers: freed once the audio thread cannot be reading them any more (timerCallback).
+    stemsGraveyard.emplace_back (std::move (st.inst), callbackCount.load() + 2);
 }
 
 void Engine::prepareDenoiser (DenoiserFx& d)
@@ -993,10 +1060,17 @@ void Engine::ensureBuiltins()
                     if (f == Fx::denoiser) prepareDenoiser (inputs[(size_t) ch].denoisers[(size_t) k]);
                     chain.addBuiltin (f, k, usualIndex (chain, f, allowed));
                 }
-        if (ch < kMaxInputs)   // denoisers loaded from a session
+        if (ch < kMaxInputs)   // denoisers / stems loaded from a session (or a chain pasted / removed)
+        {
+            auto& s = inputs[(size_t) ch];
             for (int k = 0; k < kFxInstances; ++k)
-                if (chain.hasBuiltin (Fx::denoiser, k)) prepareDenoiser (inputs[(size_t) ch].denoisers[(size_t) k]);
+                if (chain.hasBuiltin (Fx::denoiser, k)) prepareDenoiser (s.denoisers[(size_t) k]);
+            if (chain.hasBuiltin (Fx::stems)) prepareStems (s);
+            else                              releaseStems (s);
+        }
     }
+    for (int i = 0; i < kMaxInputs; ++i)   // a removed input slot keeps no stems state
+        if (! isInputActive (i)) releaseStems (inputs[(size_t) i]);
 }
 
 //==============================================================================
@@ -1334,6 +1408,9 @@ void Engine::timerCallback()
     measureGraveyard.erase (std::remove_if (measureGraveyard.begin(), measureGraveyard.end(),
                                             [&] (const auto& r) { return now >= r.second || ! running; }),
                             measureGraveyard.end());
+    stemsGraveyard.erase (std::remove_if (stemsGraveyard.begin(), stemsGraveyard.end(),
+                                          [&] (const auto& r) { return now >= r.second || ! running; }),
+                          stemsGraveyard.end());
     for (auto it = graveyard.begin(); it != graveyard.end();)
     {
         if (now >= it->second || ! running)
@@ -1428,6 +1505,8 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
             if (d.dsp != nullptr) d.dsp->prepare (sampleRate);
             d.wasOn = false;
         }
+        if (s.stems.inst != nullptr) s.stems.inst->prepare (sampleRate);
+        s.stems.wasOn = false;
         s.delay.prepare (sampleRate);
         s.lastTrim = 1; s.lastL = s.lastR = 0;
         s.lastRoute.fill (0.0f);
@@ -1731,8 +1810,10 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
     int latency = 0;
     bool tapped = false;
     const int tapEq = s.spectrum.eqInstance.load (std::memory_order_relaxed);
+    bool chainRan = false, stemsRan = false;
+    int stemsLatency = 0;
     if (! s.fxBypass->isOn())
-        s.plugins.process (l, r, n, timed, [&] (Fx f, int k)
+        chainRan = s.plugins.process (l, r, n, timed, [&] (Fx f, int k)
         {
             lap (DspTimes::plugins);   // time since the previous stage: plugins (and the chain itself)
             const auto i = (size_t) k;
@@ -1779,9 +1860,29 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
                         juce::FloatVectorOperations::negate (r, r, n);
                     }
                     break;
+                case Fx::stems:
+                {
+                    auto& st = s.stems;
+                    auto* inst = st.live.load (std::memory_order_acquire);
+                    if (! st.on->isOn() || inst == nullptr) break;
+                    float gains[stems::numStems];
+                    st.gains (gains);
+                    const int mode = juce::roundToInt (st.mode->get());
+                    inst->process (l, r, n, gains, mode, ! st.wasOn, stemsTuning (stems::modelFor (mode)),
+                                   st.meterUsers.load (std::memory_order_relaxed) > 0 ? st.peaks.data() : nullptr, StemsFx::numReaders);
+                    stemsLatency = inst->getLatencySamples();
+                    stemsRan = true;
+                    lap (DspTimes::other);
+                    break;
+                }
                 default: break;
             }
         });
+    if (s.fxBypass->isOn() || chainRan)
+    {
+        s.stems.wasOn = stemsRan;
+        s.stemsLatency.store (stemsRan ? stemsLatency : 0, std::memory_order_relaxed);
+    }
     lap (DspTimes::plugins);
     for (int k = 0; k < kFxInstances; ++k)
     {
@@ -1803,7 +1904,7 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
         std::memcpy (r, l, (size_t) n * sizeof (float));
     }
 
-    const bool silent = s.mute->isOn() || (anySolo && ! s.solo->isOn());
+    const bool silent = anySolo ? ! s.solo->isOn() : s.mute->isOn();   // a soloed channel plays even if muted
     const float pan = s.pan->get();
     const float fader = dbToGain (s.gain->get());
     const float panL = pan > 0.0f ? 1.0f - pan : 1.0f;

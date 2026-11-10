@@ -14,11 +14,15 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void showTab (int i) { tabs.setCurrentTabIndex (i); }
+    /** Logs in hydra.log how long it took from openedAt (ms counter) until the window was drawn, if that was slow. */
+    void measureFirstPaint (double openedAt) { paintFrom = openedAt; }
+    void paintOverChildren (juce::Graphics&) override;
 
     std::function<void()> onEngineChanged;
     std::function<void()> onSessionReplaced;   // complete settings were loaded from a file
 
 private:
+    double paintFrom = 0.0;
     UiContext& ctx;
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
 };

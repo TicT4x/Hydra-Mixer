@@ -1,4 +1,5 @@
-﻿#include "Settings.h"
+﻿#include "UiWatch.h"
+#include "Settings.h"
 #include "state/VoicemeeterImport.h"
 #include "state/Session.h"
 #include "state/Autostart.h"
@@ -931,6 +932,7 @@ private:
     {
         // Asks the VAC driver every 2 s: only while this page is on screen (the settings window stays alive when closed).
         if (! isShowing()) return;
+        UiActivity busy ("settings: cables page refresh");
         const auto t = ctx.session != nullptr && ctx.session->deviceNamer != nullptr ? ctx.session->deviceNamer->describe() : juce::String();
         if (t != renameStatus.getText()) renameStatus.setText (t, false);
         updateVac();
@@ -1270,6 +1272,7 @@ private:
 
     void timerCallback() override
     {
+        UiActivity busy ("settings: network page refresh");
         if (isShowing()) refresh();   // the settings window stays alive when closed: only while on screen
     }
 
@@ -1456,6 +1459,7 @@ private:
 
     void timerCallback() override
     {
+        UiActivity busy ("settings: remote page refresh");
         if (isShowing()) refresh();
     }
 
@@ -1724,6 +1728,7 @@ public:
     void build()
     {
         if (content != nullptr || make == nullptr || ! isVisible()) return;
+        UiActivity busy ("settings: building a page");
         const double t0 = juce::Time::getMillisecondCounterHiRes();
         content.reset (make());
         make = nullptr;
@@ -1762,7 +1767,20 @@ SettingsPanel::SettingsPanel (UiContext& c) : ctx (c)
 
 SettingsPanel::~SettingsPanel() = default;
 
-void SettingsPanel::paint (juce::Graphics& g) { g.fillAll (theme::bg); }
+void SettingsPanel::paint (juce::Graphics& g)
+{
+    if (paintFrom > 0.0) uiActivity.store ("settings: drawing the window");   // cleared in paintOverChildren
+    g.fillAll (theme::bg);
+}
+
+void SettingsPanel::paintOverChildren (juce::Graphics&)
+{
+    if (paintFrom <= 0.0) return;
+    uiActivity.store (nullptr);
+    const double ms = juce::Time::getMillisecondCounterHiRes() - paintFrom;
+    paintFrom = 0.0;
+    if (ms > 100.0) logLine ("settings: shown after " + juce::String (juce::roundToInt (ms)) + " ms (opening + first drawing)");
+}
 
 void SettingsPanel::lookAndFeelChanged()
 {
