@@ -604,7 +604,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         <span class="de">Hydra Mixer ist ein kostenloser Open-Source-Audiomixer für Windows, gebaut für die geringstmögliche Latenz. Mische Mikrofone, Spiele, Apps und virtuelle Kabel, schick sie durch eingebaute Effekte und VST3-Plugins und jeden Mix genau dorthin, wo er hin soll. Eine Alternative zu Voicemeeter.</span>
       </p>
       <div class="cta">
-        <a class="btn primary" data-dl="win" href="https://github.com/TicT4x/Hydra-Mixer/releases/download/v0.8.1/HydraMixer-0.8.1-win64.zip">
+        <a class="btn primary" data-dl="win" href="https://github.com/TicT4x/Hydra-Mixer/releases/download/v0.8.1/HydraMixer-0.8.1-win64.exe">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10.5 4.4v7.1H3zM11.5 4.3 21 3v8.5h-9.5zM3 12.5h7.5v7.1L3 18.5zM11.5 12.5H21V21l-9.5-1.3z"/></svg>
           <span class="en">Download for Windows</span><span class="de">Für Windows laden</span>
         </a>
@@ -961,7 +961,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
           <li><span class="en">ASIO interface recommended, any Windows device works</span><span class="de">ASIO-Interface empfohlen, jedes Windows-Gerät geht</span></li>
         </ul>
         <div class="acts">
-          <a class="btn primary" data-dl="win" href="https://github.com/TicT4x/Hydra-Mixer/releases/download/v0.8.1/HydraMixer-0.8.1-win64.zip">
+          <a class="btn primary" data-dl="win" href="https://github.com/TicT4x/Hydra-Mixer/releases/download/v0.8.1/HydraMixer-0.8.1-win64.exe">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
             <span class="en">Download</span><span class="de">Herunterladen</span>
           </a>
@@ -1214,8 +1214,8 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 <section id="install">
   <h2><span class="num">1</span>Installation</h2>
   <ol class="steps">
-    <li>Download <code>HydraMixer-0.8.1-win64.zip</code> from the <a href="https://github.com/TicT4x/Hydra-Mixer/releases">Releases page</a>.</li>
-    <li>Unzip it anywhere, e.g. <code>C:\Tools\Hydra Mixer</code>. There is no installer and no runtime to install.</li>
+    <li>Download <code>HydraMixer-0.8.1-win64.exe</code> from the <a href="https://github.com/TicT4x/Hydra-Mixer/releases">Releases page</a>.</li>
+    <li>Put it anywhere, e.g. into <code>C:\Tools\Hydra Mixer</code>. It is a single file: there is no installer and no runtime to install.</li>
     <li>Start <code>Hydra Mixer.exe</code>. On first start Hydra picks a default device. Then choose your master device in the <a href="#settings">Settings</a>.</li>
   </ol>
   <h3>Requirements</h3>
@@ -2210,6 +2210,7 @@ cd Hydra-Mixer
       <tr><td><code>%APPDATA%\HydraMixer\scan-crash.txt</code></td><td>Plugins that crashed during the scan.</td></tr>
       <tr><td><code>%APPDATA%\HydraMixer\hydra.log</code></td><td>Log (starts, saves, device errors). Attach it to bug reports.</td></tr>
       <tr><td><code>%APPDATA%\HydraMixer\Corrections\</code>, <code>Measurements\</code></td><td>Room corrections and measurements.</td></tr>
+      <tr><td><code>%APPDATA%\HydraMixer\Models\</code>, <code>Runtime\</code></td><td>Stem Separator: the downloaded models and the GPU runtime (ONNX Runtime + DirectML, unpacked from the exe on first use). Safe to delete; Hydra unpacks it again.</td></tr>
       <tr><td><code>Documents\Hydra Recordings\</code></td><td>Default folder for recordings.</td></tr>
       <tr><td><code>*.hydrascenes</code></td><td>Exported scenes.</td></tr>
     </tbody>
@@ -2277,8 +2278,8 @@ cd Hydra-Mixer
 <section id="install">
   <h2><span class="num">1</span>Installation</h2>
   <ol class="steps">
-    <li>Lade <code>HydraMixer-0.8.1-win64.zip</code> von der <a href="https://github.com/TicT4x/Hydra-Mixer/releases">Releases-Seite</a> herunter.</li>
-    <li>Entpacke das Archiv an einen beliebigen Ort, z. B. <code>C:\Tools\Hydra Mixer</code>. Es gibt keinen Installer und keine Laufzeitumgebung.</li>
+    <li>Lade <code>HydraMixer-0.8.1-win64.exe</code> von der <a href="https://github.com/TicT4x/Hydra-Mixer/releases">Releases-Seite</a> herunter.</li>
+    <li>Leg sie an einen beliebigen Ort, z. B. nach <code>C:\Tools\Hydra Mixer</code>. Es ist eine einzige Datei: Es gibt keinen Installer und keine Laufzeitumgebung.</li>
     <li>Starte <code>Hydra Mixer.exe</code>. Beim ersten Start wählt Hydra ein Standardgerät. Danach suchst du dir in den <a href="#settings">Settings</a> dein Master-Gerät aus.</li>
   </ol>
   <h3>Voraussetzungen</h3>
@@ -3273,6 +3274,7 @@ cd Hydra-Mixer
       <tr><td><code>%APPDATA%\HydraMixer\scan-crash.txt</code></td><td>Plugins, die beim Scan abgestürzt sind.</td></tr>
       <tr><td><code>%APPDATA%\HydraMixer\hydra.log</code></td><td>Protokoll (Starts, Speicherungen, Gerätefehler). Bei Fehlerberichten anhängen.</td></tr>
       <tr><td><code>%APPDATA%\HydraMixer\Corrections\</code>, <code>Measurements\</code></td><td>Raumkorrekturen und Messungen.</td></tr>
+      <tr><td><code>%APPDATA%\HydraMixer\Models\</code>, <code>Runtime\</code></td><td>Stem Separator: die heruntergeladenen Modelle und die GPU-Laufzeit (ONNX Runtime + DirectML, beim ersten Gebrauch aus der Exe entpackt). Darf gelöscht werden; Hydra entpackt sie neu.</td></tr>
       <tr><td><code>Dokumente\Hydra Recordings\</code></td><td>Standardordner für Aufnahmen.</td></tr>
       <tr><td><code>*.hydrascenes</code></td><td>Exportierte Szenen.</td></tr>
     </tbody>
