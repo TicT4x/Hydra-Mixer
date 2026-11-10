@@ -49,6 +49,16 @@ if ($Fast) {
     exit $result
 }
 $build = Join-Path $root "build\$Config"
+# build\ is synced by OneDrive: its CMake cache belongs to the PC that configured it. If that PC's compiler does not
+# exist here, build in a folder of this PC (outside OneDrive) instead of reconfiguring the other PC's one.
+$cache = Join-Path $build "CMakeCache.txt"
+if (Test-Path $cache) {
+    $cl = (Select-String -Path $cache -Pattern "^CMAKE_CXX_COMPILER:FILEPATH=(.*)$" | Select-Object -First 1).Matches.Groups[1].Value
+    if ($cl -and -not (Test-Path $cl)) {
+        $build = Join-Path $env:USERPROFILE ".hydra-build\full-$Config"
+        Write-Host "build\$Config was configured on another PC ($cl): building in $build"
+    }
+}
 cmake -S $root -B $build -G Ninja "-DCMAKE_BUILD_TYPE=$Config"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 cmake --build $build -- -k 0
