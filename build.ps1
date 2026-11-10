@@ -25,6 +25,8 @@ if (-not (Test-Path (Join-Path $root "external\onnxruntime\bin\onnxruntime.dll")
 function Publish-Build([string]$Folder, [string[]]$Items) {
     $dest = Join-Path $root "build\$Folder"
     New-Item -ItemType Directory -Force $dest | Out-Null
+    # ONNX Runtime DLLs of older builds (now embedded in the exe); a running Hydra keeps them locked, then they stay.
+    Get-ChildItem (Join-Path $dest "*") -File -Include "onnxruntime.dll*", "DirectML.dll*" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
     foreach ($item in $Items) {
         $target = Join-Path $dest (Split-Path $item -Leaf)
         try { Copy-Item -Recurse -Force $item $dest }
@@ -48,7 +50,7 @@ if ($Fast) {
     cmake --build $build --target $Target -- -k 0
     $result = $LASTEXITCODE
     if ($result -eq 0) {
-        $items = @((Get-ChildItem (Join-Path $build "${Target}_artefacts\$Config") -File | Where-Object Extension -notin ".ilk", ".pdb").FullName)
+        $items = @((Get-ChildItem (Join-Path $build "${Target}_artefacts\$Config") -File | Where-Object Extension -notin ".ilk", ".pdb", ".dll", ".old").FullName)
         if ($Target -eq "HydraMixer") { $items += $apk }
         Publish-Build "Fast" $items
     }
@@ -84,10 +86,9 @@ if ($build.Contains("&")) {
     Copy-Item -Recurse -Force $from $to
 }
 if ($result -eq 0) {
-    # Stems: ONNX Runtime + DirectML next to the exe (if this build has them).
-    $ortDlls = @(Get-Item (Join-Path $build "HydraMixer_artefacts\$Config\*.dll") -ErrorAction SilentlyContinue | ForEach-Object FullName)
+    # ONNX Runtime + DirectML are embedded in the exe (a release is always a single exe): no DLLs next to it.
     Publish-Build "Complete" (@(
         (Join-Path $build "HydraMixer_artefacts\$Config\Hydra Mixer.exe"),
-        (Join-Path $build "HydraRoomCorrection_artefacts\$Config\VST3\Hydra Room Correction.vst3")) + $ortDlls + $apk)
+        (Join-Path $build "HydraRoomCorrection_artefacts\$Config\VST3\Hydra Room Correction.vst3")) + $apk)
 }
 exit $result

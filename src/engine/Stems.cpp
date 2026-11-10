@@ -134,10 +134,54 @@ bool sha256 (const juce::File& file, juce::String& hex, const std::atomic<bool>&
 
 //==============================================================================
 #if HYDRA_STEMS
+juce::File extractRuntime (const juce::File& base, juce::String& error)
+{
+    // Resource ids: CMakeLists.txt (hydra_ort.rc).
+    struct Part { int id; const char* name; };
+    static constexpr Part parts[] = { { 201, "onnxruntime.dll" }, { 202, "DirectML.dll" } };
+    auto resource = [] (int id, DWORD& size) -> const void*
+    {
+        HRSRC r = FindResourceW (nullptr, MAKEINTRESOURCEW (id), MAKEINTRESOURCEW (10));   // RT_RCDATA
+        HGLOBAL g = r != nullptr ? LoadResource (nullptr, r) : nullptr;
+        size = r != nullptr ? SizeofResource (nullptr, r) : 0;
+        return g != nullptr ? LockResource (g) : nullptr;
+    };
+    DWORD ortSize = 0;
+    if (resource (201, ortSize) == nullptr || ortSize == 0) return {};   // not embedded in this exe
+    // One folder per runtime: a running older Hydra keeps its DLLs loaded (locked) without being in the way.
+    const auto dir = base.getChildFile ("ort-" + juce::String ((juce::int64) ortSize));
+    if (! dir.createDirectory()) { error = "could not create " + dir.getFullPathName(); return {}; }
+    for (const auto& p : parts)
+    {
+        DWORD size = 0;
+        const void* data = resource (p.id, size);
+        if (data == nullptr) { error = juce::String (p.name) + " is missing in the program"; return {}; }
+        const auto file = dir.getChildFile (p.name);
+        if (file.getSize() == (juce::int64) size) continue;   // already unpacked
+        const auto tmp = dir.getChildFile (juce::String (p.name) + ".tmp");
+        tmp.deleteFile();
+        bool ok = false;
+        {
+            juce::FileOutputStream out (tmp);
+            ok = out.openedOk() && out.write (data, size);
+            out.flush();
+            ok = ok && ! out.getStatus().failed();
+        }
+        if (! ok || ! tmp.moveFileTo (file))
+        {
+            tmp.deleteFile();
+            error = "could not unpack " + juce::String (p.name) + " to " + dir.getFullPathName();
+            return {};
+        }
+    }
+    return dir;
+}
+
 namespace
 {
-/** onnxruntime.dll next to the exe, loaded on first use (Windows has an older one in System32: the full path
-    makes sure ours is taken, LOAD_WITH_ALTERED_SEARCH_PATH finds DirectML.dll next to it too). */
+/** onnxruntime.dll, loaded on first use (Windows has an older one in System32: the full path makes sure ours is
+    taken, LOAD_WITH_ALTERED_SEARCH_PATH finds DirectML.dll next to it too). Taken from the exe itself (see
+    extractRuntime), otherwise from next to the exe. */
 const OrtApi* ortApi (juce::String& error)
 {
     static const OrtApi* api = nullptr;
@@ -145,8 +189,15 @@ const OrtApi* ortApi (juce::String& error)
     static std::once_flag once;
     std::call_once (once, []
     {
-        const auto dll = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getSiblingFile ("onnxruntime.dll");
-        if (! dll.existsAsFile()) { loadError = "onnxruntime.dll is missing next to the program"; return; }
+        auto dll = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getSiblingFile ("onnxruntime.dll");
+        juce::String extractError;
+        if (const auto dir = extractRuntime (appDataDir().getChildFile ("Runtime"), extractError); dir != juce::File())
+            dll = dir.getChildFile ("onnxruntime.dll");
+        if (! dll.existsAsFile())
+        {
+            loadError = extractError.isNotEmpty() ? extractError : juce::String ("onnxruntime.dll is missing (this build has no ONNX Runtime)");
+            return;
+        }
         HMODULE h = LoadLibraryExW (dll.getFullPathName().toWideCharPointer(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
         if (h == nullptr) { loadError = "onnxruntime.dll could not be loaded (error " + juce::String ((int) GetLastError()) + ")"; return; }
         using GetBase = const OrtApiBase* (ORT_API_CALL*) ();

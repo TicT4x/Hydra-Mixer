@@ -39,6 +39,12 @@ struct ModelInfo
 };
 const ModelInfo& modelInfo (Model);
 
+/** The release is one exe: onnxruntime.dll and DirectML.dll are embedded in it (RCDATA 201/202, CMakeLists.txt).
+    Unpacks them once into base/ort-<size> (skipped when already there with the right size) and returns that
+    folder; an empty File if this exe has none embedded (then error stays empty) or unpacking failed (error set).
+    Only with HYDRA_STEMS. */
+juce::File extractRuntime (const juce::File& base, juce::String& error);
+
 /** Latency modes (choice parameter values; the Live mode was added last so older sessions keep their mode). */
 juce::StringArray modeNames();   // Fast, Balanced, Best, Live
 constexpr int kBestMode = 2, kLiveMode = 3, kNumModes = 4;

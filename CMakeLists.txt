@@ -66,6 +66,12 @@ endif()
 set(HYDRA_ORT_DIR "${CMAKE_SOURCE_DIR}/external/onnxruntime")
 if(EXISTS "${HYDRA_ORT_DIR}/include/onnxruntime_c_api.h" AND EXISTS "${HYDRA_ORT_DIR}/bin/onnxruntime.dll")
     set(HYDRA_STEMS 1)
+    set(HYDRA_ORT_RC "${CMAKE_BINARY_DIR}/hydra_ort.rc")
+    file(WRITE "${HYDRA_ORT_RC}.in"
+        "201 RCDATA \"${HYDRA_ORT_DIR}/bin/onnxruntime.dll\"\n202 RCDATA \"${HYDRA_ORT_DIR}/bin/DirectML.dll\"\n")
+    configure_file("${HYDRA_ORT_RC}.in" "${HYDRA_ORT_RC}" COPYONLY)   # rewritten only when it changes
+    set_source_files_properties("${HYDRA_ORT_RC}" PROPERTIES
+        OBJECT_DEPENDS "${HYDRA_ORT_DIR}/bin/onnxruntime.dll;${HYDRA_ORT_DIR}/bin/DirectML.dll")
 else()
     set(HYDRA_STEMS 0)
     message(STATUS "Stems: no ONNX Runtime in external/onnxruntime (run tools/fetch-onnxruntime.ps1) - effect compiled out")
@@ -74,10 +80,9 @@ function(hydra_use_stems target)
     target_compile_definitions(${target} PRIVATE HYDRA_STEMS=${HYDRA_STEMS})
     if(HYDRA_STEMS)
         target_include_directories(${target} PRIVATE "${HYDRA_ORT_DIR}/include")
-        # Copied when configuring (build.ps1 configures every time), not as a post-build step: those run through
-        # cmd, which breaks on the "&" in the project path. JUCE puts the exe into <target>_artefacts/<config>.
-        file(COPY "${HYDRA_ORT_DIR}/bin/onnxruntime.dll" "${HYDRA_ORT_DIR}/bin/DirectML.dll"
-             DESTINATION "${CMAKE_BINARY_DIR}/${target}_artefacts/${CMAKE_BUILD_TYPE}")
+        # The DLLs are embedded in the exe (RCDATA 201 / 202): a release is always a single exe (user, 10.11.).
+        # stems::extractRuntime unpacks them to %APPDATA%\HydraMixer\Runtime on first use.
+        target_sources(${target} PRIVATE "${HYDRA_ORT_RC}")
     endif()
 endfunction()
 
@@ -171,6 +176,9 @@ target_link_libraries(HydraTests PRIVATE juce::juce_audio_utils juce::juce_audio
                       PUBLIC juce::juce_recommended_config_flags)
 hydra_precompile_headers(HydraTests)
 hydra_use_stems(HydraTests)
+if(HYDRA_STEMS)   # StemsTest compares the DLLs unpacked from the exe with these
+    set_property(SOURCE tests/StemsTest.cpp APPEND PROPERTY COMPILE_DEFINITIONS "HYDRA_ORT_BIN=\"${HYDRA_ORT_DIR}/bin\"")
+endif()
 # The tests keep several Engine objects on the stack (several 100 KB each since the EQ has 16 bands): 16 MB stack.
 target_link_options(HydraTests PRIVATE /STACK:16777216)
 
