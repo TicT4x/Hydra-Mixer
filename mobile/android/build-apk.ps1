@@ -5,7 +5,12 @@
 param([switch]$Debug)
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
-if (-not $env:JAVA_HOME) { $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr" }
+if (-not $env:JAVA_HOME) {
+    # Android Studio's own JDK: installed (Program Files) or unpacked from the ZIP (no admin), else a portable JDK.
+    $candidates = @("C:\Program Files\Android\Android Studio\jbr", "$env:LOCALAPPDATA\Programs\android-studio\jbr") +
+                  @(Get-ChildItem "$env:USERPROFILE\.hydra-build\tools\jdk" -Directory -ErrorAction SilentlyContinue | ForEach-Object FullName)
+    $env:JAVA_HOME = $candidates | Where-Object { Test-Path "$_\bin\java.exe" } | Select-Object -First 1
+}
 if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk" }
 $sdk = $env:ANDROID_HOME -replace '\\', '\\' -replace ':', '\:'
 $props = Join-Path $here "local.properties"

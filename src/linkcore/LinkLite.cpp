@@ -42,7 +42,9 @@ namespace
 {
 // Packet format v1: see the comment at the top of engine/NetLink.cpp (must stay identical).
 constexpr uint8_t kVersion = 1;
-enum PacketType : uint8_t { tAudio = 1, tInfo = 2, tAnnounce = 3, tFeedback = 4, tBye = 5 };
+enum PacketType : uint8_t { tAudio = 1, tInfo = 2, tAnnounce = 3, tFeedback = 4, tBye = 5, tPair = 6 };
+enum PairOp : uint8_t { opRequest = 1, opAnswer = 2, opUnpair = 3 };
+enum PairResult : uint8_t { resDenied = 0, resAllowed = 1, resWaiting = 2 };
 constexpr int kHeader = 24, kAudioHeader = 16, kTagBytes = 16;
 constexpr int kMaxPacket = 1200;
 constexpr int kMaxPayload = kMaxPacket - kHeader - kAudioHeader - kTagBytes;
@@ -352,6 +354,7 @@ struct Remote
     int port = 0, remotePort = 0;
     bool announced = false;
     double lastSeen = 0;
+    uint64_t device = 0;
     std::map<uint32_t, Rx> rx;
 };
 
@@ -447,6 +450,19 @@ struct Endpoint::Impl
     std::string hint;
     bool wsa = false;
 
+    // Pairing (as engine/NetLink.cpp)
+    uint64_t myDevice = random64() | 1;
+    struct Incoming { std::string name; sockaddr_in from {}; double lastAsked = 0; };
+    struct Outgoing { std::string name; double started = 0, lastSent = -1.0e9; PairState state = PairState::none; };
+    struct Code { int port = 0; std::string code; };
+    std::map<uint64_t, std::string> trusted;
+    std::map<uint64_t, Incoming> incoming;
+    std::map<uint64_t, Outgoing> outgoing;
+    std::map<uint64_t, double> denied;
+    std::map<uint64_t, Code> codes;
+    std::vector<std::pair<sockaddr_in, uint64_t>> unpairs;
+    std::atomic<uint32_t> trustVersion { 0 };
+
     // Receive
     std::string wantStream, wantSender;
     std::unique_ptr<Playback> play;   // bound stream (network thread)
@@ -511,6 +527,7 @@ struct Endpoint::Impl
         cfg = c;
         name = cleanName (c.name.empty() ? std::string ("Phone") : c.name);
         instance = random64();
+        if (c.deviceId != 0) myDevice = c.deviceId;
         counter = 0;
         manualPeers.clear();
         for (auto& p : c.peers)
@@ -587,7 +604,8 @@ struct Endpoint::Impl
     void announce (double now)
     {
         if (now - lastIfScan > 10000.0) { scanInterfaces(); lastIfScan = now; }
-        auto fill = [this] (Writer& w) { w.u16 ((uint32_t) cfg.port); w.str (name); };
+        // remote port 0 (no web control on a phone), device id, kind 1 = phone
+        auto fill = [this] (Writer& w) { w.u16 ((uint32_t) cfg.port); w.str (name); w.u16 (0); w.u64 (myDevice); w.u8 (1); };
         if (cfg.broadcast)
             for (auto& b : broadcasts)
             {
@@ -651,13 +669,16 @@ struct Endpoint::Impl
                 const auto nm = cleanName (p.str());
                 if (! p.ok || nm.empty()) return;
                 const int remote = p.restBytes() >= 2 ? (int) p.u16() : 0;   // Hydra Remote's port (since 9.11.)
-                if (! r.announced || r.name != nm || r.port != port || r.remotePort != remote) ++changes;
+                const uint64_t dev = p.restBytes() >= 9 ? p.u64() : 0;      // device id (since 10.11.)
+                if (! r.announced || r.name != nm || r.port != port || r.remotePort != remote || r.device != dev) ++changes;
                 r.announced = true;
                 r.name = nm;
                 r.port = port;
                 r.remotePort = remote;
+                r.device = dev;
                 break;
             }
+            case tPair:     onPair (r, p, now); break;
             case tInfo:     onInfo (r, p, now); break;
             case tAudio:    onAudio (r, p, now); break;
             case tFeedback: onFeedback (p); break;
@@ -671,6 +692,136 @@ struct Endpoint::Impl
             }
             default: break;
         }
+    }
+
+    //--------------------------------------------------------------------------
+    // Pairing
+    bool trusts (const Remote& r) const { return ! cfg.pairing || (r.device != 0 && trusted.count (r.device) > 0); }
+
+    template <typename Extra>
+    void sendPair (const sockaddr_in& dest, PairOp op, uint64_t toDevice, Extra&& extra)
+    {
+        sendPacket (tPair, dest, [&] (Writer& w) { w.u8 (op); w.u64 (myDevice); w.u64 (toDevice); w.u8 (1); w.str (name); extra (w); });
+    }
+
+    void onPair (Remote& r, Reader& b, double now)
+    {
+        const auto op = (uint8_t) b.u8();
+        const uint64_t fromDev = b.u64(), toDev = b.u64();
+        b.u8();   // kind
+        const auto who = cleanName (b.str());
+        if (! b.ok || fromDev == 0 || toDev != myDevice) return;
+        if (r.device != fromDev) { r.device = fromDev; ++changes; }
+        if (op == opRequest)
+        {
+            uint8_t result = resWaiting;
+            if (! cfg.pairing) result = resAllowed;
+            else if (auto t = trusted.find (fromDev); t != trusted.end())
+            {
+                result = resAllowed;
+                if (! who.empty() && t->second != who) { t->second = who; ++trustVersion; }
+            }
+            else if (auto d = denied.find (fromDev); d != denied.end() && now < d->second) result = resDenied;
+            else
+            {
+                auto& in = incoming[fromDev];
+                if (in.lastAsked == 0 || in.name != who) ++changes;
+                in.name = who.empty() ? std::string ("Hydra") : who;
+                in.from = r.from;
+                in.lastAsked = now;
+            }
+            sendPair (r.from, opAnswer, fromDev, [&] (Writer& w) { w.u8 (result); w.u16 (0); w.str (std::string()); });
+        }
+        else if (op == opAnswer)
+        {
+            const auto result = (uint8_t) b.u8();
+            const int rport = (int) b.u16();
+            const auto code = b.str();
+            if (! b.ok) return;
+            auto it = outgoing.find (fromDev);
+            if (it == outgoing.end() || it->second.state != PairState::asking) return;
+            if (result == resAllowed)
+            {
+                if (trusted.count (fromDev) == 0 || trusted[fromDev] != who) ++trustVersion;
+                trusted[fromDev] = who.empty() ? it->second.name : who;
+                it->second.state = PairState::allowed;
+                if (rport > 0 && ! code.empty()) codes[fromDev] = { rport, code };
+                bindIfWanted (now);
+            }
+            else if (result == resDenied) it->second.state = PairState::denied;
+            ++changes;
+        }
+        else if (op == opUnpair)
+        {
+            if (trusted.erase (fromDev) > 0) { ++trustVersion; dropUntrusted(); }
+            outgoing.erase (fromDev);
+            codes.erase (fromDev);
+            ++changes;
+        }
+    }
+
+    void dropUntrusted()
+    {
+        if (play == nullptr) return;
+        auto rit = remotes.find (play->instance);
+        if (rit == remotes.end() || ! trusts (rit->second)) unbind();
+    }
+
+    Remote* remoteByName (const std::string& n, double now)
+    {
+        Remote* best = nullptr;
+        for (auto& [inst, r] : remotes)
+            if (r.announced && r.device != 0 && sameName (r.name, n) && now - r.lastSeen < 10000.0 && (best == nullptr || r.lastSeen > best->lastSeen)) best = &r;
+        return best;
+    }
+
+    Remote* remoteByDevice (uint64_t dev, double now)
+    {
+        Remote* best = nullptr;
+        for (auto& [inst, r] : remotes)
+            if (r.device == dev && now - r.lastSeen < 10000.0 && (best == nullptr || r.lastSeen > best->lastSeen)) best = &r;
+        return best;
+    }
+
+    void startRequest (const Remote& r, double now)
+    {
+        auto& o = outgoing[r.device];
+        o.name = r.name;
+        o.started = now;
+        o.lastSent = -1.0e9;
+        o.state = PairState::asking;
+        ++changes;
+    }
+
+    void pairingHousekeeping (double now)
+    {
+        for (auto& [dest, dev] : unpairs) sendPair (dest, opUnpair, dev, [] (Writer&) {});
+        unpairs.clear();
+        if (! cfg.pairing) return;
+        // Sending to a Hydra that is not paired: ask it.
+        if (sending)
+        {
+            Remote* r = byName ? remoteByName (send.host, now) : nullptr;
+            if (! byName && toValid)
+                for (auto& [inst, x] : remotes)
+                    if (x.announced && x.device != 0 && x.from.sin_addr.s_addr == to.sin_addr.s_addr && now - x.lastSeen < 10000.0) r = &x;
+            if (r != nullptr && ! trusts (*r))
+            {
+                auto it = outgoing.find (r->device);
+                if (it == outgoing.end() || (it->second.state != PairState::asking && now - it->second.started > 600000.0)) startRequest (*r, now);
+            }
+        }
+        for (auto& [dev, o] : outgoing)
+        {
+            if (o.state != PairState::asking) continue;
+            if (now - o.started > 120000.0) { o.state = PairState::noAnswer; ++changes; continue; }
+            if (now - o.lastSent < 1000.0) continue;
+            if (auto* r = remoteByDevice (dev, now)) { o.lastSent = now; sendPair (r->from, opRequest, dev, [] (Writer&) {}); }
+        }
+        for (auto it = incoming.begin(); it != incoming.end();)
+            if (now - it->second.lastAsked > 10000.0) { it = incoming.erase (it); ++changes; } else ++it;
+        for (auto it = denied.begin(); it != denied.end();)
+            if (now > it->second) it = denied.erase (it); else ++it;
     }
 
     void onInfo (Remote& r, Reader& b, double now)
@@ -757,7 +908,7 @@ struct Endpoint::Impl
         Rx* best = nullptr;
         for (auto& [inst, r] : remotes)
             for (auto& [id, x] : r.rx)
-                if (x.hasInfo && sameName (x.stream, wantStream) && sameName (r.name, wantSender) && now - x.lastPacket < 3000.0)
+                if (x.hasInfo && (wantStream == "*" || sameName (x.stream, wantStream)) && sameName (r.name, wantSender) && trusts (r) && now - x.lastPacket < 3000.0)
                     if (best == nullptr || x.lastPacket > best->lastPacket) { best = &x; bestR = &r; }
         if (best != nullptr && (play == nullptr || play->instance != bestR->instance || play->id != best->id)) bindTo (*bestR, *best);
     }
@@ -919,6 +1070,7 @@ struct Endpoint::Impl
     void housekeeping (double now)
     {
         if (now >= nextAnnounce) { announce (now); nextAnnounce = now + 2000.0; }
+        pairingHousekeeping (now);
 
         // Hydras / streams not heard for a while are gone.
         for (auto it = remotes.begin(); it != remotes.end();)
@@ -1049,8 +1201,79 @@ std::vector<Peer> Endpoint::getPeers() const
     std::vector<Peer> out;
     const double now = nowMs();
     for (auto& [inst, r] : impl->remotes)
-        if (r.announced) out.push_back ({ r.name, ipText (ntohl (r.from.sin_addr.s_addr)), r.port, r.remotePort, (now - r.lastSeen) / 1000.0 });
+        if (r.announced)
+        {
+            // A Hydra that restarted is heard under a new instance: list each name once (the newest).
+            auto same = std::find_if (out.begin(), out.end(), [&] (const Peer& p) { return sameName (p.name, r.name); });
+            Peer p { r.name, ipText (ntohl (r.from.sin_addr.s_addr)), r.port, r.remotePort, (now - r.lastSeen) / 1000.0 };
+            p.deviceId = r.device;
+            p.trusted = impl->trusts (r);
+            if (auto o = impl->outgoing.find (r.device); o != impl->outgoing.end()) p.pairing = o->second.state;
+            if (auto c = impl->codes.find (r.device); c != impl->codes.end() && c->second.port == r.remotePort) p.remoteCode = c->second.code;
+            if (same == out.end()) out.push_back (p);
+            else if (p.secondsAgo < same->secondsAgo) *same = p;
+        }
     return out;
+}
+
+void Endpoint::setTrusted (const std::vector<Trusted>& list)
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    impl->trusted.clear();
+    for (auto& t : list) if (t.id != 0) impl->trusted[t.id] = t.name;
+    ++impl->changes;
+}
+
+std::vector<Trusted> Endpoint::getTrusted() const
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    std::vector<Trusted> out;
+    for (auto& [id, n] : impl->trusted) out.push_back ({ id, n });
+    return out;
+}
+
+uint32_t Endpoint::getTrustVersion() const noexcept { return impl->trustVersion.load(); }
+
+std::vector<PairRequest> Endpoint::getRequests() const
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    std::vector<PairRequest> out;
+    for (auto& [id, in] : impl->incoming) out.push_back ({ id, in.name, ipText (ntohl (in.from.sin_addr.s_addr)) });
+    return out;
+}
+
+void Endpoint::answer (uint64_t id, bool allow)
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    auto it = impl->incoming.find (id);
+    if (it == impl->incoming.end()) return;
+    if (allow)
+    {
+        impl->trusted[id] = it->second.name;
+        ++impl->trustVersion;
+        impl->denied.erase (id);
+    }
+    else impl->denied[id] = nowMs() + 300000.0;
+    impl->incoming.erase (it);
+    ++impl->changes;
+}
+
+void Endpoint::requestPairing (const std::string& hydraName)
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    const double now = nowMs();
+    if (auto* r = impl->remoteByName (hydraName, now)) impl->startRequest (*r, now);
+}
+
+void Endpoint::forget (uint64_t id)
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    if (impl->trusted.erase (id) > 0) ++impl->trustVersion;
+    impl->outgoing.erase (id);
+    impl->codes.erase (id);
+    if (auto* r = impl->remoteByDevice (id, nowMs())) impl->unpairs.push_back ({ r->from, id });
+    impl->dropUntrusted();
+    ++impl->changes;
 }
 
 std::vector<Stream> Endpoint::getStreams() const
@@ -1060,7 +1283,7 @@ std::vector<Stream> Endpoint::getStreams() const
     const double now = nowMs();
     for (auto& [inst, r] : impl->remotes)
         for (auto& [id, x] : r.rx)
-            if (x.hasInfo && now - x.lastInfo < 5000.0)
+            if (x.hasInfo && now - x.lastInfo < 5000.0 && impl->trusts (r))
                 out.push_back ({ x.stream, r.name, ipText (ntohl (r.from.sin_addr.s_addr)), x.codec, x.channels, x.frames, x.kbps, x.rate, (now - x.lastPacket) / 1000.0 });
     return out;
 }
@@ -1092,7 +1315,7 @@ void Endpoint::pull (float* out, int frames) noexcept
 {
     impl->inPull.store (true, std::memory_order_seq_cst);
     auto* p = impl->rxLive.load (std::memory_order_seq_cst);
-    const float g = playGain.load (std::memory_order_relaxed);
+    const float g = playMuted.load (std::memory_order_relaxed) ? 0.0f : playGain.load (std::memory_order_relaxed);
     for (int done = 0; done < frames;)
     {
         const int n = std::min (frames - done, kMaxChunk);
@@ -1118,6 +1341,8 @@ RxStats Endpoint::getRxStats()
         const double now = nowMs();
         if (rit != impl->remotes.end())
             if (auto x = rit->second.rx.find (pb->id); x != rit->second.rx.end()) s.receiving = now - x->second.lastPacket < 1000.0;
+        if (rit != impl->remotes.end())
+            if (auto x = rit->second.rx.find (pb->id); x != rit->second.rx.end()) s.stream = x->second.stream;
         s.codec = pb->codec;
         s.rate = pb->rate;
         s.received = pb->received;
@@ -1220,6 +1445,7 @@ void Endpoint::push (const float* in, int channels, int frames) noexcept
     if (auto* p = impl->txLive.load (std::memory_order_seq_cst))
     {
         const float g = micGain.load (std::memory_order_relaxed);
+        const float send = micMuted.load (std::memory_order_relaxed) ? 0.0f : 1.0f;   // muted: silence, the meter still shows the mic
         float pk = 0.0f;
         for (int done = 0; done < frames;)
         {
@@ -1229,9 +1455,9 @@ void Endpoint::push (const float* in, int channels, int frames) noexcept
                 const float* f = in + (size_t) (done + i) * (size_t) channels;
                 float a = f[0] * g, b = (channels > 1 ? f[1] : f[0]) * g;
                 if (p->channels == 1 && channels > 1) a = 0.5f * (a + b);
-                p->l[(size_t) i] = a;
-                p->r[(size_t) i] = b;
                 pk = std::max (pk, std::max (std::abs (a), p->channels > 1 ? std::abs (b) : 0.0f));
+                p->l[(size_t) i] = a * send;
+                p->r[(size_t) i] = b * send;
             }
             const float* src[2] = { p->l.data(), p->r.data() };
             if (p->ring.write (src, p->channels, n) < n) p->overflows.fetch_add (1, std::memory_order_relaxed);

@@ -52,6 +52,7 @@ bool Audio::startOutput (std::string& error)
     if (out == nullptr) return false;
     outRate = AAudioStream_getSampleRate (out);
     outBurst = AAudioStream_getFramesPerBurst (out);
+    outDevice = AAudioStream_getDeviceId (out);
     // Two bursts: the usual low-latency setting; grows by one burst after each underrun (see outCallback).
     outBufferFrames = AAudioStream_setBufferSizeInFrames (out, outBurst * 2);
     endpoint.setOutputFormat (outRate, outBurst);
@@ -73,6 +74,7 @@ void Audio::stopOutput()
     AAudioStream_requestStop (out);
     AAudioStream_close (out);
     out = nullptr;
+    outDevice = 0;
 }
 
 bool Audio::startInput (int channels, int preset, std::string& error)
@@ -86,6 +88,7 @@ bool Audio::startInput (int channels, int preset, std::string& error)
     inRate = AAudioStream_getSampleRate (in);
     inBurst = AAudioStream_getFramesPerBurst (in);
     inChannels = AAudioStream_getChannelCount (in);
+    inDevice = AAudioStream_getDeviceId (in);
     if (AAudioStream_requestStart (in) != AAUDIO_OK)
     {
         AAudioStream_close (in);
@@ -104,6 +107,7 @@ void Audio::stopInput()
     AAudioStream_requestStop (in);
     AAudioStream_close (in);
     in = nullptr;
+    inDevice = 0;
 }
 
 aaudio_data_callback_result_t Audio::outCallback (AAudioStream* s, void* user, void* data, int32_t frames)

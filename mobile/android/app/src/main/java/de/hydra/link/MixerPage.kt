@@ -22,8 +22,8 @@ import org.json.JSONObject
 
 /** Hydra Remote inside the app: the web control Hydra serves (resources/remote/index.html, ?embed=1), shown in a
     WebView without its own header and navigation. The app's navigation switches its views (hydra.setView), the
-    page reports its status back (HydraApp.status). Which Hydra: the one whose announcement carries a remote port
-    (Hydra Link), preferably the one chosen for sending; or an address entered by hand. */
+    page reports its status back (HydraApp.status). Which Hydra: the one this phone is connected to (Audio page);
+    its access code comes with the pairing (Hydra Link), so nothing has to be typed. Or an address entered by hand. */
 @SuppressLint("SetJavaScriptEnabled")
 class MixerPage(private val act: MainActivity) {
     private val prefs = act.prefs
@@ -36,6 +36,7 @@ class MixerPage(private val act: MainActivity) {
     private var pageOk = false
     private var wantView = "in"
     private var failedAt = 0L
+    private lateinit var emptyAction: TextView
 
     init {
         view.setBackgroundColor(Hc.bg)
@@ -73,8 +74,9 @@ class MixerPage(private val act: MainActivity) {
         emptyText = act.label("", 14f, Hc.dim).apply { gravity = Gravity.CENTER; setLineSpacing(0f, 1.25f) }
         empty.addView(emptyTitle, lp(bottom = act.dpi(10)))
         empty.addView(emptyText, lp(bottom = act.dpi(22)))
-        empty.addView(act.hbutton(act.getString(R.string.mixer_address), primary = true) { addressDialog() }, lp(bottom = act.dpi(8)))
-        empty.addView(act.hbutton(act.getString(R.string.retry)) { loadedUrl = ""; failedAt = 0 })
+        emptyAction = act.hbutton(act.getString(R.string.mixer_connect), primary = true) { act.selectTab("audio") }
+        empty.addView(emptyAction, lp(bottom = act.dpi(8)))
+        empty.addView(act.hbutton(act.getString(R.string.mixer_address)) { addressDialog() })
         view.addView(empty, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         showEmpty(act.getString(R.string.mixer_searching_title), act.getString(R.string.mixer_searching))
     }
@@ -104,15 +106,24 @@ class MixerPage(private val act: MainActivity) {
         if (pageOk) web.evaluateJavascript("window.hydra && hydra.setView('$v')", null)
     }
 
-    /** Picks the Hydra and loads its page when it changed (called 10x per second with the endpoint's state). */
-    fun update(s: JSONObject) {
-        val url = targetUrl(s)
+    /** Loads the connected Hydra's page when it changed (called 10x per second with the endpoint's state). */
+    fun update(s: JSONObject, hydra: String, peer: JSONObject?) {
+        val url = targetUrl(hydra, peer)
         if (url == null) {
             if (loadedUrl.isNotEmpty() || emptyTitle.text.isEmpty()) {
                 loadedUrl = ""
                 web.loadUrl("about:blank")
             }
-            showEmpty(act.getString(R.string.mixer_searching_title), act.getString(R.string.mixer_searching))
+            emptyAction.visibility = View.VISIBLE
+            when {
+                hydra.isEmpty() -> showEmpty(act.getString(R.string.mixer_not_connected_title), act.getString(R.string.mixer_not_connected_text))
+                peer == null -> showEmpty(act.getString(R.string.mixer_searching_title), act.getString(R.string.hydra_offline, hydra))
+                peer.optBoolean("trusted") && peer.optInt("remote") <= 0 -> {
+                    emptyAction.visibility = View.GONE
+                    showEmpty(act.getString(R.string.mixer_remote_off_title), act.getString(R.string.mixer_remote_off, hydra))
+                }
+                else -> showEmpty(act.getString(R.string.mixer_not_connected_title), act.getString(R.string.mixer_waiting, hydra))
+            }
             return
         }
         // After an error: try again every 5 s (Hydra started, Wi-Fi back).
@@ -123,21 +134,18 @@ class MixerPage(private val act: MainActivity) {
         web.loadUrl(url)
     }
 
-    private fun targetUrl(s: JSONObject): String? {
+    private fun targetUrl(hydra: String, peer: JSONObject?): String? {
         val manual = prefs.getString("mixerHost", "") ?: ""
         if (manual.isNotEmpty()) {
             val host = if (manual.contains(":")) manual else "$manual:6981"
             return "http://$host/?embed=1"
         }
-        val peers = s.getJSONArray("peers")
-        val chosen = prefs.getString("hydra", "") ?: ""
-        var best: JSONObject? = null
-        for (i in 0 until peers.length()) {
-            val p = peers.getJSONObject(i)
-            if (p.optInt("remote") <= 0) continue
-            if (best == null || p.optString("name").equals(chosen, true)) best = p
-        }
-        return best?.let { "http://${it.optString("address")}:${it.optInt("remote")}/?embed=1" }
+        if (hydra.isEmpty() || peer == null || !peer.optBoolean("trusted") || peer.optInt("remote") <= 0) return null
+        // The code goes in the fragment (the page takes it from there); "c" changes the URL when the code changes,
+        // so the page loads anew (a fragment alone would not reload it).
+        val code = peer.optString("code")
+        val base = "http://${peer.optString("address")}:${peer.optInt("remote")}/?embed=1"
+        return if (code.isEmpty()) base else "$base&c=${Integer.toHexString(code.hashCode())}#k=$code"
     }
 
     private fun addressDialog() {

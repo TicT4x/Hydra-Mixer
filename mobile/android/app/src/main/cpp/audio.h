@@ -27,6 +27,7 @@ public:
 
     int outRate = 48000, outBurst = 192, outBufferFrames = 0, inRate = 48000, inBurst = 192;
     bool outExclusive = false, inExclusive = false;
+    int outDevice = 0, inDevice = 0;   // AAudio device ids (= AudioDeviceInfo.getId in Java); 0 = unknown
     std::atomic<int> outXruns { 0 };
 
 private:

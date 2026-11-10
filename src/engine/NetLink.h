@@ -19,7 +19,14 @@
 
     Security: without a password only private addresses (local network) are accepted and sent to. With a
     password every packet is AES-256-GCM encrypted (core/NetCrypto.h) and only Hydras with the same password
-    are heard; this is required for anything outside the local network. */
+    are heard; this is required for anything outside the local network.
+
+    Pairing (without a password, since 10.11.): every Hydra / phone has a persistent device id (announced). Audio
+    is only taken from paired devices. A device asks the other one ("Pair" request, repeated each second); there
+    the user allows or denies once (Hub::getRequests / answer), both sides then store each other (Hub::getTrusted,
+    persisted by the app). An output to a Hydra that is not paired asks it by itself. A phone asking a Hydra that
+    allows it gets Hydra Remote's port + access code in the answer (control without typing the code). With a
+    password the password is the proof: every Hydra with it counts as paired. */
 namespace hydra::net
 {
 constexpr int kDefaultPort = 6980;
@@ -53,6 +60,32 @@ struct Source
 /** Stream names: what a channel is called, shortened to what the packet format carries. */
 juce::String cleanName (const juce::String&);
 
+enum class DeviceKind : uint8_t { computer = 0, phone = 1 };
+
+/** A device this one trusts (paired). */
+struct TrustedDevice
+{
+    uint64_t id = 0;
+    juce::String name;
+    DeviceKind kind = DeviceKind::computer;
+    bool operator== (const TrustedDevice&) const = default;
+};
+
+/** "1a2b...": device ids as text (sessions, the phone app). */
+juce::String deviceIdText (uint64_t);
+uint64_t parseDeviceId (const juce::String&);
+
+/** Another device that asks to be paired with this one (waiting for the user's answer). */
+struct PairRequest
+{
+    uint64_t id = 0;
+    juce::String name, address;
+    DeviceKind kind = DeviceKind::computer;
+};
+
+/** Where pairing with another device stands (from this side's view). */
+enum class PairState { none, asking, allowed, denied, noAnswer };
+
 struct Config
 {
     int port = kDefaultPort;
@@ -62,6 +95,9 @@ struct Config
     bool broadcast = true;     // announce in the local networks (off in the tests: they must not show up elsewhere)
     bool loopbackOnly = false; // tests: listen on 127.0.0.1 only (no firewall question, nothing reachable from outside)
     int remotePort = 0;        // Hydra Remote's web app (TCP), announced so the phone app finds it; 0 = off
+    juce::String remoteCode;   // Hydra Remote's access code: given to phones this Hydra pairs with
+    uint64_t deviceId = 0;     // persistent id of this Hydra (0 = a random one per start: tests)
+    bool pairing = true;       // without a password: audio only from paired devices (false: from every Hydra in the LAN)
     bool operator== (const Config&) const = default;
 };
 
@@ -73,6 +109,10 @@ struct PeerInfo
     int port = kDefaultPort;
     bool lan = true, manual = false;
     double secondsAgo = 1.0e9;
+    uint64_t deviceId = 0;                  // 0: an older Hydra (cannot pair) or not heard yet
+    DeviceKind kind = DeviceKind::computer;
+    bool trusted = false;                   // paired (or no pairing needed: password / pairing off)
+    PairState pairing = PairState::none;    // this side's request to it
 };
 
 /** A stream this Hydra receives (or could receive). */
@@ -121,6 +161,22 @@ public:
     juce::String getRejectHint() const;
     /** Packets turned away so far (wrong password, changed, repeated, not allowed). */
     uint32_t getRejectedCount() const noexcept;
+
+    //--------------------------------------------------------------------------
+    // Pairing
+    /** The paired devices (the app loads them once at start; changes by pairing raise getTrustVersion()). */
+    void setTrusted (std::vector<TrustedDevice>);
+    std::vector<TrustedDevice> getTrusted() const;
+    uint32_t getTrustVersion() const noexcept;
+    /** Devices asking to be paired right now (they ask again every second; gone after 10 s without asking). */
+    std::vector<PairRequest> getRequests() const;
+    /** The user's answer. Allowed: stored on both sides. Denied: that device is not asked about for 5 minutes. */
+    void answer (uint64_t deviceId, bool allow);
+    /** Asks a device (by its announced name) to pair: repeated each second until it answers (2 min at most). */
+    void requestPairing (const juce::String& peerName);
+    /** Unpairs (and tells the other side, which unpairs as well). */
+    void forget (uint64_t deviceId);
+    bool isTrusted (uint64_t deviceId) const;
 
     static juce::StringArray localAddresses();
     static juce::String computerName();

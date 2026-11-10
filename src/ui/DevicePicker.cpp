@@ -716,8 +716,14 @@ void DevicePicker::buildModel()
                 for (auto& p : hub.getPeers())
                 {
                     const auto host = p.name.isNotEmpty() ? p.name : p.address;
-                    addHost (host, p.port, p.lan, p.name.isNotEmpty() ? p.address + (p.lan ? juce::String() : ", outside the local network")
-                                                                      : juce::String ("added in Settings, no answer yet"));
+                    juce::String detail = p.name.isEmpty() ? juce::String ("added in Settings, no answer yet")
+                                                           : p.address + (p.lan ? juce::String() : ", outside the local network");
+                    if (p.name.isNotEmpty() && ! p.trusted)
+                        detail << (p.deviceId == 0 ? ", older Hydra: update it"
+                                   : p.pairing == net::PairState::asking ? ", waiting for the answer there"
+                                   : p.pairing == net::PairState::denied ? ", denied there"
+                                   : ", not connected yet: choosing it asks there");
+                    addHost (host, p.port, p.lan, detail);
                     listed.add (host);
                 }
             if (cur.kind == IoTarget::Kind::Network && ! listed.contains (curDest.host, true))

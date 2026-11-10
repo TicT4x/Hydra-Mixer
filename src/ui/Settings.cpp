@@ -1031,6 +1031,123 @@ private:
 };
 
 //==============================================================================
+/** Hydra Link pairing: the connected devices (Remove) and the ones found in the network (Connect). */
+class LinkDevices final : public juce::Component
+{
+public:
+    static constexpr int kRow = 40;
+
+    /** Rebuilds the rows when something changed. True if the number of rows changed (the page lays out again). */
+    bool refresh()
+    {
+        auto& hub = net::Hub::get();
+        std::vector<Row> next;
+        const auto peers = hub.isRunning() ? hub.getPeers() : std::vector<net::PeerInfo>();
+        const bool openMode = hub.getConfig().password.isNotEmpty();
+        auto kindText = [] (net::DeviceKind k) { return k == net::DeviceKind::phone ? juce::String ("Phone") : juce::String ("Computer"); };
+        for (auto& t : hub.getTrusted())
+        {
+            Row r { t.name, {}, t.id, 2, false };
+            auto on = std::find_if (peers.begin(), peers.end(), [&] (const net::PeerInfo& p) { return p.deviceId == t.id; });
+            r.online = on != peers.end();
+            r.detail = kindText (t.kind) + ", connected" + (r.online ? " - " + on->address : juce::String (" - not on the network right now"));
+            next.push_back (r);
+        }
+        for (auto& p : peers)
+        {
+            if (p.name.isEmpty() || (p.deviceId != 0 && hub.isTrusted (p.deviceId))) continue;
+            Row r { p.name, {}, p.deviceId, 1, true };
+            if (p.deviceId == 0)    { r.action = 0; r.detail = "an older Hydra: update it to connect"; }
+            else if (openMode)      { r.action = 0; r.detail = kindText (p.kind) + " - " + p.address + ", connected by the network password"; }
+            else switch (p.pairing)
+            {
+                case net::PairState::asking:   r.action = 3; r.detail = "Waiting for the answer on " + p.name + " ..."; break;
+                case net::PairState::denied:   r.detail = "Denied on " + p.name + " (it can be asked again in a few minutes)"; break;
+                case net::PairState::noAnswer: r.detail = "No answer from " + p.name; break;
+                default:                       r.detail = kindText (p.kind) + " - " + p.address + ", not connected"; break;
+            }
+            next.push_back (r);
+        }
+        if (next == rows) return false;
+        const bool countChanged = next.size() != rows.size();
+        rows = std::move (next);
+        buttons.clear();
+        for (auto& r : rows)
+        {
+            auto* b = buttons.add (new juce::TextButton (r.action == 2 ? "Remove" : r.action == 3 ? "Asking ..." : "Connect"));
+            addChildComponent (b);
+            b->setVisible (r.action != 0);
+            b->setEnabled (r.action == 1 || r.action == 2);
+            const auto id = r.id;
+            const auto name = r.name;
+            if (r.action == 1) b->onClick = [name] { net::Hub::get().requestPairing (name); };
+            if (r.action == 2)
+                b->onClick = [this, id, name]
+                {
+                    dialog::confirm (this, dialog::Kind::warning, "Remove " + name + "?",
+                                     name + " can no longer send audio to this Hydra or get audio from it (it is told so). "
+                                     "Connecting again needs a new confirmation.",
+                                     "Remove", [id] { net::Hub::get().forget (id); });
+                };
+        }
+        resized();
+        repaint();
+        return countChanged;
+    }
+
+    int wantedHeight() const { return rows.empty() ? 30 : (int) rows.size() * kRow; }
+
+    void paint (juce::Graphics& g) override
+    {
+        if (rows.empty())
+        {
+            g.setColour (theme::textDim);
+            g.setFont (theme::font (12.5f));
+            g.drawText (net::Hub::get().isRunning() ? "No other Hydra or phone found in the network yet."
+                                                    : "Turn Hydra Link on to find other devices.",
+                        getLocalBounds(), juce::Justification::centredLeft);
+            return;
+        }
+        for (size_t i = 0; i < rows.size(); ++i)
+        {
+            auto r = juce::Rectangle<int> (0, (int) i * kRow, getWidth(), kRow);
+            g.setColour ((i & 1) ? theme::panel : theme::panel2);
+            g.fillRect (r);
+            r = r.reduced (10, 3);
+            const auto& row = rows[i];
+            g.setColour (row.action == 2 && row.online ? theme::good : theme::textFaint);
+            g.fillEllipse (r.removeFromLeft (8).withSizeKeepingCentre (8, 8).toFloat());
+            r.removeFromLeft (10);
+            r.removeFromRight (110);
+            g.setColour (theme::text);
+            g.setFont (theme::font (13.0f, true));
+            g.drawText (row.name, r.withHeight (r.getHeight() / 2 + 2), juce::Justification::bottomLeft, true);
+            g.setColour (theme::textDim);
+            g.setFont (theme::font (11.5f));
+            g.drawText (row.detail, r.withTrimmedTop (r.getHeight() / 2 + 2), juce::Justification::topLeft, true);
+        }
+    }
+
+    void resized() override
+    {
+        for (int i = 0; i < buttons.size(); ++i)
+            buttons[i]->setBounds (getWidth() - 106, i * kRow + 7, 96, kRow - 14);
+    }
+
+private:
+    struct Row
+    {
+        juce::String name, detail;
+        uint64_t id = 0;
+        int action = 0;   // 0 none, 1 connect, 2 remove, 3 asking
+        bool online = false;
+        bool operator== (const Row&) const = default;
+    };
+    std::vector<Row> rows;
+    juce::OwnedArray<juce::TextButton> buttons;
+};
+
+//==============================================================================
 /** Hydra Link: audio between computers (engine/NetLink.h). */
 class NetworkTab final : public SettingsPage, private juce::Timer
 {
@@ -1053,7 +1170,13 @@ public:
                     "ZeroTier, or the internet) need their address here, one per line: \"100.101.102.103\" or "
                     "\"studio.example.com:6980\". Over the internet the receiving side must forward the UDP port in its router "
                     "(a VPN needs no forwarding).");
+        addHeading (devicesH, "Devices",
+                    "Other Hydras and phones (Hydra Link app) connect once: one side asks, the other confirms, both remember "
+                    "it. Audio is only taken from connected devices. Choosing a Hydra as the output of a V bus asks it by "
+                    "itself; \"Connect\" asks it right away. A phone that is allowed can also control the mixer.\n\n"
+                    "With a network password every Hydra that has it counts as connected.");
         addHeading (heardH, "On the network");
+        addAndMakeVisible (devices);
 
         addAndMakeVisible (enabled);
         enabled.setButtonText ("Send and receive audio over the network");
@@ -1127,6 +1250,8 @@ public:
         labelled (r, portL, port, 100);
         section (r, secH);
         labelled (r, passwordL, password, 260);
+        section (r, devicesH);
+        devices.setBounds (r.removeFromTop (devices.wantedHeight()).withWidth (juce::jmin (kMaxWidth, r.getWidth())));
         section (r, peersH);
         peers.setBounds (r.removeFromTop (58).withWidth (juce::jmin (420, r.getWidth())));
         section (r, heardH);
@@ -1163,6 +1288,7 @@ private:
         }
         status.setText (s, juce::dontSendNotification);
         status.setColour (juce::Label::textColourId, prefs().netEnabled && ! on ? theme::mute : theme::text);
+        if (devices.refresh()) resized();
         for (auto* c : { (juce::Component*) &name, (juce::Component*) &port, (juce::Component*) &password, (juce::Component*) &peers })
             c->setAlpha (prefs().netEnabled ? 1.0f : 0.5f);
 
@@ -1194,7 +1320,8 @@ private:
     }
 
     UiContext& ctx;
-    Heading linkH, secH, peersH, heardH;
+    Heading linkH, secH, peersH, heardH, devicesH;
+    LinkDevices devices;
     juce::ToggleButton enabled;
     juce::Label status, nameL { {}, "Computer name" }, portL { {}, "Port" }, passwordL { {}, "Network password" };
     juce::TextEditor name, port, password, peers, heard;

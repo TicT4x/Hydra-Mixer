@@ -59,6 +59,8 @@ class LinkService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            // "Stop" in the notification = disconnect (the pairing stays; the app does not reconnect by itself).
+            getSharedPreferences("hydra", Context.MODE_PRIVATE).edit().putString("hydra", "").apply()
             NativeLink.listen("", "")
             NativeLink.stopSending()
             stopSelf()

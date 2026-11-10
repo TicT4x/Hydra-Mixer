@@ -110,6 +110,19 @@ bool Session::save (const juce::File& f) const
     if (prefs.remotePort != remote::kDefaultPort) app->setAttribute ("remotePort", prefs.remotePort);
     if (prefs.remoteCode.isNotEmpty()) app->setAttribute ("remoteKey", protectedRemoteCode (prefs.remoteCode));
 
+    if (prefs.netDeviceId.isNotEmpty()) app->setAttribute ("netDeviceId", prefs.netDeviceId);
+    if (! prefs.netTrusted.isEmpty())
+    {
+        auto* nt = root.createNewChildElement ("NETTRUST");
+        for (auto& t : prefs.netTrusted)
+        {
+            auto* e = nt->createNewChildElement ("DEVICE");
+            e->setAttribute ("id", t.upToFirstOccurrenceOf ("|", false, false));
+            e->setAttribute ("kind", t.fromFirstOccurrenceOf ("|", false, false).upToFirstOccurrenceOf ("|", false, false).getIntValue());
+            e->setAttribute ("name", t.fromFirstOccurrenceOf ("|", false, false).fromFirstOccurrenceOf ("|", false, false));
+        }
+    }
+
     if (! vacHidden.empty())
     {
         auto* vh = root.createNewChildElement ("VACHIDDEN");
@@ -208,6 +221,15 @@ bool Session::load (const juce::File& f)
     // Renamed devices belong to this PC, not to the file: an imported session adds its entries but never
     // drops the ones we know (their original names would be lost).
     // Like the renames: endpoints hidden on this PC are only ever added (so they can be shown again).
+    if (auto* app = root->getChildByName ("APP"))
+        if (app->hasAttribute ("netDeviceId")) prefs.netDeviceId = app->getStringAttribute ("netDeviceId");
+    if (auto* nt = root->getChildByName ("NETTRUST"))
+    {
+        prefs.netTrusted.clear();
+        for (auto* e : nt->getChildWithTagNameIterator ("DEVICE"))
+            if (const auto id = e->getStringAttribute ("id"); id.isNotEmpty())
+                prefs.netTrusted.add (id + "|" + juce::String (e->getIntAttribute ("kind")) + "|" + e->getStringAttribute ("name"));
+    }
     if (auto* vh = root->getChildByName ("VACHIDDEN"))
         for (auto* e : vh->getChildWithTagNameIterator ("ENDPOINT"))
             if (const auto id = e->getStringAttribute ("id"); id.isNotEmpty() && ! std::count (vacHidden.begin(), vacHidden.end(), id))

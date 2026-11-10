@@ -33,12 +33,18 @@ namespace
       16  u64 counter   (the sender's packet number: nonce of the encryption, replay window)
    Audio:     u32 stream id, u32 sequence, u32 sample position, u8 codec, u8 channels, u16 frames, payload
    Info:      u32 stream id, u8 codec, u8 channels, u16 frames, u32 rate, u16 kbps, str stream, str sender
-   Announce:  u16 port, str name, u16 remote port (Hydra Remote, 0 = off; since 9.11., may be missing)
+   Announce:  u16 port, str name, u16 remote port (Hydra Remote, 0 = off; since 9.11., may be missing),
+              u64 device id, u8 kind (0 computer, 1 phone)   (since 10.11., may be missing: then it cannot pair)
    Feedback:  u32 stream id, u32 received, u32 lost, u32 late, u32 jitter (us), u32 buffer (us)   (deltas since the last one)
    Bye:       u32 stream id
+   Pair:      u8 op (1 request, 2 answer, 3 unpair), u64 from device, u64 to device, u8 kind, str name,
+              answer only: u8 result (0 denied, 1 allowed, 2 still asking the user), u16 remote port, str remote code
+              (port + code only for an allowed phone)   (since 10.11.)
    str = u8 length + UTF-8 bytes (at most 63). */
 constexpr uint8_t kVersion = 1;
-enum PacketType : uint8_t { tAudio = 1, tInfo = 2, tAnnounce = 3, tFeedback = 4, tBye = 5 };
+enum PacketType : uint8_t { tAudio = 1, tInfo = 2, tAnnounce = 3, tFeedback = 4, tBye = 5, tPair = 6 };
+enum PairOp : uint8_t { opRequest = 1, opAnswer = 2, opUnpair = 3 };
+enum PairResult : uint8_t { resDenied = 0, resAllowed = 1, resWaiting = 2 };
 constexpr int kHeader = 24;
 constexpr int kAudioHeader = 16;
 constexpr int kMaxPacket = 1200;   // stays below the MTU of any network, VPNs included
@@ -158,6 +164,16 @@ int pcmPacketFrames (int engineBlock, Codec codec, int channels)
 } // namespace
 
 //==============================================================================
+juce::String deviceIdText (uint64_t id)
+{
+    return juce::String::toHexString ((juce::int64) id).paddedLeft ('0', 16);
+}
+
+uint64_t parseDeviceId (const juce::String& s)
+{
+    return (uint64_t) s.trim().getHexValue64();
+}
+
 juce::String cleanName (const juce::String& s)
 {
     auto t = s.removeCharacters ("@/?&\r\n\t").trim();
@@ -267,6 +283,8 @@ struct Remote
     double lastSeen = 0.0;
     int port = 0;
     bool announced = false;
+    uint64_t device = 0;                   // persistent device id (announce / pair), 0 = unknown
+    DeviceKind kind = DeviceKind::computer;
     uint64_t maxCounter = 0, window = 0;   // replay window (encrypted packets only)
     std::map<uint32_t, std::unique_ptr<Rx>> rx;
 
@@ -491,6 +509,7 @@ struct Hub::Impl
         WSAEventSelect (sock, sockEvent, FD_READ);
 
         instance = randomU64();
+        if (want.deviceId != 0) myDevice = want.deviceId;
         counter = 0;
         quit = false;
         {
@@ -643,7 +662,8 @@ struct Hub::Impl
     {
         if (now - lastIfScan > 30000.0) { scanInterfaces(); lastIfScan = now; }
         // Since 9.11. a third field: Hydra Remote's port (0 = off). Older receivers stop reading after the name.
-        auto fill = [this] (Writer& w) { w.u16 ((uint32_t) cfg.port); w.str (name); w.u16 ((uint32_t) cfg.remotePort); };
+        // Since 10.11.: device id + kind (pairing).
+        auto fill = [this] (Writer& w) { w.u16 ((uint32_t) cfg.port); w.str (name); w.u16 ((uint32_t) cfg.remotePort); w.u64 (myDevice); w.u8 (0); };
         if (cfg.broadcast)
             for (auto& b : broadcasts)
             {
@@ -802,6 +822,7 @@ struct Hub::Impl
             case tAnnounce: onAnnounce (*r, b); break;
             case tFeedback: onFeedback (b); break;
             case tBye:      onBye (*r, b); break;
+            case tPair:     onPair (*r, b, now); break;
             default: break;
         }
     }
@@ -841,6 +862,180 @@ struct Hub::Impl
         r.announced = true;
         r.name = n;
         r.port = port;
+        if (b.restBytes() >= 2) b.u16();   // Hydra Remote's port (the phone app reads it)
+        if (b.restBytes() >= 9)
+        {
+            const uint64_t dev = b.u64();
+            const auto kind = b.u8() == 1 ? DeviceKind::phone : DeviceKind::computer;
+            if (dev != r.device) { r.device = dev; changes.fetch_add (1); }
+            r.kind = kind;
+        }
+    }
+
+    //==========================================================================
+    // Pairing (network thread, under the lock; the Hub's methods change the state, the packets go from here)
+
+    bool trusts (const Remote& r) const noexcept
+    {
+        return ! cfg.pairing || keys.isOn() || (r.device != 0 && trusted.count (r.device) > 0);
+    }
+
+    template <typename Extra>
+    void sendPair (const sockaddr_in& to, PairOp op, uint64_t toDevice, Extra&& extra)
+    {
+        send (tPair, to, [&] (Writer& w)
+        {
+            w.u8 (op); w.u64 (myDevice); w.u64 (toDevice); w.u8 (0); w.str (name);
+            extra (w);
+        });
+    }
+
+    void onPair (Remote& r, Reader& b, double now)
+    {
+        const auto op = (uint8_t) b.u8();
+        const uint64_t fromDev = b.u64(), toDev = b.u64();
+        const auto kind = b.u8() == 1 ? DeviceKind::phone : DeviceKind::computer;
+        const auto who = cleanName (b.str());
+        if (! b.ok || fromDev == 0 || toDev != myDevice) return;
+        if (r.device != fromDev) { r.device = fromDev; changes.fetch_add (1); }
+        r.kind = kind;
+
+        if (op == opRequest)
+        {
+            uint8_t result = resWaiting;
+            if (keys.isOn() || ! cfg.pairing) result = resAllowed;
+            else if (auto t = trusted.find (fromDev); t != trusted.end())
+            {
+                result = resAllowed;
+                if (who.isNotEmpty() && (t->second.name != who || t->second.kind != kind))
+                {
+                    t->second.name = who;
+                    t->second.kind = kind;
+                    trustVersion.fetch_add (1);
+                }
+            }
+            else if (auto d = denied.find (fromDev); d != denied.end() && now < d->second) result = resDenied;
+            else
+            {
+                auto& in = incoming[fromDev];
+                if (in.name != who || in.lastAsked == 0.0) changes.fetch_add (1);
+                in.name = who.isNotEmpty() ? who : juce::String ("Unknown device");
+                in.kind = kind;
+                in.from = r.from;
+                in.lastAsked = now;
+            }
+            const bool giveCode = result == resAllowed && kind == DeviceKind::phone && cfg.remotePort > 0;
+            sendPair (r.from, opAnswer, fromDev, [&] (Writer& w)
+            {
+                w.u8 (result);
+                w.u16 (giveCode ? (uint32_t) cfg.remotePort : 0u);
+                w.str (giveCode ? cfg.remoteCode : juce::String());
+            });
+        }
+        else if (op == opAnswer)
+        {
+            const auto result = (uint8_t) b.u8();
+            if (! b.ok) return;
+            auto it = outgoing.find (fromDev);
+            if (it == outgoing.end() || it->second.state != PairState::asking) return;   // only answers to our own requests
+            if (result == resAllowed)
+            {
+                trusted[fromDev] = { fromDev, who.isNotEmpty() ? who : it->second.name, kind };
+                trustVersion.fetch_add (1);
+                it->second.state = PairState::allowed;
+                bindInputs (now);
+            }
+            else if (result == resDenied) it->second.state = PairState::denied;
+            else it->second.lastWaiting = now;
+            changes.fetch_add (1);
+        }
+        else if (op == opUnpair)
+        {
+            if (trusted.erase (fromDev) > 0)
+            {
+                trustVersion.fetch_add (1);
+                unbindDevice (fromDev);
+            }
+            outgoing.erase (fromDev);
+            changes.fetch_add (1);
+        }
+    }
+
+    /** Streams of a device that is no longer trusted stop. */
+    void unbindDevice (uint64_t dev)
+    {
+        for (auto& [inst, r] : remotes)
+            if (r->device == dev && ! trusts (*r))
+                for (auto& [id, rx] : r->rx) unbind (*rx);
+        changes.fetch_add (1);
+    }
+
+    Remote* remoteByName (const juce::String& n, double now)
+    {
+        Remote* best = nullptr;
+        for (auto& [inst, r] : remotes)
+            if (r->announced && r->device != 0 && r->name.equalsIgnoreCase (n) && now - r->lastSeen < 10000.0
+                && (best == nullptr || r->lastSeen > best->lastSeen)) best = r.get();
+        return best;
+    }
+
+    Remote* remoteByDevice (uint64_t dev, double now)
+    {
+        Remote* best = nullptr;
+        for (auto& [inst, r] : remotes)
+            if (r->device == dev && now - r->lastSeen < 10000.0 && (best == nullptr || r->lastSeen > best->lastSeen)) best = r.get();
+        return best;
+    }
+
+    void startRequest (const Remote& r, double now)
+    {
+        auto& o = outgoing[r.device];
+        o.name = r.name;
+        o.started = now;
+        o.lastSent = -1.0e9;
+        o.lastWaiting = 0.0;
+        o.state = PairState::asking;
+        changes.fetch_add (1);
+    }
+
+    void pairingHousekeeping (double now)
+    {
+        for (auto& [to, dev] : unpairs) sendPair (to, opUnpair, dev, [] (Writer&) {});
+        unpairs.clear();
+        if (keys.isOn() || ! cfg.pairing) return;
+
+        // An output to a Hydra that is not paired asks it by itself (again after 10 minutes if it was denied / not answered).
+        for (auto* o : outs)
+        {
+            if (! o->running.load (std::memory_order_relaxed)) continue;
+            Remote* r = o->byName ? remoteByName (o->dest.host, now) : nullptr;
+            if (! o->byName)
+                for (auto& [inst, x] : remotes)
+                    if (x->announced && x->device != 0 && ipOf (x->from) == ipOf (o->to) && now - x->lastSeen < 10000.0) r = x.get();
+            if (r == nullptr || trusts (*r)) continue;
+            auto it = outgoing.find (r->device);
+            if (it == outgoing.end() || (it->second.state != PairState::asking && now - it->second.started > 600000.0)) startRequest (*r, now);
+        }
+
+        // Our requests: once per second until answered; 2 minutes at most (the other side may be away from its screen).
+        for (auto& [dev, o] : outgoing)
+        {
+            if (o.state != PairState::asking) continue;
+            if (now - o.started > 120000.0) { o.state = PairState::noAnswer; changes.fetch_add (1); continue; }
+            if (now - o.lastSent < 1000.0) continue;
+            if (auto* r = remoteByDevice (dev, now))
+            {
+                o.lastSent = now;
+                sendPair (r->from, opRequest, dev, [] (Writer&) {});
+            }
+        }
+
+        // Requests nobody repeats any more are gone.
+        for (auto it = incoming.begin(); it != incoming.end();)
+            if (now - it->second.lastAsked > 10000.0) { it = incoming.erase (it); changes.fetch_add (1); }
+            else ++it;
+        for (auto it = denied.begin(); it != denied.end();)
+            if (now > it->second) it = denied.erase (it); else ++it;
     }
 
     void onInfo (Remote& r, Reader& b, double now)
@@ -1132,7 +1327,7 @@ struct Hub::Impl
             Remote* bestRemote = nullptr;
             for (auto& [inst, r] : remotes)
             {
-                if (! r->name.equalsIgnoreCase (in->source.sender)) continue;
+                if (! r->name.equalsIgnoreCase (in->source.sender) || ! trusts (*r)) continue;
                 for (auto& [id, rx] : r->rx)
                     if (rx->hasInfo && rx->stream.equalsIgnoreCase (in->source.stream) && now - rx->lastPacket < 1000.0
                         && (rx->sub == nullptr || rx->sub == in) && (best == nullptr || rx->lastPacket > best->lastPacket))
@@ -1166,6 +1361,7 @@ struct Hub::Impl
         byes.clear();
 
         if (now >= nextAnnounce) { announce (now); nextAnnounce = now + 2000.0; }
+        pairingHousekeeping (now);
 
         for (auto* o : outs)
         {
@@ -1237,7 +1433,18 @@ struct Hub::Impl
     std::thread worker, resolver;
     std::atomic<bool> quit { false };
     uint64_t instance = 0, counter = 0;
+    uint64_t myDevice = randomU64() | 1;   // persistent: Config::deviceId (random only in the tests)
     KeyRing keys;
+
+    // Pairing
+    struct Incoming { juce::String name; DeviceKind kind = DeviceKind::computer; sockaddr_in from {}; double lastAsked = 0.0; };
+    struct Outgoing { juce::String name; double started = 0.0, lastSent = -1.0e9, lastWaiting = 0.0; PairState state = PairState::none; };
+    std::map<uint64_t, TrustedDevice> trusted;
+    std::map<uint64_t, Incoming> incoming;
+    std::map<uint64_t, Outgoing> outgoing;
+    std::map<uint64_t, double> denied;   // device -> not asked about until
+    std::vector<std::pair<sockaddr_in, uint64_t>> unpairs;
+    std::atomic<uint32_t> trustVersion { 0 };
     juce::String keyPassword;
     std::array<uint8_t, 32> groupKey {};
     std::vector<NetInput*> ins;
@@ -1430,6 +1637,10 @@ std::vector<PeerInfo> Hub::getPeers() const
         // A Hydra that restarted is heard under a new instance: list each name once (the newest).
         auto same = std::find_if (list.begin(), list.end(), [&] (const PeerInfo& p) { return p.name.equalsIgnoreCase (r->name); });
         PeerInfo p { r->name, ipText (ipOf (r->from)), r->port, isLanIp (ipOf (r->from)), false, (now - r->lastSeen) / 1000.0 };
+        p.deviceId = r->device;
+        p.kind = r->kind;
+        p.trusted = impl->trusts (*r);
+        if (auto o = impl->outgoing.find (r->device); o != impl->outgoing.end()) p.pairing = o->second.state;
         if (same == list.end()) list.push_back (p);
         else if (p.secondsAgo < same->secondsAgo) *same = p;
     }
@@ -1459,7 +1670,7 @@ std::vector<StreamInfo> Hub::getStreams() const
     for (auto& [inst, r] : impl->remotes)
         for (auto& [id, rx] : r->rx)
         {
-            if (! rx->hasInfo || r->name.isEmpty() || now - rx->lastPacket > 5000.0) continue;
+            if (! rx->hasInfo || r->name.isEmpty() || now - rx->lastPacket > 5000.0 || ! impl->trusts (*r)) continue;
             StreamInfo s;
             s.stream = rx->stream;
             s.sender = r->name;
@@ -1482,6 +1693,78 @@ std::vector<StreamInfo> Hub::getStreams() const
         return c != 0 ? c < 0 : a.stream.compareNatural (b.stream) < 0;
     });
     return list;
+}
+
+void Hub::setTrusted (std::vector<TrustedDevice> list)
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    impl->trusted.clear();
+    for (auto& t : list)
+        if (t.id != 0) impl->trusted[t.id] = t;
+    impl->changes.fetch_add (1);
+}
+
+std::vector<TrustedDevice> Hub::getTrusted() const
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    std::vector<TrustedDevice> list;
+    for (auto& [id, t] : impl->trusted) list.push_back (t);
+    std::sort (list.begin(), list.end(), [] (const TrustedDevice& a, const TrustedDevice& b) { return a.name.compareNatural (b.name) < 0; });
+    return list;
+}
+
+uint32_t Hub::getTrustVersion() const noexcept { return impl->trustVersion.load(); }
+
+bool Hub::isTrusted (uint64_t id) const
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    return impl->trusted.count (id) > 0;
+}
+
+std::vector<PairRequest> Hub::getRequests() const
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    std::vector<PairRequest> list;
+    for (auto& [id, in] : impl->incoming) list.push_back ({ id, in.name, ipText (ipOf (in.from)), in.kind });
+    return list;
+}
+
+void Hub::answer (uint64_t id, bool allow)
+{
+    // The other side asks again every second and gets the answer then (the packets go from the network thread).
+    std::lock_guard<std::mutex> l (impl->lock);
+    auto it = impl->incoming.find (id);
+    if (it == impl->incoming.end()) return;
+    if (allow)
+    {
+        impl->trusted[id] = { id, it->second.name, it->second.kind };
+        impl->trustVersion.fetch_add (1);
+        impl->denied.erase (id);
+        impl->outgoing.erase (id);   // no need to ask it back: our answer tells it that we trust it, it stores us then
+        impl->bindInputs (nowMs());
+    }
+    else impl->denied[id] = nowMs() + 300000.0;
+    impl->incoming.erase (it);
+    impl->changes.fetch_add (1);
+    impl->wakeUp();
+}
+
+void Hub::requestPairing (const juce::String& peerName)
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    const double now = nowMs();
+    if (auto* r = impl->remoteByName (peerName, now)) impl->startRequest (*r, now);
+    impl->wakeUp();
+}
+
+void Hub::forget (uint64_t id)
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    if (impl->trusted.erase (id) > 0) impl->trustVersion.fetch_add (1);
+    impl->outgoing.erase (id);
+    if (auto* r = impl->remoteByDevice (id, nowMs())) impl->unpairs.push_back ({ r->from, id });
+    impl->unbindDevice (id);
+    impl->wakeUp();
 }
 
 StreamStats Hub::getStats (const Source& s) const

@@ -6,6 +6,8 @@
 #include "engine/VacStream.h"
 #include "engine/NetLink.h"
 #include "remote/RemoteControl.h"
+#include "ui/Dialog.h"
+#include <random>
 
 #include <windows.h>
 
@@ -428,8 +430,8 @@ private:
             engine->holdDevice = nullptr;
             engine->rebuildGraph();
         }
+        applyRemote();    // first: a new access code goes into Hydra Link's config (phones get it when they pair)
         applyNetwork();
-        applyRemote();
         if (auto* mc = window->getMain())
         {
             mc->setUiScale (p.uiScale);
@@ -473,7 +475,29 @@ private:
             }
             return;
         }
+        if (net::parseDeviceId (p.netDeviceId) == 0)
+        {
+            std::random_device rd;
+            session->prefs.netDeviceId = net::deviceIdText ((((uint64_t) rd() << 32) ^ (uint64_t) rd() ^ (uint64_t) juce::Time::getHighResolutionTicks()) | 1);
+            session->prefsVersion.fetch_add (1);
+        }
+        if (! trustLoaded)
+        {
+            std::vector<net::TrustedDevice> list;
+            for (auto& t : p.netTrusted)
+            {
+                const auto rest = t.fromFirstOccurrenceOf ("|", false, false);
+                list.push_back ({ net::parseDeviceId (t.upToFirstOccurrenceOf ("|", false, false)),
+                                  rest.fromFirstOccurrenceOf ("|", false, false),
+                                  rest.getIntValue() == 1 ? net::DeviceKind::phone : net::DeviceKind::computer });
+            }
+            hub.setTrusted (std::move (list));
+            shownTrust = hub.getTrustVersion();
+            trustLoaded = true;
+        }
         net::Config c;
+        c.deviceId = net::parseDeviceId (p.netDeviceId);
+        c.remoteCode = p.remoteEnabled ? p.remoteCode : juce::String();
         c.port = p.netPort;
         c.name = p.netName;
         c.password = p.netPassword;
@@ -579,9 +603,60 @@ private:
         }
     }
 
+    /** Hydra Link pairing: store what changed, ask the user about devices that want to connect. */
+    void tickPairing()
+    {
+        auto& hub = net::Hub::get();
+        if (const auto v = hub.getTrustVersion(); v != shownTrust)
+        {
+            shownTrust = v;
+            juce::StringArray list;
+            for (auto& t : hub.getTrusted())
+                list.add (net::deviceIdText (t.id) + "|" + juce::String ((int) t.kind) + "|" + t.name);
+            if (list != session->prefs.netTrusted)
+            {
+                session->prefs.netTrusted = list;
+                session->prefsVersion.fetch_add (1);
+                logLine ("Hydra Link: paired devices " + juce::String (list.size()));
+            }
+        }
+        if (pairDialogOpen || ! hub.isRunning() || window == nullptr) return;
+        const auto requests = hub.getRequests();
+        if (requests.empty()) return;
+        const auto r = requests.front();
+        const bool phone = r.kind == net::DeviceKind::phone;
+        pairDialogOpen = true;
+        showWindow();
+        logLine ("Hydra Link: " + r.name + " (" + r.address + ") asks to connect");
+        const juce::String what = phone
+            ? "The phone \"" + r.name + "\" (" + r.address + ") wants to connect to this Hydra: audio in both directions "
+              "and control of the mixer from the Hydra Link app."
+            : "The computer \"" + r.name + "\" (" + r.address + ") wants to connect to this Hydra: send audio to it and "
+              "receive audio from it over Hydra Link.";
+        dialog::show (window->getMain(), dialog::Kind::question, "Connect " + r.name + "?",
+                      what + "\n\nOnce allowed it connects without asking again (Settings > Network lists the connected devices).",
+                      { { "Allow", dialog::Button::Role::primary }, { "Deny", dialog::Button::Role::cancel } },
+                      [this, r, phone] (int choice)
+                      {
+                          pairDialogOpen = false;
+                          const bool allow = choice == 0;
+                          if (allow && phone && ! session->prefs.remoteEnabled)
+                          {
+                              // The phone controls the mixer too: Hydra Remote on (it gets the code with the answer).
+                              session->prefs.remoteEnabled = true;
+                              session->prefsVersion.fetch_add (1);
+                              applyPrefs();
+                              logLine ("Hydra Remote on (a phone was allowed to connect)");
+                          }
+                          net::Hub::get().answer (r.id, allow);
+                          logLine ("Hydra Link: " + r.name + (allow ? " allowed" : " denied"));
+                      });
+    }
+
     void timerCallback() override
     {
         retryMaster();
+        tickPairing();
         deviceNamer->useTask = session->prefs.renameNoPrompt;
         if (! session->waitingForMaster) deviceNamer->tick (session->prefs.renameDevices, session->prefs.vacAutoName);
         if (! session->waitingForMaster)
@@ -621,6 +696,8 @@ private:
     int pendingChanges = -1, quietTicks = 0;
     bool startedWithWindows = false;
     int masterRetryTicks = 0;
+    bool trustLoaded = false, pairDialogOpen = false;
+    uint32_t shownTrust = 0;
     static constexpr int kMasterRetrySeconds = 90;
 };
 } // namespace hydra
