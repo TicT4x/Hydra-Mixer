@@ -6,7 +6,7 @@
 <title>Hydra Mixer</title>
 <meta name="description" content="Hydra Mixer: a free, low-latency audio mixer for Windows. Mix microphones, games, apps and virtual cables, with effects, room correction, network audio and an Android app.">
 <meta property="og:title" content="Hydra Mixer">
-<meta property="og:description" content="Free low-latency audio mixer for Windows, an alternative to Voicemeeter Potato.">
+<meta property="og:description" content="Free low-latency audio mixer for Windows, an alternative to Voicemeeter.">
 <meta property="og:image" content="screenshot.png">
 <meta name="theme-color" content="#0b0e12">
 <link rel="icon" href="icon.png">
@@ -137,7 +137,6 @@ section.block { padding: 96px 0; border-top: 1px solid var(--line); }
 .grad { background: linear-gradient(100deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .hero p.lead { font-size: clamp(17px, 1.7vw, 20px); color: var(--muted); max-width: 720px; margin: 0 auto 32px; }
 .cta { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
-.relinfo { color: var(--muted); font-size: 13.5px; margin-top: 14px; min-height: 1.6em; }
 .shot-frame {
   width: 100%; max-width: 1140px; border-radius: 14px; padding: 8px; position: relative;
   background: linear-gradient(180deg, color-mix(in srgb, var(--line) 90%, transparent), transparent);
@@ -145,10 +144,27 @@ section.block { padding: 96px 0; border-top: 1px solid var(--line); }
 }
 .shot-frame img { display: block; width: 100%; height: auto; border-radius: 9px; border: 1px solid var(--line); }
 
-.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-top: 10px; }
-.stat { background: var(--bg2); padding: 22px 20px; }
-.stat b { display: block; font-size: 28px; letter-spacing: -.02em; line-height: 1.15; }
-.stat span { color: var(--muted); font-size: 14px; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; width: 100%; max-width: 1140px; margin-top: 10px; text-align: left; }
+.stat {
+  position: relative; overflow: hidden; padding: 20px 20px 18px 84px; min-height: 104px; border-radius: 14px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--c) 9%, var(--panel)), var(--panel) 60%);
+  border: 1px solid color-mix(in srgb, var(--c) 22%, var(--line));
+  transition: transform .2s, border-color .2s, box-shadow .2s;
+}
+.stat:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--c) 55%, var(--line)); box-shadow: 0 16px 40px -18px color-mix(in srgb, var(--c) 60%, transparent); }
+.stat::after { content: ""; position: absolute; right: -40px; top: -40px; width: 120px; height: 120px; border-radius: 50%; background: radial-gradient(var(--c), transparent 70%); opacity: .14; pointer-events: none; }
+.stat .si {
+  position: absolute; left: 20px; top: 20px; width: 48px; height: 48px; border-radius: 13px; display: grid; place-items: center;
+  color: var(--c); background: color-mix(in srgb, var(--c) 15%, transparent); box-shadow: 0 0 24px -6px color-mix(in srgb, var(--c) 70%, transparent) inset;
+}
+.stat b { display: block; font-size: 26px; letter-spacing: -.02em; line-height: 1.15; color: var(--text); }
+.stat > span { color: var(--muted); font-size: 14px; display: block; }
+.stat .viz { display: flex; gap: 3px; margin-top: 10px; align-items: flex-end; height: 16px; }
+.stat .viz i { flex: 1; max-width: 9px; border-radius: 2px; background: var(--c); opacity: .75; height: var(--h, 100%); }
+.stats.in .viz.ins i { animation: lvl 1.2s ease-in-out infinite alternate; animation-delay: var(--d); }
+@keyframes lvl { from { transform: scaleY(.35); } to { transform: scaleY(1); } }
+.stat .viz.ins i { transform-origin: bottom; }
+@media (prefers-reduced-motion: reduce) { .stats.in .viz.ins i { animation: none; } }
 
 /* How it works */
 .flowmap { display: grid; grid-template-columns: 1fr 1.25fr 1fr; gap: 18px; align-items: stretch; }
@@ -181,6 +197,19 @@ section.block { padding: 96px 0; border-top: 1px solid var(--line); }
 .step .n { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 14px; color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); margin-bottom: 10px; }
 .step h4 { margin: 0 0 4px; font-size: 16.5px; }
 .step p { margin: 0; color: var(--muted); font-size: 15px; }
+
+.uh { margin: 46px 0 14px; font-size: 18px; }
+.uses { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.use { display: block; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 18px 16px; position: relative; overflow: hidden; transition: transform .15s, border-color .15s; }
+.use::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; background: var(--c); }
+a.use:hover { text-decoration: none; transform: translateY(-2px); border-color: color-mix(in srgb, var(--c) 55%, var(--line)); }
+.use h4 { margin: 0 0 6px; font-size: 16.5px; }
+.use p { margin: 0 0 14px; color: var(--muted); font-size: 14.5px; }
+.use .fl { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; font-size: 12.5px; }
+.use .fl span { padding: 2px 9px; border-radius: 99px; background: var(--panel2); border: 1px solid var(--line); }
+.use .fl span.k { color: var(--c); border-color: color-mix(in srgb, var(--c) 55%, var(--line)); }
+.use .fl span.g { color: #3ee08f; }
+.use .fl i { color: var(--muted); font-style: normal; }
 
 /* Features */
 .fgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
@@ -366,6 +395,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
   .col:not(:last-child)::after { right: auto; left: 50%; top: auto; bottom: -15px; transform: translateX(-50%) rotate(135deg); }
   .app-grid, .split { grid-template-columns: 1fr; gap: 40px; }
   .stats { grid-template-columns: repeat(2, 1fr); }
+  .uses { grid-template-columns: 1fr; }
 }
 @media (max-width: 900px) {
   #docs .layout { grid-template-columns: 1fr; }
@@ -383,7 +413,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
   nav.links { margin-left: 4px; }
   section.block { padding: 68px 0; }
   .wrap { padding: 0 16px; }
-  .fgrid, .dl-grid, .steps3, .doclist { grid-template-columns: 1fr; }
+  .fgrid, .dl-grid, .steps3, .doclist, .stats, .uses { grid-template-columns: 1fr; }
   .hero { padding: 56px 0 40px; }
   .phone { width: 170px; }
   .phone.b { margin-top: 32px; }
@@ -393,7 +423,9 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
   header.top { gap: 6px; }
   .brand span { display: none; }
   .phone.b { display: none; }
-  .stat b { font-size: 23px; }
+  .stat b { font-size: 22px; }
+  .stat { padding-left: 76px; }
+  .stat .si { left: 16px; }
   .cta .btn { width: 100%; }
 }
 
@@ -424,6 +456,40 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 .where { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .where span { font-size: 11.5px; font-weight: 600; padding: 1px 8px; border-radius: 99px; background: var(--panel2); border: 1px solid var(--line); color: var(--muted); }
 .cap { color: var(--muted); font-size: 13.5px; margin: 12px 2px 0; }
+
+
+.fx { cursor: default; transition: opacity .6s ease, border-color .15s, transform .15s; }
+.fx:hover, .fx:focus-visible, .fx.open { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); transform: translateY(-2px); outline: none; }
+.fx .peek { display: inline-flex; align-items: center; gap: 5px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.fxpop {
+  position: fixed; z-index: 60; width: min(660px, calc(100vw - 24px)); pointer-events: none; border-radius: 12px; overflow: hidden;
+  opacity: 0; transform: translateY(8px) scale(.98); transition: opacity .16s, transform .16s;
+  border: 1px solid #262d3a; box-shadow: 0 30px 80px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.03) inset; background: #0a0c10;
+}
+.fxpop.on { opacity: 1; transform: none; }
+.fxpop .ttl { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12px; color: #8f98a9; background: #13171e; border-bottom: 1px solid #262d3a; }
+.fxpop .ttl b { color: #e8ebf1; font-weight: 600; }
+.fxpop .hx svg { display: block; width: 100%; height: auto; }
+.pic.devices.sm { padding: 0 44px 30px 0; max-width: 640px; }
+.pic.devices.sm .phone { width: 27%; border-radius: 22px; padding: 6px; }
+.pic.devices.sm .phone img { border-radius: 16px; }
+.pic.devices.sm .tablet { border-radius: 18px; padding: 9px; }
+.routing.live svg { min-width: 760px; }
+.routing.live .rb, .routing.live .mb, .routing.live .fd { cursor: pointer; }
+.routing.live .rb:hover rect:first-child, .routing.live .mb:hover rect { filter: brightness(1.25); }
+.routing.live path.w { stroke-width: 2.4; opacity: .7; fill: none; transition: opacity .2s, stroke-width .2s; }
+.routing.live path.w.flow { stroke-dasharray: 2 12; stroke-linecap: round; stroke-width: 3; opacity: .9; }
+.routing.live.run path.w.flow { animation: flow 1s linear infinite; }
+.routing.live path.w.muted { opacity: .18; }
+.routing.live path.w.muted.flow { display: none; }
+.routing.live svg.focus path.w { opacity: .08; }
+.routing.live svg.focus path.w.on { opacity: 1; }
+.routing.live svg.focus path.w.flow.on { opacity: 1; }
+@keyframes flow { to { stroke-dashoffset: -14; } }
+.routing.live path.w.new { animation: draw .45s ease-out; }
+@keyframes draw { from { stroke-dashoffset: 400; stroke-dasharray: 400; } to { stroke-dashoffset: 0; stroke-dasharray: 400; } }
+.rhint { color: var(--muted); font-size: 14px; margin: 12px 2px 0; }
+@media (prefers-reduced-motion: reduce) { .routing.live.run path.w.flow { animation: none; } }
 
 /* Features: list left, detail right (mobile: accordion) */
 .feats { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 24px; align-items: stretch; }
@@ -532,14 +598,13 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 <section class="hero" id="top">
   <div class="wrap hero-grid">
     <div>
-      <a class="pill" href="#app" id="relPill"><b class="en">New</b><b class="de">Neu</b><span class="en">Hydra Link, phone remote and Android app</span><span class="de">Hydra Link, Handy-Steuerung und Android-App</span></a>
-      <h1><span class="en">Every sound on your PC.<br><span class="grad">One mixer, zero lag.</span></span><span class="de">Jeder Sound deines PCs.<br><span class="grad">Ein Mixer, keine Verzögerung.</span></span></h1>
+      <h1><span class="en">Free Virtual Audio Mixer<br><span class="grad">Modular · Simple · Powerful</span></span><span class="de">Kostenloser virtueller Audiomixer<br><span class="grad">Modular · Einfach · Leistungsstark</span></span></h1>
       <p class="lead">
-        <span class="en">Hydra Mixer is a free, open-source audio mixer for Windows, built for the lowest possible latency. Mix microphones, games, apps and virtual cables, run them through effects and VST3 plugins and send each mix wherever it needs to go. An alternative to Voicemeeter Potato.</span>
-        <span class="de">Hydra Mixer ist ein kostenloser Open-Source-Audiomixer für Windows, gebaut für die geringstmögliche Latenz. Mische Mikrofone, Spiele, Apps und virtuelle Kabel, schick sie durch Effekte und VST3-Plugins und jeden Mix genau dorthin, wo er hin soll. Eine Alternative zu Voicemeeter Potato.</span>
+        <span class="en">Hydra Mixer is a free, open-source audio mixer for Windows, built for the lowest possible latency. Mix microphones, games, apps and virtual cables, run them through built-in effects and VST3 plugins and send each mix wherever it needs to go. An alternative to Voicemeeter.</span>
+        <span class="de">Hydra Mixer ist ein kostenloser Open-Source-Audiomixer für Windows, gebaut für die geringstmögliche Latenz. Mische Mikrofone, Spiele, Apps und virtuelle Kabel, schick sie durch eingebaute Effekte und VST3-Plugins und jeden Mix genau dorthin, wo er hin soll. Eine Alternative zu Voicemeeter.</span>
       </p>
       <div class="cta">
-        <a class="btn primary" data-dl="win" href="https://github.com/TicT4x/Hydra-Mixer/releases/latest">
+        <a class="btn primary" data-dl="win" href="https://github.com/TicT4x/Hydra-Mixer/releases/download/v0.7/HydraMixer-0.7-win64.exe">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10.5 4.4v7.1H3zM11.5 4.3 21 3v8.5h-9.5zM3 12.5h7.5v7.1L3 18.5zM11.5 12.5H21V21l-9.5-1.3z"/></svg>
           <span class="en">Download for Windows</span><span class="de">Für Windows laden</span>
         </a>
@@ -552,16 +617,38 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
           <span class="en">Android app</span><span class="de">Android-App</span>
         </a>
       </div>
-      <div class="relinfo" data-relinfo></div>
     </div>
     <div class="shot-frame rv">
       <img src="screenshot.png" width="3122" height="2000" alt="Hydra Mixer main window: input strips on the left, hardware and virtual outputs on the right, the effect chain of the selected channel at the bottom">
     </div>
-    <div class="stats rv" style="width:100%;max-width:1140px">
-      <div class="stat"><b>0</b><span class="en">extra buffers on the master device</span><span class="de">Zusatzpuffer am Master-Gerät</span></div>
-      <div class="stat"><b>16 · 8 · 8</b><span class="en">inputs · hardware · virtual outputs</span><span class="de">Inputs · Hardware- · virtuelle Ausgänge</span></div>
-      <div class="stat"><b>≈ 1.6 %</b><span class="en">of one CPU core when idle</span><span class="de">eines CPU-Kerns im Leerlauf</span></div>
-      <div class="stat"><b>AGPL-3.0</b><span class="en">free and open source</span><span class="de">kostenlos und Open Source</span></div>
+    <div class="stats rv">
+      <div class="stat" style="--c:#35d0f4">
+        <div class="si"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/></svg></div>
+        <b>16</b><span class="en">inputs: mics, apps, games, cables</span><span class="de">Inputs: Mikros, Apps, Spiele, Kabel</span>
+        <div class="viz ins"></div>
+      </div>
+      <div class="stat" style="--c:#a288ff">
+        <div class="si"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 13a8 8 0 0 1 16 0"/><rect x="2.5" y="12" width="5" height="8.5" rx="1.6"/><rect x="16.5" y="12" width="5" height="8.5" rx="1.6"/></svg></div>
+        <b>8 + 8</b><span class="en">hardware and virtual outputs</span><span class="de">Hardware- und virtuelle Ausgänge</span>
+        <div class="viz outs"></div>
+      </div>
+      <div class="stat" style="--c:#3ee08f">
+        <div class="si"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></div>
+        <b>7</b><span class="en">built-in effects with zero latency</span><span class="de">eingebaute Effekte ohne Latenz</span>
+        <div class="viz fxs"></div>
+      </div>
+      <div class="stat" style="--c:#ffc23f">
+        <div class="si"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 7V2M15 7V2M7 7h10v4a5 5 0 0 1-10 0zM12 16v6"/></svg></div>
+        <b>VST3</b><span class="en">plugins anywhere in every chain</span><span class="de">Plugins überall in jeder Kette</span>
+      </div>
+      <div class="stat" style="--c:#ff8f4d">
+        <div class="si"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="5" width="9" height="14" rx="2"/><rect x="13" y="5" width="9" height="14" rx="2"/><circle cx="6.5" cy="14" r="2"/><circle cx="17.5" cy="14" r="2"/><path d="M5 9h3M16 9h3"/></svg></div>
+        <b><span class="en">Multi-ASIO</span><span class="de">Multi-ASIO</span></b><span class="en">several interfaces at once, drift-free</span><span class="de">mehrere Interfaces gleichzeitig, ohne Drift</span>
+      </div>
+      <div class="stat" style="--c:#ff6aa6">
+        <div class="si"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 9a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16a5 5 0 0 1 6 0"/><circle cx="12" cy="19.5" r="1"/></svg></div>
+        <b>Hydra Link</b><span class="en">audio to other PCs and your phone</span><span class="de">Audio zu anderen PCs und aufs Handy</span>
+      </div>
     </div>
   </div>
 </section>
@@ -570,27 +657,31 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 <section class="block" id="how">
   <div class="wrap">
     <p class="eyebrow"><span class="en">How it works</span><span class="de">So funktioniert's</span></p>
-    <h2 class="h2"><span class="en">Sources in, mixes out.</span><span class="de">Quellen rein, Mixe raus.</span></h2>
+    <h2 class="h2"><span class="en">Route your live audio</span><span class="de">Leite dein Live-Audio, wohin du willst</span></h2>
     <p class="sub">
-      <span class="en">Every sound gets its own channel strip. The buttons on a strip decide which outputs hear it: your headphones, your speakers, the stream, the call. Point at a strip to follow its lines.</span>
-      <span class="de">Jeder Sound bekommt einen eigenen Kanal. Die Knöpfe am Kanal legen fest, welche Ausgänge ihn hören: Kopfhörer, Lautsprecher, Stream, Call. Zeig auf einen Kanal, um seinen Linien zu folgen.</span>
+      <span class="en">Every sound gets its own channel strip. The buttons on a strip decide which outputs hear it: your headphones, your speakers, the stream, the recording.</span>
+      <span class="de">Jeder Sound bekommt einen eigenen Kanal. Die Knöpfe am Kanal legen fest, welche Ausgänge ihn hören: Kopfhörer, Lautsprecher, Stream, Aufnahme.</span>
     </p>
-    <div class="routing hx rv" data-g="routing"></div>
+    <div class="routing live hx rv" data-g="routing"></div>
     <p class="swipe"><span class="en">← Swipe to see all channels →</span><span class="de">← Wischen für alle Kanäle →</span></p>
-    <div class="legend">
-      <span><i style="background:#a288ff"></i><span class="en">to a hardware output (H): speakers, headphones, TV</span><span class="de">zu einem Hardware-Ausgang (H): Lautsprecher, Kopfhörer, TV</span></span>
-      <span><i style="background:#ff6aa6"></i><span class="en">to a virtual output (V): OBS, Discord, recording</span><span class="de">zu einem virtuellen Ausgang (V): OBS, Discord, Aufnahme</span></span>
-    </div>
-    <div class="steps3">
-      <div class="step rv"><div class="n">1</div>
-        <h4><span class="en">One master clock</span><span class="de">Eine Master-Clock</span></h4>
-        <p><span class="en">Your main interface (ideally ASIO) drives the whole mixer. Its channels run without any extra buffer, so the mic you hear back is as fast as your driver allows.</span><span class="de">Dein Haupt-Interface (am besten ASIO) treibt den ganzen Mixer. Seine Kanäle laufen ohne Zusatzpuffer, dein Mikro hörst du so schnell zurück, wie der Treiber es erlaubt.</span></p></div>
-      <div class="step rv"><div class="n">2</div>
-        <h4><span class="en">Everything else follows</span><span class="de">Alles andere folgt</span></h4>
-        <p><span class="en">Other devices, more ASIO interfaces, apps and network streams attach through a self-tuning drift controller and resampler: no clicks and no growing delay, even after hours.</span><span class="de">Andere Geräte, weitere ASIO-Interfaces, Apps und Netzwerk-Streams hängen über einen selbst-tunenden Drift-Regler und Resampler daran: keine Knackser und keine wachsende Verzögerung, auch nach Stunden.</span></p></div>
-      <div class="step rv"><div class="n">3</div>
-        <h4><span class="en">An effect chain per channel</span><span class="de">Eine Effektkette pro Kanal</span></h4>
-        <p><span class="en">Every input and output runs through its own chain of built-in effects and VST3 plugins, in the order you choose.</span><span class="de">Jeder Input und jeder Ausgang läuft durch seine eigene Kette aus eingebauten Effekten und VST3-Plugins, in der Reihenfolge, die du festlegst.</span></p></div>
+    <p class="rhint"><span class="en">Try it: click the routing buttons, MUTE, or drag a fader. Lines show where each sound goes.</span><span class="de">Probier es aus: Klick auf die Routing-Knöpfe oder MUTE, oder zieh einen Fader. Die Linien zeigen, wohin jeder Sound geht.</span></p>
+    <h3 class="uh"><span class="en">Typical setups</span><span class="de">Typische Setups</span></h3>
+    <div class="uses">
+      <a class="use rv" href="#recipes" style="--c:#ff6aa6">
+        <h4><span class="en">Streaming</span><span class="de">Streaming</span></h4>
+        <p><span class="en">Game, music and mic go to OBS. With SEL the music is quieter on stream than in your headphones.</span><span class="de">Spiel, Musik und Mikro gehen an OBS. Mit SEL ist die Musik im Stream leiser als im Kopfhörer.</span></p>
+        <div class="fl"><span>Mic</span><span>Game</span><span>Spotify</span><i>→</i><span class="k">Stream</span></div>
+      </a>
+      <a class="use rv" href="#recipes" style="--c:#3ee08f">
+        <h4><span class="en">Gaming with Discord</span><span class="de">Zocken mit Discord</span></h4>
+        <p><span class="en">Your friends only hear your voice, cleaned by denoiser and gate. You hear the game and them, each at its own level.</span><span class="de">Deine Freunde hören nur deine Stimme, gesäubert von Denoiser und Gate. Du hörst Spiel und Freunde, jedes in eigener Lautstärke.</span></p>
+        <div class="fl"><span>Mic</span><i>→</i><span class="g">Denoiser</span><span class="g">Gate</span><i>→</i><span class="k">Discord</span></div>
+      </a>
+      <a class="use rv" href="#recipes" style="--c:#a288ff">
+        <h4><span class="en">Podcast &amp; recording</span><span class="de">Podcast &amp; Aufnahme</span></h4>
+        <p><span class="en">Two mics with their own EQ and compressor, a jingle from the player, everything recorded to WAV.</span><span class="de">Zwei Mikros mit eigenem EQ und Kompressor, ein Jingle aus dem Player, alles als WAV aufgenommen.</span></p>
+        <div class="fl"><span>Mic 1</span><span>Mic 2</span><span>Jingle</span><i>→</i><span class="k">Recorder</span></div>
+      </a>
     </div>
   </div>
 </section>
@@ -606,33 +697,25 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
     </p>
     <div class="routing hx rv" data-g="chain" style="background:#13171e"></div>
     <p class="swipe"><span class="en">← Swipe to see the whole chain →</span><span class="de">← Wischen für die ganze Kette →</span></p>
-    <p class="cap"><span class="en">The chain of a microphone: denoiser, EQ and gate, a VST3 plugin, then the compressor. The + adds a built-in effect or a plugin anywhere.</span><span class="de">Die Kette eines Mikrofons: Denoiser, EQ und Gate, ein VST3-Plugin, dann der Kompressor. Das + fügt überall einen eingebauten Effekt oder ein Plugin ein.</span></p>
+    <p class="cap"><span class="en">The chain of a microphone: denoiser, EQ and gate, a VST3 plugin, then the compressor. The + adds a built-in effect or a plugin anywhere. Point at an effect below to see its settings window.</span><span class="de">Die Kette eines Mikrofons: Denoiser, EQ und Gate, ein VST3-Plugin, dann der Kompressor. Das + fügt überall einen eingebauten Effekt oder ein Plugin ein. Zeig unten auf einen Effekt, um sein Einstellungsfenster zu sehen.</span></p>
 
     <div class="fxgrid">
-      <div class="fx rv" style="--c:#3ee08f"><h3>Denoiser</h3>
-        <p><span class="en">Removes fans, keyboards and room noise from your voice. RNNoise with Hydra's own filter bank, from 0 ms extra delay.</span><span class="de">Entfernt Lüfter, Tastatur und Raumrauschen aus der Stimme. RNNoise mit Hydras eigener Filterbank, ab 0 ms Zusatzverzögerung.</span></p>
-        <div class="where"><span>Inputs</span></div></div>
-      <div class="fx rv" style="--c:#35d0f4"><h3>Equalizer</h3>
-        <p><span class="en">16 bands, seven filter types, a large window with a live spectrum. Import and export presets.</span><span class="de">16 Bänder, sieben Filtertypen, ein großes Fenster mit Live-Spektrum. Presets importieren und exportieren.</span></p>
-        <div class="where"><span>Inputs</span><span>H</span><span>V</span></div></div>
-      <div class="fx rv" style="--c:#ffc23f"><h3>Gate</h3>
-        <p><span class="en">Closes between words. With Voice Key it only opens for speech, not for a keyboard click.</span><span class="de">Schließt zwischen den Wörtern. Mit Voice Key öffnet es nur für Sprache, nicht für Tastenklicks.</span></p>
-        <div class="where"><span>Inputs</span></div></div>
-      <div class="fx rv" style="--c:#ff8f4d"><h3><span class="en">Compressor</span><span class="de">Kompressor</span></h3>
-        <p><span class="en">Evens out loud and quiet parts. Knee, attack, release, makeup and auto gain, with a live curve.</span><span class="de">Gleicht laute und leise Stellen aus. Knee, Attack, Release, Makeup und Auto-Gain, mit Live-Kennlinie.</span></p>
-        <div class="where"><span>Inputs</span><span>H</span><span>V</span></div></div>
-      <div class="fx rv" style="--c:#ff6a7d"><h3>Limiter</h3>
-        <p><span class="en">A ceiling nothing goes over. Protects ears, speakers and your stream from peaks.</span><span class="de">Eine Grenze, über die nichts geht. Schützt Ohren, Lautsprecher und Stream vor Spitzen.</span></p>
-        <div class="where"><span>Inputs</span><span>H</span><span>V</span></div></div>
-      <div class="fx rv" style="--c:#a78bfa"><h3><span class="en">Room correction</span><span class="de">Raumkorrektur</span></h3>
-        <p><span class="en">Measured with a mic in a guided wizard: tames room resonances and lines up left and right speaker.</span><span class="de">Im Assistenten mit einem Mikro gemessen: zähmt Raumresonanzen und gleicht linken und rechten Lautsprecher an.</span></p>
-        <div class="where"><span>H</span></div></div>
-      <div class="fx rv" style="--c:#ff6ac1"><h3>Phase</h3>
-        <p><span class="en">Flips the polarity, for a second mic on the same source or a miswired cable.</span><span class="de">Dreht die Polarität, für ein zweites Mikro an derselben Quelle oder ein falsch verdrahtetes Kabel.</span></p>
-        <div class="where"><span>Inputs</span><span>H</span><span>V</span></div></div>
-      <div class="fx rv" style="--c:linear-gradient(90deg,var(--accent),var(--accent2))"><h3 style="color:var(--text)"><span class="en">VST3 plugins</span><span class="de">VST3-Plugins</span></h3>
-        <p><span class="en">Any VST3 effect, anywhere in the chain, with its own editor. Plugins are scanned safely, a crashing one is skipped.</span><span class="de">Jeder VST3-Effekt, an jeder Stelle der Kette, mit eigenem Editor. Plugins werden sicher gescannt, ein abstürzendes wird übersprungen.</span></p>
-        <div class="where"><span>Inputs</span><span>H</span><span>V</span></div></div>
+      <div class="fx rv" tabindex="0" data-fx="denoiser" style="--c:#3ee08f"><h3>Denoiser</h3>
+        <p><span class="en">Removes fans, keyboards and room noise from your voice. RNNoise with Hydra's own filter bank, from 0 ms extra delay.</span><span class="de">Entfernt Lüfter, Tastatur und Raumrauschen aus der Stimme. RNNoise mit Hydras eigener Filterbank, ab 0 ms Zusatzverzögerung.</span></p></div>
+      <div class="fx rv" tabindex="0" data-fx="eq" style="--c:#35d0f4"><h3>Equalizer</h3>
+        <p><span class="en">16 bands, seven filter types, a large window with a live spectrum. Import and export presets.</span><span class="de">16 Bänder, sieben Filtertypen, ein großes Fenster mit Live-Spektrum. Presets importieren und exportieren.</span></p></div>
+      <div class="fx rv" tabindex="0" data-fx="gate" style="--c:#ffc23f"><h3>Gate</h3>
+        <p><span class="en">Closes between words. With Voice Key it only opens for speech, not for a keyboard click.</span><span class="de">Schließt zwischen den Wörtern. Mit Voice Key öffnet es nur für Sprache, nicht für Tastenklicks.</span></p></div>
+      <div class="fx rv" tabindex="0" data-fx="comp" style="--c:#ff8f4d"><h3><span class="en">Compressor</span><span class="de">Kompressor</span></h3>
+        <p><span class="en">Evens out loud and quiet parts. Knee, attack, release, makeup and auto gain, with a live curve.</span><span class="de">Gleicht laute und leise Stellen aus. Knee, Attack, Release, Makeup und Auto-Gain, mit Live-Kennlinie.</span></p></div>
+      <div class="fx rv" tabindex="0" data-fx="limiter" style="--c:#ff6a7d"><h3>Limiter</h3>
+        <p><span class="en">A ceiling nothing goes over. Protects ears, speakers and your stream from peaks.</span><span class="de">Eine Grenze, über die nichts geht. Schützt Ohren, Lautsprecher und Stream vor Spitzen.</span></p></div>
+      <div class="fx rv" tabindex="0" data-fx="correction" style="--c:#a78bfa"><h3><span class="en">Room correction</span><span class="de">Raumkorrektur</span></h3>
+        <p><span class="en">Measured with a mic in a guided wizard: tames room resonances and lines up left and right speaker.</span><span class="de">Im Assistenten mit einem Mikro gemessen: zähmt Raumresonanzen und gleicht linken und rechten Lautsprecher an.</span></p></div>
+      <div class="fx rv" tabindex="0" data-fx="phase" style="--c:#ff6ac1"><h3>Phase</h3>
+        <p><span class="en">Flips the polarity, for a second mic on the same source or a miswired cable.</span><span class="de">Dreht die Polarität, für ein zweites Mikro an derselben Quelle oder ein falsch verdrahtetes Kabel.</span></p></div>
+      <div class="fx rv" tabindex="0" data-fx="vst" style="--c:linear-gradient(90deg,var(--accent),var(--accent2))"><h3 style="color:var(--text)"><span class="en">VST3 plugins</span><span class="de">VST3-Plugins</span></h3>
+        <p><span class="en">Any VST3 effect, anywhere in the chain, with its own editor. Plugins are scanned safely, a crashing one is skipped.</span><span class="de">Jeder VST3-Effekt, an jeder Stelle der Kette, mit eigenem Editor. Plugins werden sicher gescannt, ein abstürzendes wird übersprungen.</span></p></div>
     </div>
   </div>
 </section>
@@ -735,6 +818,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 
         <article data-f="link" hidden>
           <h3>Hydra Link <span class="tag">Beta</span></h3>
+          <div class="pic hx" data-g="link"></div>
           <p><span class="en">Send audio between Hydra PCs and to your phone. Another Hydra on the network shows up by itself as a source; picking it as an output is one click in the device picker.</span><span class="de">Schick Audio zwischen Hydra-PCs und aufs Handy. Ein anderes Hydra im Netz taucht von selbst als Quelle auf; als Ausgang wählst du es mit einem Klick in der Geräteauswahl.</span></p>
           <dl class="kv">
             <dt>LAN</dt><dd><span class="en">lossless PCM (16 / 24 / 32-bit float), a few milliseconds of buffer</span><span class="de">verlustfreies PCM (16 / 24 / 32 Bit float), wenige Millisekunden Puffer</span></dd>
@@ -748,7 +832,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 
         <article data-f="remote" hidden>
           <h3><span class="en">Phone &amp; tablet remote</span><span class="de">Handy &amp; Tablet als Fernbedienung</span> <span class="tag">Beta</span></h3>
-          <div class="pic duo"><img src="remote-tablet.png" width="1760" height="1320" loading="lazy" alt="The remote on a tablet in landscape: vertical strips"><img src="remote-phone.png" width="780" height="1600" loading="lazy" alt="The remote on a phone in portrait: channels as a list"></div>
+          <div class="pic devices sm"><div class="tablet"><img src="remote-tablet.png" width="1760" height="1320" loading="lazy" alt="The remote on a tablet in landscape: vertical strips"></div><div class="phone"><img src="remote-phone.png" width="780" height="1600" loading="lazy" alt="The remote on a phone in portrait: channels as a list"></div></div>
           <p><span class="en">Turn on Settings → Remote, scan the QR code and the browser on your phone becomes a mixer: faders with meters, mute, solo, routing, SEL and scenes. Nothing to install, it only works inside your home network and needs a code.</span><span class="de">Settings → Remote einschalten, QR-Code scannen, und der Browser deines Handys wird zum Mixer: Fader mit Metern, Mute, Solo, Routing, SEL und Szenen. Nichts zu installieren, es geht nur im Heimnetz und braucht einen Code.</span></p>
           <ul>
             <li><span class="en">Portrait: channels as a list. Landscape and tablets: vertical strips like in Hydra.</span><span class="de">Hochformat: Kanäle als Liste. Querformat und Tablet: senkrechte Kanalzüge wie in Hydra.</span></li>
@@ -802,6 +886,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 
         <article data-f="vm" hidden>
           <h3><span class="en">Voicemeeter import</span><span class="de">Voicemeeter-Import</span></h3>
+          <div class="pic hx" data-g="vm"></div>
           <p><span class="en">Coming from Voicemeeter Potato? Load your saved Voicemeeter settings and Hydra takes over what it can:</span><span class="de">Du kommst von Voicemeeter Potato? Lade deine gespeicherten Voicemeeter-Einstellungen, und Hydra übernimmt, was geht:</span></p>
           <ul>
             <li><span class="en">devices, ASIO channels, names and routing</span><span class="de">Geräte, ASIO-Kanäle, Namen und Routing</span></li>
@@ -829,7 +914,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         <li><b><span class="en">Runs in the background.</span><span class="de">Läuft im Hintergrund.</span></b> <span class="en">Low-latency audio, keeps playing with the screen off.</span><span class="de">Audio mit geringer Latenz, spielt bei ausgeschaltetem Display weiter.</span></li>
       </ul>
       <div class="cta" style="justify-content:flex-start">
-        <a class="btn primary" data-dl="apk" href="https://github.com/TicT4x/Hydra-Mixer/releases/latest">
+        <a class="btn primary" data-dl="apk" href="https://github.com/TicT4x/Hydra-Mixer/releases/download/v0.7/HydraLink-0.7.apk">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></svg>
           <span class="en">Get the Android app</span><span class="de">Android-App laden</span>
         </a>
@@ -862,7 +947,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
           <li><span class="en">ASIO interface recommended, any Windows device works</span><span class="de">ASIO-Interface empfohlen, jedes Windows-Gerät geht</span></li>
         </ul>
         <div class="acts">
-          <a class="btn primary" data-dl="win" href="https://github.com/TicT4x/Hydra-Mixer/releases/latest">
+          <a class="btn primary" data-dl="win" href="https://github.com/TicT4x/Hydra-Mixer/releases/download/v0.7/HydraMixer-0.7-win64.exe">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
             <span class="en">Download</span><span class="de">Herunterladen</span>
           </a>
@@ -880,7 +965,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
           <li><span class="en">The remote control needs no app at all: Settings → Remote</span><span class="de">Die Fernsteuerung braucht gar keine App: Settings → Remote</span></li>
         </ul>
         <div class="acts">
-          <a class="btn primary" data-dl="apk" href="https://github.com/TicT4x/Hydra-Mixer/releases/latest">
+          <a class="btn primary" data-dl="apk" href="https://github.com/TicT4x/Hydra-Mixer/releases/download/v0.7/HydraLink-0.7.apk">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
             <span class="en">Download APK</span><span class="de">APK herunterladen</span>
           </a>
@@ -901,7 +986,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
   <div class="wrap split">
     <div class="rv">
       <p class="eyebrow">Wiki</p>
-      <h2 class="h2"><span class="en">From download to your first mix in 10 minutes.</span><span class="de">Vom Download zum ersten Mix in 10 Minuten.</span></h2>
+      <h2 class="h2"><span class="en">From download to your first mix in 2 minutes.</span><span class="de">Vom Download zum ersten Mix in 2 Minuten.</span></h2>
       <p style="color:var(--muted)"><span class="en">The wiki walks you through the setup step by step and explains every feature for later reference. Searchable, in English and German.</span><span class="de">Das Wiki führt Schritt für Schritt durch die Einrichtung und erklärt jede Funktion zum Nachschlagen. Durchsuchbar, auf Deutsch und Englisch.</span></p>
       <div class="doclist">
         <a href="#quickstart"><span class="en">Tutorial: first steps</span><span class="de">Tutorial: erste Schritte</span><small><span class="en">Master device, mic, game, outputs</span><span class="de">Master-Gerät, Mikro, Spiel, Ausgänge</span></small></a>
@@ -919,15 +1004,11 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
       </details>
       <details>
         <summary><span class="en">How is it different from Voicemeeter?</span><span class="de">Was ist anders als bei Voicemeeter?</span></summary>
-        <p><span class="en">Latency comes first: the master device runs without extra buffers, effects add no delay. Apps can be captured directly, effects can be ordered freely, VST3 plugins sit in every channel, and every control can be learned by MIDI. Your Voicemeeter Potato setup can be imported.</span><span class="de">Latenz steht an erster Stelle: Das Master-Gerät läuft ohne Zusatzpuffer, Effekte fügen keine Verzögerung hinzu. Apps lassen sich direkt aufnehmen, Effekte frei sortieren, VST3-Plugins sitzen in jedem Kanal und jedes Bedienelement ist per MIDI lernbar. Dein Voicemeeter-Potato-Setup lässt sich importieren.</span></p>
+        <p><span class="en">Hydra is built to be flexible and easy to use: every channel gets its own chain of built-in effects and VST3 plugins in any order, apps can be captured directly without a cable, virtual cables are set up with one click, and every control can be learned by MIDI. Under the hood it stays fast and light: the master device runs without extra buffers, the built-in effects add no delay, and the engine needs about 1.6 % of one CPU core when idle. Your Voicemeeter setup can be imported.</span><span class="de">Hydra ist auf Flexibilität und einfache Bedienung ausgelegt: Jeder Kanal hat seine eigene Kette aus eingebauten Effekten und VST3-Plugins in beliebiger Reihenfolge, Apps lassen sich ohne Kabel direkt aufnehmen, virtuelle Kabel richtest du mit einem Klick ein, und jedes Bedienelement ist per MIDI lernbar. Darunter bleibt es schnell und sparsam: Das Master-Gerät läuft ohne Zusatzpuffer, die eingebauten Effekte kosten keine Verzögerung, und die Engine braucht im Leerlauf etwa 1,6 % eines CPU-Kerns. Dein Voicemeeter-Setup lässt sich importieren.</span></p>
       </details>
       <details>
         <summary><span class="en">Do I need virtual audio cables?</span><span class="de">Brauche ich virtuelle Audiokabel?</span></summary>
         <p><span class="en">Not for capturing apps: Hydra records single apps directly. To give other programs (Discord, OBS) a device to use, Hydra works with Virtual Audio Cable and manages the cables for you.</span><span class="de">Nicht, um Apps aufzunehmen: Hydra nimmt einzelne Apps direkt auf. Damit andere Programme (Discord, OBS) ein Gerät bekommen, arbeitet Hydra mit Virtual Audio Cable und verwaltet die Kabel für dich.</span></p>
-      </details>
-      <details>
-        <summary><span class="en">What do H1 and V1 mean?</span><span class="de">Was bedeuten H1 und V1?</span></summary>
-        <p><span class="en">H outputs go to hardware (headphones, speakers), V outputs are virtual and feed other programs or the network. Every output can get its own icon and name.</span><span class="de">H-Ausgänge gehen an Hardware (Kopfhörer, Lautsprecher), V-Ausgänge sind virtuell und speisen andere Programme oder das Netzwerk. Jeder Ausgang kann ein eigenes Icon und einen Namen bekommen.</span></p>
       </details>
       <details>
         <summary><span class="en">Found a bug?</span><span class="de">Einen Fehler gefunden?</span></summary>
@@ -1088,7 +1169,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 
   <h3>Where do I start?</h3>
   <div class="cards">
-    <a class="card" href="#quickstart"><h4>New here?</h4><p>The tutorial takes you from download to your first mix in 10 minutes.</p></a>
+    <a class="card" href="#quickstart"><h4>New here?</h4><p>The tutorial takes you from download to your first mix in 2 minutes.</p></a>
     <a class="card" href="#vmimport"><h4>Coming from Voicemeeter?</h4><p>Import your settings and learn the differences.</p></a>
     <a class="card" href="#recipes"><h4>Got a specific goal?</h4><p>Recipes: stream mix, clean up a mic, bring in Spotify …</p></a>
     <a class="card" href="#troubleshoot"><h4>Having a problem?</h4><p>No sound, crackles, yellow dots: solutions.</p></a>
@@ -2110,7 +2191,7 @@ cd Hydra-Mixer
 
   <h3>Wo fange ich an?</h3>
   <div class="cards">
-    <a class="card" href="#quickstart"><h4>Neu hier?</h4><p>Das Tutorial bringt dich in 10 Minuten vom Download zum ersten Mix.</p></a>
+    <a class="card" href="#quickstart"><h4>Neu hier?</h4><p>Das Tutorial bringt dich in 2 Minuten vom Download zum ersten Mix.</p></a>
     <a class="card" href="#vmimport"><h4>Von Voicemeeter?</h4><p>Einstellungen importieren und die Unterschiede kennen.</p></a>
     <a class="card" href="#recipes"><h4>Konkretes Ziel?</h4><p>Rezepte: Stream-Mix, Mikro entrauschen, Spotify einbinden …</p></a>
     <a class="card" href="#troubleshoot"><h4>Problem?</h4><p>Kein Ton, Knackser, gelbe Punkte: Lösungen.</p></a>
@@ -3279,8 +3360,6 @@ cd Hydra-Mixer
     const ma = document.querySelector('[data-meta="apk"]');
     if (ma) ma.textContent = apk ? [ver, fmtSize(apk.size), 'Android 9+'].join(' · ')
                                  : (lang === 'de' ? 'Android 9+ · kommt mit dem nächsten Release' : 'Android 9+ · coming with the next release');
-    const info = document.querySelector('[data-relinfo]');
-    if (info) info.textContent = (lang === 'de' ? 'Neueste Version ' : 'Latest version ') + [ver, date].filter(Boolean).join(' · ');
   }
   function loadRelease() {
     try {
@@ -3295,7 +3374,7 @@ cd Hydra-Mixer
         lastRelease = slim; fillRelease(slim);
         try { sessionStorage.setItem('hydra-rel', JSON.stringify({ t: Date.now(), r: slim })); } catch (e) {}
       })
-      .catch(() => { /* links keep pointing to /releases/latest */ });
+      .catch(() => { /* links keep pointing to the direct file of the release written into the HTML */ });
   }
 
   /* ---------- Reveal on scroll ---------- */
@@ -3341,11 +3420,70 @@ cd Hydra-Mixer
   showFeature(current);
   mobile.addEventListener('change', () => { placePanes(); if (!mobile.matches && !current) showFeature(ftabs[0].dataset.f); });
 
+  /* ---------- Hero stats: small decorations ---------- */
+  const viz = (sel, html) => document.querySelectorAll(sel).forEach(v => v.innerHTML = html);
+  viz('.stat .viz.ins', [...Array(16)].map((_, i) => `<i style="--h:${45 + (i * 37) % 55}%;--d:${(-(i * 0.29) % 1.2).toFixed(2)}s"></i>`).join(''));
+  viz('.stat .viz.outs', [...Array(16)].map((_, i) => `<i style="background:${i < 8 ? '#a288ff' : '#ff6aa6'}"></i>`).join(''));
+  viz('.stat .viz.fxs', ['#3ee08f', '#35d0f4', '#ffc23f', '#ff8f4d', '#ff6a7d', '#a78bfa', '#ff6ac1'].map(c => `<i style="background:${c};max-width:22px"></i>`).join(''));
+
+  /* ---------- Effects: the settings window of an effect appears when pointing at its card ---------- */
+  const FXT = {
+    denoiser: ['Denoiser', 'settings window', 'Einstellungsfenster'], eq: ['Equalizer', 'large EQ window', 'großes EQ-Fenster'],
+    gate: ['Gate', 'settings window', 'Einstellungsfenster'], comp: ['Compressor', 'settings window', 'Einstellungsfenster'],
+    limiter: ['Limiter', 'block in the chain', 'Block in der Kette'], correction: ['Room correction', 'window', 'Fenster'],
+    phase: ['Phase', 'block in the chain', 'Block in der Kette'], vst: ['VST3', 'plugin window', 'Plugin-Fenster']
+  };
+  const pop = document.createElement('div');
+  pop.className = 'fxpop'; pop.setAttribute('aria-hidden', 'true');
+  body.append(pop);
+  let popCard = null, popLang = null;
+  function placePop(card) {
+    const r = card.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight, head = 76;
+    const x = Math.max(12, Math.min(innerWidth - pw - 12, r.left + r.width / 2 - pw / 2));
+    let y = r.top - ph - 12;
+    if (y < head) y = r.bottom + 12;
+    if (y + ph > innerHeight - 8) y = Math.max(head, innerHeight - ph - 8);
+    pop.style.left = x + 'px'; pop.style.top = y + 'px';
+  }
+  function showPop(card) {
+    if (!window.HydraUI) return;
+    if (popCard !== card || popLang !== lang) {
+      popCard = card; popLang = lang;
+      const t = FXT[card.dataset.fx];
+      pop.innerHTML = `<div class="ttl"><b>${t[0]}</b> · ${lang === 'de' ? t[2] : t[1]}</div><div class="hx" data-g="fxwin" data-o="${card.dataset.fx}"></div>`;
+      window.HydraUI.renderAll(pop);
+    }
+    document.querySelectorAll('.fx.open').forEach(c => c !== card && c.classList.remove('open'));
+    card.classList.add('open');
+    placePop(card);
+    pop.classList.add('on');
+  }
+  function hidePop() { pop.classList.remove('on'); document.querySelectorAll('.fx.open').forEach(c => c.classList.remove('open')); }
+  document.querySelectorAll('.fx[data-fx]').forEach(card => {
+    card.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse') showPop(card); });
+    card.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') hidePop(); });
+    card.addEventListener('focus', () => showPop(card));
+    card.addEventListener('blur', hidePop);
+    card.addEventListener('click', e => {   // touch: tap shows, tap again hides
+      if (e.pointerType === 'mouse') return;
+      if (card.classList.contains('open') && pop.classList.contains('on')) hidePop(); else showPop(card);
+    });
+  });
+  window.addEventListener('scroll', () => { if (pop.classList.contains('on')) hidePop(); }, { passive: true });
+
   /* ---------- Start ---------- */
   document.title = T[lang].title;
   route(true);
   window.addEventListener('load', () => { if (location.hash) route(true); });
   loadRelease();
+})();
+</script>
+<script>
+// Website editor for the maintainers: only with ?edit (stays on for this tab until closed). See edit.js.
+(function () {
+  var on = /[?&]edit(=|&|$)/.test(location.search);
+  try { if (on) sessionStorage.setItem('hydra-edit', '1'); else on = sessionStorage.getItem('hydra-edit') === '1'; } catch (e) {}
+  if (on) { var s = document.createElement('script'); s.src = 'edit.js'; document.body.appendChild(s); }
 })();
 </script>
 </body>
