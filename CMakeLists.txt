@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(HydraMixer VERSION 0.8.0 LANGUAGES C CXX)
+project(HydraMixer VERSION 0.8.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -85,6 +85,9 @@ endfunction()
 juce_add_binary_data(HydraRemoteData HEADER_NAME RemoteData.h NAMESPACE RemoteData
     SOURCES resources/remote/index.html resources/remote/manifest.webmanifest resources/icon.png)
 
+# JUCE's resources.rc (file version shown in Explorer) depends only on the icon, not on the version: after a
+# version bump the exe kept the old one (0.8.1 built as 0.8.0). Removed at every configure, it is generated again.
+file(REMOVE "${CMAKE_CURRENT_BINARY_DIR}/HydraMixer_artefacts/JuceLibraryCode/HydraMixer_resources.rc")
 juce_add_gui_app(HydraMixer
     PRODUCT_NAME "Hydra Mixer"
     COMPANY_NAME "Hydra"
