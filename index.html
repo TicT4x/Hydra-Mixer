@@ -604,7 +604,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         <span class="de">Hydra Mixer ist ein kostenloser Open-Source-Audiomixer für Windows, gebaut für die geringstmögliche Latenz. Mische Mikrofone, Spiele, Apps und virtuelle Kabel, schick sie durch eingebaute Effekte und VST3-Plugins und jeden Mix genau dorthin, wo er hin soll. Eine Alternative zu Voicemeeter.</span>
       </p>
       <div class="cta">
-        <a class="btn primary" data-dl="win" href="https://github.com/TicT4x/Hydra-Mixer/releases/download/v0.8/HydraMixer-0.8-win64.exe">
+        <a class="btn primary" data-dl="win" href="https://github.com/TicT4x/Hydra-Mixer/releases/download/v0.8.1/HydraMixer-0.8.1-win64.zip">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10.5 4.4v7.1H3zM11.5 4.3 21 3v8.5h-9.5zM3 12.5h7.5v7.1L3 18.5zM11.5 12.5H21V21l-9.5-1.3z"/></svg>
           <span class="en">Download for Windows</span><span class="de">Für Windows laden</span>
         </a>
@@ -714,7 +714,9 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         <p><span class="en">Measured with a mic in a guided wizard: tames room resonances and lines up left and right speaker.</span><span class="de">Im Assistenten mit einem Mikro gemessen: zähmt Raumresonanzen und gleicht linken und rechten Lautsprecher an.</span></p></div>
       <div class="fx rv" tabindex="0" data-fx="phase" style="--c:#ff6ac1"><h3>Phase</h3>
         <p><span class="en">Flips the polarity, for a second mic on the same source or a miswired cable.</span><span class="de">Dreht die Polarität, für ein zweites Mikro an derselben Quelle oder ein falsch verdrahtetes Kabel.</span></p></div>
-      <div class="fx rv" tabindex="0" data-fx="vst" style="--c:linear-gradient(90deg,var(--accent),var(--accent2))"><h3 style="color:var(--text)"><span class="en">VST3 plugins</span><span class="de">VST3-Plugins</span></h3>
+      <div class="fx rv" tabindex="0" data-fx="stems" style="--c:#56e0c8"><h3>Stem Separator<span class="tag">Beta</span></h3>
+        <p><span class="en">Splits a song live into vocals, drums, bass, guitar and the rest. Mute the vocals to sing along, or the guitar to play it yourself. Runs on the graphics card.</span><span class="de">Zerlegt einen Song live in Gesang, Schlagzeug, Bass, Gitarre und den Rest. Gesang stumm zum Mitsingen, Gitarre stumm zum Selberspielen. Läuft auf der Grafikkarte.</span></p></div>
+      <div class="fx rv" tabindex="0" data-fx="vst" style="--c:linear-gradient(90deg,var(--accent),var(--accent2));grid-column:1/-1"><h3 style="color:var(--text)"><span class="en">VST3 plugins</span><span class="de">VST3-Plugins</span></h3>
         <p><span class="en">Any VST3 effect, anywhere in the chain, with its own editor. Plugins are scanned safely, a crashing one is skipped.</span><span class="de">Jeder VST3-Effekt, an jeder Stelle der Kette, mit eigenem Editor. Plugins werden sicher gescannt, ein abstürzendes wird übersprungen.</span></p></div>
     </div>
   </div>
@@ -733,6 +735,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         <button role="tab" data-f="apps"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span><span class="en">Capture single apps</span><span class="de">Einzelne Apps aufnehmen</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="cables"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h4l2-5 4 10 2-5h4"/></svg></span><span class="en">Virtual cables</span><span class="de">Virtuelle Kabel</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="eq"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 16c3 0 3-8 6-8s3 6 6 6 3-4 6-4"/></svg></span><span class="en">EQ with live spectrum</span><span class="de">EQ mit Live-Spektrum</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="stems"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 10v4M8 6v12M12 3v18M16 8v8M20 11v2"/></svg></span><span class="en">Stem separation</span><span class="de">Stem-Separation</span><span class="tag">Beta</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="sel"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></span><span class="en">A separate mix per output</span><span class="de">Eigener Mix pro Ausgang</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="room"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10 12 3l9 7v10H3z"/><path d="M8 15c1.3-1.3 2.7-1.3 4 0s2.7 1.3 4 0"/></svg></span><span class="en">Room correction</span><span class="de">Raumkorrektur</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="link"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16a5 5 0 0 1 6 0"/><circle cx="12" cy="19.5" r="1"/></svg></span>Hydra Link<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
@@ -790,6 +793,17 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
             <li><span class="en">The same EQ on inputs and outputs, presets as .hydraeq files.</span><span class="de">Derselbe EQ auf Inputs und Ausgängen, Presets als .hydraeq-Dateien.</span></li>
           </ul>
           <a class="more" href="#eq"><span class="en">Equalizer in the wiki →</span><span class="de">Equalizer im Wiki →</span></a>
+        </article>
+
+        <article data-f="stems" hidden>
+          <h3><span class="en">Stem separation</span><span class="de">Stem-Separation</span><span class="tag">Beta</span></h3>
+          <div class="pic hx" data-g="fxwin" data-o="stems"></div>
+          <p><span class="en">Put the Stem Separator on Spotify, YouTube or any other input and Hydra splits the music while it plays: vocals, drums, bass, guitar and the rest, each with its own fader, mute and solo. Sing without the original vocals, practise the guitar part over the band, or turn the drums down.</span><span class="de">Leg den Stem Separator auf Spotify, YouTube oder einen anderen Input, und Hydra zerlegt die Musik, während sie läuft: Gesang, Schlagzeug, Bass, Gitarre und den Rest, jeweils mit eigenem Fader, Mute und Solo. Sing ohne den Originalgesang, übe die Gitarrenspur zur Band oder nimm das Schlagzeug zurück.</span></p>
+          <ul>
+            <li><span class="en">Two AI models on the graphics card: Live (about 1.3 s delay) and Fast, Balanced, Best (up to 3.6 s, the best quality).</span><span class="de">Zwei KI-Modelle auf der Grafikkarte: Live (ca. 1,3 s Verzögerung) sowie Fast, Balanced, Best (bis 3,6 s, beste Qualität).</span></li>
+            <li><span class="en">Made for playing and singing along, not for live microphones. Needs a strong graphics card.</span><span class="de">Gedacht zum Mitspielen und Mitsingen, nicht für Live-Mikrofone. Braucht eine starke Grafikkarte.</span></li>
+          </ul>
+          <a class="more" href="#stems"><span class="en">Stem Separator in the wiki →</span><span class="de">Stem Separator im Wiki →</span></a>
         </article>
 
         <article data-f="sel" hidden>
@@ -914,7 +928,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         <li><b><span class="en">Runs in the background.</span><span class="de">Läuft im Hintergrund.</span></b> <span class="en">Low-latency audio, keeps playing with the screen off.</span><span class="de">Audio mit geringer Latenz, spielt bei ausgeschaltetem Display weiter.</span></li>
       </ul>
       <div class="cta" style="justify-content:flex-start">
-        <a class="btn primary" data-dl="apk" href="https://github.com/TicT4x/Hydra-Mixer/releases/download/v0.8/HydraLink-0.8.apk">
+        <a class="btn primary" data-dl="apk" href="https://github.com/TicT4x/Hydra-Mixer/releases/download/v0.8.1/HydraLink-0.8.1.apk">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></svg>
           <span class="en">Get the Android app</span><span class="de">Android-App laden</span>
         </a>
@@ -947,7 +961,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
           <li><span class="en">ASIO interface recommended, any Windows device works</span><span class="de">ASIO-Interface empfohlen, jedes Windows-Gerät geht</span></li>
         </ul>
         <div class="acts">
-          <a class="btn primary" data-dl="win" href="https://github.com/TicT4x/Hydra-Mixer/releases/download/v0.8/HydraMixer-0.8-win64.exe">
+          <a class="btn primary" data-dl="win" href="https://github.com/TicT4x/Hydra-Mixer/releases/download/v0.8.1/HydraMixer-0.8.1-win64.zip">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
             <span class="en">Download</span><span class="de">Herunterladen</span>
           </a>
@@ -965,7 +979,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
           <li><span class="en">The remote control needs no app at all: Settings → Remote</span><span class="de">Die Fernsteuerung braucht gar keine App: Settings → Remote</span></li>
         </ul>
         <div class="acts">
-          <a class="btn primary" data-dl="apk" href="https://github.com/TicT4x/Hydra-Mixer/releases/download/v0.8/HydraLink-0.8.apk">
+          <a class="btn primary" data-dl="apk" href="https://github.com/TicT4x/Hydra-Mixer/releases/download/v0.8.1/HydraLink-0.8.1.apk">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
             <span class="en">Download APK</span><span class="de">APK herunterladen</span>
           </a>
@@ -1003,12 +1017,28 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         <p><span class="en">Yes. It is open source under the AGPL-3.0, with no license key, no ads and no account.</span><span class="de">Ja. Es ist Open Source unter der AGPL-3.0, ohne Lizenzschlüssel, Werbung oder Konto.</span></p>
       </details>
       <details>
+        <summary><span class="en">Is Hydra complicated to use?</span><span class="de">Ist Hydra kompliziert zu bedienen?</span></summary>
+        <p><span class="en">No. Hydra starts with a ready layout of inputs and outputs. You pick a device with a click in a window that explains every option, and expert settings stay hidden until you switch them on. The small “i” buttons explain what a control does, and the wiki's tutorial gets you to your first mix in about two minutes.</span><span class="de">Nein. Hydra startet mit einem fertigen Layout aus Inputs und Ausgängen. Geräte wählst du per Klick in einem Fenster, das jede Option erklärt, und Experten-Einstellungen bleiben verborgen, bis du sie einschaltest. Die kleinen „i“-Knöpfe erklären, was ein Regler macht, und das Tutorial im Wiki bringt dich in etwa zwei Minuten zum ersten Mix.</span></p>
+      </details>
+      <details>
         <summary><span class="en">How is it different from Voicemeeter?</span><span class="de">Was ist anders als bei Voicemeeter?</span></summary>
         <p><span class="en">Hydra is built to be flexible and easy to use: every channel gets its own chain of built-in effects and VST3 plugins in any order, apps can be captured directly without a cable, virtual cables are set up with one click, and every control can be learned by MIDI. Under the hood it stays fast and light: the master device runs without extra buffers, the built-in effects add no delay, and the engine needs about 1.6 % of one CPU core when idle. Your Voicemeeter setup can be imported.</span><span class="de">Hydra ist auf Flexibilität und einfache Bedienung ausgelegt: Jeder Kanal hat seine eigene Kette aus eingebauten Effekten und VST3-Plugins in beliebiger Reihenfolge, Apps lassen sich ohne Kabel direkt aufnehmen, virtuelle Kabel richtest du mit einem Klick ein, und jedes Bedienelement ist per MIDI lernbar. Darunter bleibt es schnell und sparsam: Das Master-Gerät läuft ohne Zusatzpuffer, die eingebauten Effekte kosten keine Verzögerung, und die Engine braucht im Leerlauf etwa 1,6 % eines CPU-Kerns. Dein Voicemeeter-Setup lässt sich importieren.</span></p>
       </details>
       <details>
-        <summary><span class="en">Do I need virtual audio cables?</span><span class="de">Brauche ich virtuelle Audiokabel?</span></summary>
-        <p><span class="en">Not for capturing apps: Hydra records single apps directly. To give other programs (Discord, OBS) a device to use, Hydra works with Virtual Audio Cable and manages the cables for you.</span><span class="de">Nicht, um Apps aufzunehmen: Hydra nimmt einzelne Apps direkt auf. Damit andere Programme (Discord, OBS) ein Gerät bekommen, arbeitet Hydra mit Virtual Audio Cable und verwaltet die Kabel für dich.</span></p>
+        <summary><span class="en">What is VAC and why would I want it?</span><span class="de">Was ist VAC und wozu brauche ich es?</span></summary>
+        <p><span class="en">Virtual Audio Cable (VAC) by Eugene Muzychenko adds virtual sound devices to Windows. With it, a virtual output of Hydra shows up in Discord, OBS or Zoom as a normal microphone carrying exactly the mix you built for it. Hydra adds, names and hides the cables for you and connects to them directly, without the extra buffering of Windows audio. You don't need it to capture apps: Hydra records single apps without any cable. VAC is a separate product from its vendor; other cables such as VB-CABLE work too.</span><span class="de">Virtual Audio Cable (VAC) von Eugene Muzychenko fügt Windows virtuelle Audiogeräte hinzu. Damit erscheint ein virtueller Ausgang von Hydra in Discord, OBS oder Zoom als normales Mikrofon, das genau den Mix trägt, den du dafür gebaut hast. Hydra legt die Kabel für dich an, benennt und versteckt sie und verbindet sich direkt mit ihnen, ohne die Zusatzpuffer von Windows-Audio. Zum Aufnehmen von Apps brauchst du es nicht: Hydra nimmt einzelne Apps ohne Kabel auf. VAC ist ein eigenes Produkt seines Herstellers; andere Kabel wie VB-CABLE funktionieren auch.</span></p>
+      </details>
+      <details>
+        <summary><span class="en">Can I use multiple ASIO devices?</span><span class="de">Kann ich mehrere ASIO-Geräte nutzen?</span></summary>
+        <p><span class="en">Yes. One device is the master and sets the clock for the whole mixer. Every other ASIO interface, and every Windows device, is kept in sync with it automatically by an adaptive drift compensation. All channels of one interface stay sample-accurate to each other.</span><span class="de">Ja. Ein Gerät ist der Master und gibt den Takt für den ganzen Mixer vor. Jedes weitere ASIO-Interface und jedes Windows-Gerät hält Hydra automatisch mit einer adaptiven Drift-Kompensation synchron. Alle Kanäle eines Interfaces bleiben untereinander sample-genau.</span></p>
+      </details>
+      <details>
+        <summary><span class="en">Do I need special hardware to run Hydra?</span><span class="de">Brauche ich spezielle Hardware für Hydra?</span></summary>
+        <p><span class="en">No. Windows 10 or 11 (64-bit) and a CPU with AVX2 (practically every PC from the last ten years) are enough, and Hydra works with any sound card through Windows audio. An audio interface with an ASIO driver gives the lowest latency but is optional. Only the Stem Separator (beta) needs a strong graphics card.</span><span class="de">Nein. Windows 10 oder 11 (64 Bit) und eine CPU mit AVX2 (praktisch jeder PC der letzten zehn Jahre) reichen, und Hydra arbeitet über Windows-Audio mit jeder Soundkarte. Ein Audio-Interface mit ASIO-Treiber bringt die niedrigste Latenz, ist aber optional. Nur der Stem Separator (Beta) braucht eine starke Grafikkarte.</span></p>
+      </details>
+      <details>
+        <summary><span class="en">Is there a Mac or Linux version?</span><span class="de">Gibt es eine Mac- oder Linux-Version?</span></summary>
+        <p><span class="en">Not yet. Versions for macOS and Linux are planned once Hydra has reached 1.0. Until then the features are still changing, and porting each of them to every system again and again would slow development down a lot.</span><span class="de">Noch nicht. Versionen für macOS und Linux sind geplant, sobald Hydra bei 1.0 angekommen ist. Bis dahin ändern sich die Funktionen noch, und jede davon immer wieder auf jedes System zu portieren, würde die Entwicklung stark bremsen.</span></p>
       </details>
       <details>
         <summary><span class="en">Found a bug?</span><span class="de">Einen Fehler gefunden?</span></summary>
@@ -1063,6 +1093,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
   <div class="grp">Signal processing</div>
   <a href="#inspector">Inspector</a>
   <a href="#denoiser">Denoiser</a>
+  <a href="#stems">Stem Separator</a>
   <a href="#eq">Equalizer</a>
   <a href="#correction">Correction</a>
   <a href="#gate">Gate &amp; Voice Key</a>
@@ -1113,6 +1144,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
   <div class="grp">Signalverarbeitung</div>
   <a href="#inspector">Inspector</a>
   <a href="#denoiser">Denoiser</a>
+  <a href="#stems">Stem Separator</a>
   <a href="#eq">Equalizer</a>
   <a href="#correction">Correction</a>
   <a href="#gate">Gate &amp; Voice Key</a>
@@ -1155,7 +1187,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
       <h1>Hydra Mixer Wiki</h1>
       <p class="lead">Hydra Mixer is a virtual audio mixer for Windows built for the lowest possible latency, an alternative to Voicemeeter Potato. This page walks you through the setup step by step and explains every feature for later reference.</p>
       <div class="badges">
-        <span class="badge"><b>Version</b> 0.8</span>
+        <span class="badge"><b>Version</b> 0.8.1</span>
         <span class="badge"><b>System</b> Windows 10 / 11, 64-bit, AVX2</span>
         <span class="badge"><b>Drivers</b> ASIO · WASAPI</span>
         <span class="badge"><b>Plugins</b> VST3</span>
@@ -1182,7 +1214,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 <section id="install">
   <h2><span class="num">1</span>Installation</h2>
   <ol class="steps">
-    <li>Download <code>HydraMixer-0.8-win64.exe</code> from the <a href="https://github.com/TicT4x/Hydra-Mixer/releases">Releases page</a>.</li>
+    <li>Download <code>HydraMixer-0.8.1-win64.zip</code> from the <a href="https://github.com/TicT4x/Hydra-Mixer/releases">Releases page</a>.</li>
     <li>Unzip it anywhere, e.g. <code>C:\Tools\Hydra Mixer</code>. There is no installer and no runtime to install.</li>
     <li>Start <code>Hydra Mixer.exe</code>. On first start Hydra picks a default device. Then choose your master device in the <a href="#settings">Settings</a>.</li>
   </ol>
@@ -1493,7 +1525,7 @@ cd Hydra-Mixer
   <table>
     <thead><tr><th>Channel</th><th>Available blocks</th></tr></thead>
     <tbody>
-      <tr><td>Input</td><td><a href="#denoiser">Denoiser</a> · <a href="#eq">EQ</a> · <a href="#gate">Gate</a> · <a href="#comp">Compressor</a> · Phase · <a href="#buses">Limiter</a> · <a href="#vst">VST3 plugins</a></td></tr>
+      <tr><td>Input</td><td><a href="#denoiser">Denoiser</a> · <a href="#stems">Stem Separator</a> (beta) · <a href="#eq">EQ</a> · <a href="#gate">Gate</a> · <a href="#comp">Compressor</a> · Phase · <a href="#buses">Limiter</a> · <a href="#vst">VST3 plugins</a></td></tr>
       <tr><td>Hardware output (H)</td><td><a href="#correction">Correction</a> · EQ · Compressor · Phase · Limiter · VST3 plugins</td></tr>
       <tr><td>Virtual output (V)</td><td>EQ · Compressor · Phase · Limiter · VST3 plugins</td></tr>
       <tr><td>Recorder</td><td>Record Source · Recording · Play To (see <a href="#recorder">Recorder</a>)</td></tr>
@@ -1536,8 +1568,49 @@ cd Hydra-Mixer
 </section>
 
 <!-- ============================================================ -->
+<section id="stems">
+  <h2><span class="num">12</span>Stem Separator<span class="tag">Beta</span></h2>
+  <div class="hx shot" data-g="fxwin" data-o="stems"></div>
+  <p>The Stem Separator splits the music of an input into five parts while it plays: <b>vocals, drums, bass, guitar</b> and the <b>rest</b> (piano, synths, everything else). Each part has its own fader, <span class="ui">M</span> (mute) and <span class="ui">S</span> (solo). Typical uses: sing along without the original vocals, mute the guitar and play it yourself, practise with the drums only.</p>
+  <div class="note"><b>Needs a lot of GPU power.</b> Neural networks on the graphics card do the separation (DirectML, any DirectX 12 GPU). On a current mid-range card (e.g. an RTX 5060) one channel takes about 20 % (Live) to 50 % (Best) of the GPU. Older cards, integrated graphics and most laptops are too slow: the separation cannot keep up and the input plays unseparated for a moment. So this is not something for every system. While it runs, games on the same PC get less GPU time.</div>
+  <h3>Getting started</h3>
+  <ol class="steps">
+    <li>Select the input with the music (e.g. Spotify) and add <span class="ui">Stem Separator (beta)</span> with the <span class="ui">+</span> of the <a href="#inspector">inspector</a>. It is always first in the chain, once per input.</li>
+    <li>Open its settings with the expand symbol in the block title and download the model for the mode you want (once, 165 MB or 352 MB). The download is checked and stored in <code>%APPDATA%\HydraMixer\Models</code>.</li>
+    <li>Choose the latency mode. After a short start (“Separation starts in x s”) the knobs light up with the level of each stem.</li>
+  </ol>
+  <h3>Latency modes</h3>
+  <table>
+    <thead><tr><th>Mode</th><th>Delay</th><th>Model</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td><b>Live</b> (default)</td><td>about 1.3 s</td><td>HT-Demucs (4 stems)</td><td>Least GPU load. No guitar stem: the guitar stays in the rest.</td></tr>
+      <tr><td>Fast</td><td>about 2.2 s</td><td>BS-RoFormer SW (6 stems)</td><td rowspan="3">Best separation, guitar included. The longer the delay, the more context the model hears and the cleaner the result.</td></tr>
+      <tr><td>Balanced</td><td>about 2.8 s</td><td>BS-RoFormer SW</td></tr>
+      <tr><td>Best</td><td>about 3.6 s</td><td>BS-RoFormer SW</td></tr>
+    </tbody>
+  </table>
+  <p>The delay is the price of the quality: the models have to hear a few seconds of music before they can separate it. That is why the Stem Separator is meant for <b>playback</b> (music, videos), not for microphones or anything you monitor live. The delay is shown in the block and counts in the <a href="#latency">Latency Finder</a> and <a href="#syncdelay">Sync Delay</a>.</p>
+  <h3>Controls</h3>
+  <table>
+    <thead><tr><th>Control</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td>Fader / knob per stem</td><td>Level of that stem, −∞ to +12 dB. With all stems at 0 dB you hear exactly the original.</td></tr>
+      <tr><td><span class="ui">M</span></td><td>Mutes the stem.</td></tr>
+      <tr><td><span class="ui">S</span></td><td>Only soloed stems play. Click = only this one, Shift + click = several. Solo beats mute.</td></tr>
+      <tr><td><span class="ui">GPU</span> per model (<span class="ui">AUTO</span>)</td><td>How much of the GPU one channel may use. More GPU = less delay. Auto uses safe fixed timings; dragging the slider switches Auto off and shows the resulting delay per mode.</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>A model is on the GPU only while a channel really uses it and is unloaded 15 s after you switch the effect off. Silent passages cost no GPU time.</li>
+    <li>If the GPU falls behind, that piece plays unseparated (the block shows “x s unseparated in the last 30 s”). Choose a faster mode, close other GPU-heavy programs or use the separator on one channel only.</li>
+    <li>A second channel with a Stem Separator doubles the GPU load; Hydra asks before adding it.</li>
+    <li>Beta: the feature is new, feedback welcome. The BS-RoFormer weights are a community model without a stated license, for personal use. HT-Demucs is MIT-licensed.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
 <section id="eq">
-  <h2><span class="num">12</span>Equalizer</h2>
+  <h2><span class="num">13</span>Equalizer</h2>
   <p>Inputs and outputs have the same parametric EQ with <b>16 bands</b>. A band is only visible (as a coloured point) while it is in use. A new channel starts without points. A band you switch off keeps its values and shows as a hollow point. A chain can hold up to four EQs.</p>
   <div class="hx shot" data-g="eq"></div>
   <h3>Working with the curve</h3>
@@ -1571,7 +1644,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="correction">
-  <h2><span class="num">13</span>Correction</h2>
+  <h2><span class="num">14</span>Correction</h2>
   <p>Room correction for your speakers, on <b>hardware outputs</b> (H) only: filter bands plus left/right timing, zero latency. By default the block sits before the EQ: the correction fixes the speakers in the room, the EQ after it is for taste. The block shows the curve and the name of the correction; its switch turns it on and off (MIDI-learnable, undo, scenes).</p>
   <ul>
     <li><b>Left and right separately</b>: each speaker gets its own bands (recommended, measured in the wizard).</li>
@@ -1584,7 +1657,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="gate">
-  <h2><span class="num">14</span>Gate &amp; Voice Key</h2>
+  <h2><span class="num">15</span>Gate &amp; Voice Key</h2>
   <p>A gate silences the channel while the signal stays below a threshold, e.g. so the microphone doesn't transmit background noise between sentences.</p>
   <table>
     <thead><tr><th>Control</th><th>Meaning</th></tr></thead>
@@ -1603,7 +1676,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="comp">
-  <h2><span class="num">15</span>Compressor</h2>
+  <h2><span class="num">16</span>Compressor</h2>
   <p>The compressor evens out volume differences: loud parts are turned down, the result is more even. A transfer curve shows the effect including the current gain reduction.</p>
   <table>
     <thead><tr><th>Control</th><th>Meaning</th></tr></thead>
@@ -1622,7 +1695,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="vst">
-  <h2><span class="num">16</span>VST3 plugins</h2>
+  <h2><span class="num">17</span>VST3 plugins</h2>
   <p>VST3 plugins are blocks in the same <a href="#inspector">effect chain</a> as the built-in effects, so a plugin can sit anywhere, e.g. between EQ and compressor. They run without extra buffering (their own latency is shown by the <a href="#latency">Latency Finder</a>).</p>
   <h3>Setting up plugins</h3>
   <ol class="steps">
@@ -1640,7 +1713,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="buses">
-  <h2><span class="num">17</span>Outputs &amp; limiter</h2>
+  <h2><span class="num">18</span>Outputs &amp; limiter</h2>
   <p>Every output (bus) has a fader, mute, mono, its own <a href="#inspector">effect chain</a>, an optional icon and a freely selectable output device.</p>
   <h3>Limiter</h3>
   <p>The limiter keeps the level from rising above <span class="ui">CEILING</span>, e.g. so a stream never clips. It adds no latency. It is a normal block: add it with <span class="ui">+ → Limiter</span> on any output or input. New outputs start without a limiter; limiters from older sessions stay.</p>
@@ -1651,7 +1724,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="sel">
-  <h2><span class="num">18</span>SEL &amp; monitoring</h2>
+  <h2><span class="num">19</span>SEL &amp; monitoring</h2>
   <h3>SEL: a separate mix per bus</h3>
   <p>When you press <b>SEL</b> on a bus, the input faders no longer control the overall volume but only each input's level <i>on this bus</i>. Inputs not routed there are dimmed. This lets you build e.g. a stream mix where the music is quieter than in your headphones.</p>
   <ol class="steps">
@@ -1666,7 +1739,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="recorder">
-  <h2><span class="num">19</span>Recorder</h2>
+  <h2><span class="num">20</span>Recorder</h2>
   <p>The recorder records a virtual output (V) as WAV and plays audio files into any outputs. Open it via <span class="ui">Tools → Recorder</span> or the time display in the top bar. It has three areas:</p>
   <table>
     <thead><tr><th>Area</th><th>Contents</th></tr></thead>
@@ -1699,7 +1772,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="scenes">
-  <h2><span class="num">20</span>Scenes</h2>
+  <h2><span class="num">21</span>Scenes</h2>
   <p>A scene is a snapshot of all mixer parameters (faders, mutes, routing, effects, sends …). Not included: devices, channel names, plugins and which channels are in use. Typical scenes: “Gaming”, “Stream”, “Call”, “Music”.</p>
   <p>Open: <span class="ui">Tools → Scene Editor</span>. The scenes appear as a panel on the left of the main window.</p>
   <table>
@@ -1720,7 +1793,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="latency">
-  <h2><span class="num">21</span>Latency Finder</h2>
+  <h2><span class="num">22</span>Latency Finder</h2>
   <p><span class="ui">Tools → Latency Finder</span> shows how much delay every path from input to output has and where it comes from. It is the only place in Hydra that shows latency values.</p>
   <h3>Layout</h3>
   <ol>
@@ -1741,7 +1814,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="syncdelay">
-  <h2><span class="num">22</span>Sync Delay</h2>
+  <h2><span class="num">23</span>Sync Delay</h2>
   <p>Different devices have different latency. If, for example, one source arrives over a slower path than the microphone, or two outputs drift apart in time, Sync Delay lines them up.</p>
   <p>Open: <span class="ui">Tools → Sync Delay</span>. For each group (inputs, hardware outputs, virtual outputs) you see every channel with:</p>
   <table>
@@ -1759,7 +1832,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="dsp">
-  <h2><span class="num">23</span>DSP Load</h2>
+  <h2><span class="num">24</span>DSP Load</h2>
   <p>Click the DSP meter in the top bar (or <span class="ui">Tools → DSP Load</span>) to see what costs how much processing time. Values are shares of the time available per audio block, averaged over 1 second, with peak.</p>
   <ul>
     <li><b>Total load</b> as a bar with peak marker.</li>
@@ -1773,7 +1846,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="room">
-  <h2><span class="num">24</span>Room calibration</h2>
+  <h2><span class="num">25</span>Room calibration</h2>
   <p>Measures how your speakers sound in your room and builds a <a href="#correction">correction</a> from it. Open <span class="ui">Tools → Room Correction</span> or the expand button of a Correction block. The window has the tabs <span class="ui">Correction</span>, <span class="ui">Calibrate</span>, <span class="ui">Analysis</span> and <span class="ui">Edit</span>; it follows the selected hardware output. On the left are the saved corrections and measurements.</p>
   <h3>The wizard</h3>
   <p><span class="ui">+ Calibrate speakers</span> starts a step-by-step wizard:</p>
@@ -1797,7 +1870,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="undo">
-  <h2><span class="num">25</span>Undo / redo</h2>
+  <h2><span class="num">26</span>Undo / redo</h2>
   <p><kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes the last change, <kbd>Ctrl</kbd>+<kbd>Y</kbd> (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>) redoes it. This works in the main window and in all tool windows. A notice shows what was undone.</p>
   <ul>
     <li>All saved parameters are tracked in <b>one</b> history: faders, routing, EQ, gate and so on. Up to 200 steps.</li>
@@ -1808,7 +1881,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="midi">
-  <h2><span class="num">26</span>MIDI Learn</h2>
+  <h2><span class="num">27</span>MIDI Learn</h2>
   <p>Every control and switch in Hydra can be operated with a MIDI controller.</p>
   <h3>Setup</h3>
   <ol class="steps">
@@ -1837,7 +1910,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="apc">
-  <h2><span class="num">27</span>APC mini &amp; LED feedback</h2>
+  <h2><span class="num">28</span>APC mini &amp; LED feedback</h2>
   <p>For controllers with a pad grid (e.g. <b>Akai APC mini</b>), Hydra colours the pads by state:</p>
   <table>
     <thead><tr><th>Pad</th><th>Colour (APC mini)</th></tr></thead>
@@ -1854,7 +1927,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="hotkeys">
-  <h2><span class="num">28</span>Keyboard shortcuts</h2>
+  <h2><span class="num">29</span>Keyboard shortcuts</h2>
   <p>Every switch (mute, solo, routing, SEL, scenes, recorder …) can be put on a key or mouse button.</p>
   <ol class="steps">
     <li>Right-click the switch → <span class="ui">Assign Keyboard Shortcut...</span></li>
@@ -1873,7 +1946,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="remote">
-  <h2><span class="num">29</span>Phone &amp; tablet remote</h2>
+  <h2><span class="num">30</span>Phone &amp; tablet remote</h2>
   <div style="display:grid;grid-template-columns:2.25fr 1fr;gap:14px;align-items:end;margin:14px 0"><img class="shot" style="margin:0" src="remote-tablet.png" width="1760" height="1320" loading="lazy" alt="The remote on a tablet (landscape) and a phone (portrait)"><img class="shot" style="margin:0" src="remote-phone.png" width="780" height="1600" loading="lazy" alt=""></div>
   <p>Control Hydra from the browser of a phone or tablet in the same network: faders, mute, solo, mono, routing, SEL and scenes, with live meters. Nothing to install.</p>
   <ol class="steps">
@@ -1892,7 +1965,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="android">
-  <h2><span class="num">30</span>Android app (Hydra Link)</h2>
+  <h2><span class="num">31</span>Android app (Hydra Link)</h2>
   <p>The Android app <b>Hydra Link</b> brings audio between your phone and Hydra over Wi-Fi. It is in beta. Requirements: Android 9 or newer, phone and PC in the same network, <a href="#network">Hydra Link</a> switched on in Hydra (<span class="ui">Settings → Network</span>).</p>
   <h3>Installing</h3>
   <ol class="steps">
@@ -1915,7 +1988,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="settings">
-  <h2><span class="num">31</span>Settings</h2>
+  <h2><span class="num">32</span>Settings</h2>
   <p>Open them with the gear in the top bar. The small <span class="ui">i</span> buttons explain each section.</p>
   <table>
     <thead><tr><th>Tab</th><th>Contents</th></tr></thead>
@@ -1936,7 +2009,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="backup">
-  <h2><span class="num">32</span>Backup &amp; Transfer</h2>
+  <h2><span class="num">33</span>Backup &amp; Transfer</h2>
   <h3>Automatic backups</h3>
   <p>Hydra keeps a copy of your settings at every start and before every import (up to 40, duplicates are skipped). In <span class="ui">Settings → Backup &amp; Transfer → Automatic Backups</span> pick one and click <span class="ui">Restore</span>. <span class="ui">Open Folder</span> shows the folder.</p>
   <h3>Export / import</h3>
@@ -1951,7 +2024,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="vmimport">
-  <h2><span class="num">33</span>Voicemeeter import</h2>
+  <h2><span class="num">34</span>Voicemeeter import</h2>
   <p>If you are coming from Voicemeeter Potato, you can take over your settings.</p>
   <ol class="steps">
     <li>In Voicemeeter: <i>Menu → Save Settings</i> saves an XML file (often in <code>Documents</code>).</li>
@@ -1975,7 +2048,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="virtual">
-  <h2><span class="num">34</span>Virtual cables</h2>
+  <h2><span class="num">35</span>Virtual cables</h2>
   <p>A virtual cable is a Windows audio device that other programs can choose. What one side plays comes out on the other side. Hydra uses them so that, for example, Discord can play into a Hydra input, or OBS can record a Hydra output as a microphone.</p>
   <p>Hydra has no Windows driver of its own: a driver only loads with Secure Boot on if it is signed through Microsoft with an EV certificate, otherwise it needs test mode, which breaks games with anti-cheat. Instead Hydra works with <a href="https://vac.muzychenko.net/en/">Virtual Audio Cable</a> (VAC) and manages the cables for you.</p>
   <h3>One cable per channel</h3>
@@ -2002,7 +2075,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="recipes">
-  <h2><span class="num">35</span>Recipes</h2>
+  <h2><span class="num">36</span>Recipes</h2>
 
   <h3>Stream mix with its own music volume</h3>
   <ol>
@@ -2050,7 +2123,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="shortcuts">
-  <h2><span class="num">36</span>Mouse &amp; keyboard</h2>
+  <h2><span class="num">37</span>Mouse &amp; keyboard</h2>
   <table>
     <thead><tr><th>Where</th><th>Input</th><th>Effect</th></tr></thead>
     <tbody>
@@ -2081,7 +2154,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="troubleshoot">
-  <h2><span class="num">37</span>Troubleshooting</h2>
+  <h2><span class="num">38</span>Troubleshooting</h2>
 
   <h4>No sound at all</h4>
   <ul>
@@ -2127,7 +2200,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="files">
-  <h2><span class="num">38</span>Files &amp; folders</h2>
+  <h2><span class="num">39</span>Files &amp; folders</h2>
   <table>
     <thead><tr><th>Path</th><th>Contents</th></tr></thead>
     <tbody>
@@ -2146,7 +2219,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="glossary">
-  <h2><span class="num">39</span>Glossary</h2>
+  <h2><span class="num">40</span>Glossary</h2>
   <table>
     <tbody>
       <tr><td><b>ASIO</b></td><td>Steinberg's driver interface for audio interfaces with very low latency. Only one program can use a driver at a time.</td></tr>
@@ -2177,7 +2250,7 @@ cd Hydra-Mixer
       <h1>Hydra Mixer Wiki</h1>
       <p class="lead">Hydra Mixer ist ein virtueller Audiomixer für Windows mit möglichst geringer Latenz, eine Alternative zu Voicemeeter Potato. Diese Seite führt dich Schritt für Schritt durch die Einrichtung und erklärt jede Funktion zum Nachschlagen.</p>
       <div class="badges">
-        <span class="badge"><b>Version</b> 0.8</span>
+        <span class="badge"><b>Version</b> 0.8.1</span>
         <span class="badge"><b>System</b> Windows 10 / 11, 64 Bit, AVX2</span>
         <span class="badge"><b>Treiber</b> ASIO · WASAPI</span>
         <span class="badge"><b>Plugins</b> VST3</span>
@@ -2204,7 +2277,7 @@ cd Hydra-Mixer
 <section id="install">
   <h2><span class="num">1</span>Installation</h2>
   <ol class="steps">
-    <li>Lade <code>HydraMixer-0.8-win64.exe</code> von der <a href="https://github.com/TicT4x/Hydra-Mixer/releases">Releases-Seite</a> herunter.</li>
+    <li>Lade <code>HydraMixer-0.8.1-win64.zip</code> von der <a href="https://github.com/TicT4x/Hydra-Mixer/releases">Releases-Seite</a> herunter.</li>
     <li>Entpacke das Archiv an einen beliebigen Ort, z. B. <code>C:\Tools\Hydra Mixer</code>. Es gibt keinen Installer und keine Laufzeitumgebung.</li>
     <li>Starte <code>Hydra Mixer.exe</code>. Beim ersten Start wählt Hydra ein Standardgerät. Danach suchst du dir in den <a href="#settings">Settings</a> dein Master-Gerät aus.</li>
   </ol>
@@ -2515,7 +2588,7 @@ cd Hydra-Mixer
   <table>
     <thead><tr><th>Kanal</th><th>Verfügbare Blöcke</th></tr></thead>
     <tbody>
-      <tr><td>Input</td><td><a href="#denoiser">Denoiser</a> · <a href="#eq">EQ</a> · <a href="#gate">Gate</a> · <a href="#comp">Kompressor</a> · Phase · <a href="#buses">Limiter</a> · <a href="#vst">VST3-Plugins</a></td></tr>
+      <tr><td>Input</td><td><a href="#denoiser">Denoiser</a> · <a href="#stems">Stem Separator</a> (beta) · <a href="#eq">EQ</a> · <a href="#gate">Gate</a> · <a href="#comp">Kompressor</a> · Phase · <a href="#buses">Limiter</a> · <a href="#vst">VST3-Plugins</a></td></tr>
       <tr><td>Hardware-Ausgang (H)</td><td><a href="#correction">Correction</a> · EQ · Kompressor · Phase · Limiter · VST3-Plugins</td></tr>
       <tr><td>Virtueller Ausgang (V)</td><td>EQ · Kompressor · Phase · Limiter · VST3-Plugins</td></tr>
       <tr><td>Recorder</td><td>Record Source · Recording · Play To (siehe <a href="#recorder">Recorder</a>)</td></tr>
@@ -2558,8 +2631,49 @@ cd Hydra-Mixer
 </section>
 
 <!-- ============================================================ -->
+<section id="stems">
+  <h2><span class="num">12</span>Stem Separator<span class="tag">Beta</span></h2>
+  <div class="hx shot" data-g="fxwin" data-o="stems"></div>
+  <p>Der Stem Separator zerlegt die Musik eines Inputs, während sie läuft, in fünf Teile: <b>Gesang, Schlagzeug, Bass, Gitarre</b> und den <b>Rest</b> (Klavier, Synths, alles andere). Jeder Teil hat einen eigenen Fader, <span class="ui">M</span> (Mute) und <span class="ui">S</span> (Solo). Typisch: ohne den Originalgesang mitsingen, die Gitarre stumm schalten und selbst spielen, nur mit dem Schlagzeug üben.</p>
+  <div class="note"><b>Braucht viel GPU-Leistung.</b> Die Trennung übernehmen neuronale Netze auf der Grafikkarte (DirectML, jede DirectX-12-GPU). Auf einer aktuellen Mittelklasse-Karte (z. B. RTX 5060) braucht ein Kanal etwa 20 % (Live) bis 50 % (Best) der GPU. Ältere Karten, integrierte Grafik und die meisten Laptops sind zu langsam: Die Trennung kommt nicht hinterher, und der Input spielt kurz ungetrennt. Das ist also nicht für jedes System etwas. Solange sie läuft, bekommen Spiele auf demselben PC weniger GPU-Zeit.</div>
+  <h3>Loslegen</h3>
+  <ol class="steps">
+    <li>Wähle den Input mit der Musik (z. B. Spotify) und füge über das <span class="ui">+</span> im <a href="#inspector">Inspector</a> <span class="ui">Stem Separator (beta)</span> hinzu. Er steht immer zuerst in der Kette, einmal pro Input.</li>
+    <li>Öffne seine Einstellungen mit dem Vergrößern-Symbol im Blockkopf und lade das Modell für den gewünschten Modus herunter (einmalig, 165 MB bzw. 352 MB). Der Download wird geprüft und in <code>%APPDATA%\HydraMixer\Models</code> gespeichert.</li>
+    <li>Wähle den Latenzmodus. Nach einem kurzen Start („Separation starts in x s“) leuchten die Knobs mit dem Pegel jedes Stems.</li>
+  </ol>
+  <h3>Latenzmodi</h3>
+  <table>
+    <thead><tr><th>Modus</th><th>Verzögerung</th><th>Modell</th><th>Hinweis</th></tr></thead>
+    <tbody>
+      <tr><td><b>Live</b> (Standard)</td><td>ca. 1,3 s</td><td>HT-Demucs (4 Stems)</td><td>Geringste GPU-Last. Keine Gitarrenspur: Die Gitarre bleibt im Rest.</td></tr>
+      <tr><td>Fast</td><td>ca. 2,2 s</td><td>BS-RoFormer SW (6 Stems)</td><td rowspan="3">Beste Trennung, auch der Gitarre. Je länger die Verzögerung, desto mehr Zusammenhang hört das Modell und desto sauberer das Ergebnis.</td></tr>
+      <tr><td>Balanced</td><td>ca. 2,8 s</td><td>BS-RoFormer SW</td></tr>
+      <tr><td>Best</td><td>ca. 3,6 s</td><td>BS-RoFormer SW</td></tr>
+    </tbody>
+  </table>
+  <p>Die Verzögerung ist der Preis der Qualität: Die Modelle müssen ein paar Sekunden Musik hören, bevor sie sie trennen können. Deshalb ist der Stem Separator für <b>Wiedergabe</b> gedacht (Musik, Videos), nicht für Mikrofone oder alles, was du live abhörst. Die Verzögerung steht im Block und zählt im <a href="#latency">Latency Finder</a> und bei <a href="#syncdelay">Sync Delay</a>.</p>
+  <h3>Regler</h3>
+  <table>
+    <thead><tr><th>Regler</th><th>Bedeutung</th></tr></thead>
+    <tbody>
+      <tr><td>Fader / Knob pro Stem</td><td>Pegel dieses Stems, −∞ bis +12 dB. Stehen alle Stems auf 0 dB, hörst du exakt das Original.</td></tr>
+      <tr><td><span class="ui">M</span></td><td>Schaltet den Stem stumm.</td></tr>
+      <tr><td><span class="ui">S</span></td><td>Nur gesolote Stems spielen. Klick = nur dieser, Shift + Klick = mehrere. Solo schlägt Mute.</td></tr>
+      <tr><td><span class="ui">GPU</span> pro Modell (<span class="ui">AUTO</span>)</td><td>Wie viel der GPU ein Kanal nutzen darf. Mehr GPU = weniger Verzögerung. Auto nutzt sichere feste Werte; Ziehen am Regler schaltet Auto aus und zeigt die resultierende Verzögerung pro Modus.</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>Ein Modell liegt nur auf der GPU, solange ein Kanal es wirklich nutzt, und wird 15 s nach dem Ausschalten entladen. Stille Passagen kosten keine GPU-Zeit.</li>
+    <li>Kommt die GPU nicht hinterher, spielt dieses Stück ungetrennt (der Block zeigt „x s unseparated in the last 30 s“). Dann einen schnelleren Modus wählen, andere GPU-lastige Programme schließen oder den Separator nur auf einem Kanal nutzen.</li>
+    <li>Ein zweiter Kanal mit Stem Separator verdoppelt die GPU-Last; Hydra fragt vorher nach.</li>
+    <li>Beta: Das Feature ist neu, Feedback ist willkommen. Die BS-RoFormer-Gewichte sind ein Community-Modell ohne angegebene Lizenz, für den privaten Gebrauch. HT-Demucs steht unter MIT-Lizenz.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
 <section id="eq">
-  <h2><span class="num">12</span>Equalizer</h2>
+  <h2><span class="num">13</span>Equalizer</h2>
   <p>Inputs und Ausgänge haben denselben parametrischen EQ mit <b>16 Bändern</b>. Ein Band ist nur sichtbar (als farbiger Punkt), wenn es benutzt wird. Ein neuer Kanal startet ohne Punkte. Ein ausgeschaltetes Band behält seine Werte und erscheint als hohler Punkt. Eine Kette kann bis zu vier EQs enthalten.</p>
   <div class="hx shot" data-g="eq"></div>
   <h3>Bedienung der Kurve</h3>
@@ -2593,7 +2707,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="correction">
-  <h2><span class="num">13</span>Correction</h2>
+  <h2><span class="num">14</span>Correction</h2>
   <p>Raumkorrektur für deine Lautsprecher, nur auf <b>Hardware-Ausgängen</b> (H): Filterbänder plus Laufzeitausgleich links/rechts, ohne Latenz. Standardmäßig sitzt der Block vor dem EQ: Die Korrektur gleicht die Lautsprecher im Raum aus, der EQ danach ist für den Geschmack. Der Block zeigt die Kurve und den Namen der Korrektur; sein Schalter schaltet sie an und aus (MIDI-lernbar, Undo, Szenen).</p>
   <ul>
     <li><b>Links und rechts getrennt</b>: Jeder Lautsprecher bekommt eigene Bänder (empfohlen, wird im Assistenten gemessen).</li>
@@ -2606,7 +2720,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="gate">
-  <h2><span class="num">14</span>Gate &amp; Voice Key</h2>
+  <h2><span class="num">15</span>Gate &amp; Voice Key</h2>
   <p>Ein Gate schaltet den Kanal leise, solange das Signal unter einer Schwelle liegt, z. B. damit das Mikrofon in Sprechpausen keine Hintergrundgeräusche überträgt.</p>
   <table>
     <thead><tr><th>Regler</th><th>Bedeutung</th></tr></thead>
@@ -2625,7 +2739,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="comp">
-  <h2><span class="num">15</span>Kompressor</h2>
+  <h2><span class="num">16</span>Kompressor</h2>
   <p>Der Kompressor gleicht Lautstärkeunterschiede aus: Laute Stellen werden abgesenkt, das Ganze wird gleichmäßiger. Eine Kennlinie zeigt die Wirkung samt aktueller Gain-Reduktion.</p>
   <table>
     <thead><tr><th>Regler</th><th>Bedeutung</th></tr></thead>
@@ -2644,7 +2758,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="vst">
-  <h2><span class="num">16</span>VST3-Plugins</h2>
+  <h2><span class="num">17</span>VST3-Plugins</h2>
   <p>VST3-Plugins sind Blöcke in derselben <a href="#inspector">Effektkette</a> wie die eingebauten Effekte, ein Plugin kann also überall sitzen, z. B. zwischen EQ und Kompressor. Sie laufen ohne zusätzliche Pufferung (ihre eigene Latenz zeigt der <a href="#latency">Latency Finder</a>).</p>
   <h3>Plugins einrichten</h3>
   <ol class="steps">
@@ -2662,7 +2776,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="buses">
-  <h2><span class="num">17</span>Ausgänge &amp; Limiter</h2>
+  <h2><span class="num">18</span>Ausgänge &amp; Limiter</h2>
   <p>Jeder Ausgang (Bus) hat Fader, Mute, Mono, eine eigene <a href="#inspector">Effektkette</a>, ein optionales Icon und ein frei wählbares Ausgabegerät.</p>
   <h3>Limiter</h3>
   <p>Der Limiter verhindert, dass der Pegel über <span class="ui">CEILING</span> steigt, z. B. damit ein Stream nie übersteuert. Er fügt keine Latenz hinzu. Er ist ein normaler Block: Füge ihn mit <span class="ui">+ → Limiter</span> an jedem Ausgang oder Input hinzu. Neue Ausgänge starten ohne Limiter; Limiter aus älteren Sessions bleiben.</p>
@@ -2673,7 +2787,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="sel">
-  <h2><span class="num">18</span>SEL &amp; Monitoring</h2>
+  <h2><span class="num">19</span>SEL &amp; Monitoring</h2>
   <h3>SEL: eigener Mix pro Ausgang</h3>
   <p>Drückst du <b>SEL</b> an einem Bus, steuern die Input-Fader nicht mehr die Gesamtlautstärke, sondern nur noch den Pegel jedes Inputs <i>auf diesem Bus</i>. Nicht geroutete Inputs werden gedimmt. So baust du z. B. einen Stream-Mix, in dem die Musik leiser ist als in deinen Kopfhörern.</p>
   <ol class="steps">
@@ -2688,7 +2802,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="recorder">
-  <h2><span class="num">19</span>Recorder</h2>
+  <h2><span class="num">20</span>Recorder</h2>
   <p>Der Recorder nimmt einen virtuellen Ausgang (V) als WAV auf und spielt Audiodateien auf beliebige Ausgänge. Öffnen über <span class="ui">Tools → Recorder</span> oder die Zeitanzeige in der Top-Bar. Er hat drei Bereiche:</p>
   <table>
     <thead><tr><th>Bereich</th><th>Inhalt</th></tr></thead>
@@ -2721,7 +2835,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="scenes">
-  <h2><span class="num">20</span>Szenen</h2>
+  <h2><span class="num">21</span>Szenen</h2>
   <p>Eine Szene ist ein Schnappschuss aller Mixer-Parameter (Fader, Mutes, Routing, Effekte, Sends …). Nicht enthalten sind Geräte, Kanalnamen, Plugins und welche Kanäle aktiv sind. Typische Szenen: „Gaming“, „Stream“, „Call“, „Musik“.</p>
   <p>Öffnen: <span class="ui">Tools → Scene Editor</span>. Die Szenen erscheinen als Leiste links im Hauptfenster.</p>
   <table>
@@ -2742,7 +2856,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="latency">
-  <h2><span class="num">21</span>Latency Finder</h2>
+  <h2><span class="num">22</span>Latency Finder</h2>
   <p><span class="ui">Tools → Latency Finder</span> zeigt, wie viel Verzögerung jeder Weg vom Input zum Output hat und woher sie kommt. Es ist die einzige Stelle in Hydra mit Latenzwerten.</p>
   <h3>Aufbau</h3>
   <ol>
@@ -2763,7 +2877,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="syncdelay">
-  <h2><span class="num">22</span>Sync Delay</h2>
+  <h2><span class="num">23</span>Sync Delay</h2>
   <p>Verschiedene Geräte haben unterschiedliche Latenz. Kommt z. B. die Kamera über einen langsameren Weg als das Mikrofon, oder laufen zwei Ausgänge auseinander, gleicht Sync Delay das aus.</p>
   <p>Öffnen: <span class="ui">Tools → Sync Delay</span>. Pro Gruppe (Inputs, Hardware Outputs, Virtual Outputs) siehst du jeden Kanal mit:</p>
   <table>
@@ -2781,7 +2895,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="dsp">
-  <h2><span class="num">23</span>DSP Load</h2>
+  <h2><span class="num">24</span>DSP Load</h2>
   <p>Klick auf die DSP-Anzeige in der Top-Bar (oder <span class="ui">Tools → DSP Load</span>) zeigt, was wie viel Rechenzeit kostet. Werte sind Anteile der verfügbaren Zeit pro Audioblock, gemittelt über 1 Sekunde, mit Peak.</p>
   <ul>
     <li><b>Gesamtlast</b> als Balken mit Peak-Marker.</li>
@@ -2795,7 +2909,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="room">
-  <h2><span class="num">24</span>Raumkalibrierung</h2>
+  <h2><span class="num">25</span>Raumkalibrierung</h2>
   <p>Misst, wie deine Lautsprecher in deinem Raum klingen, und erstellt daraus eine <a href="#correction">Korrektur</a>. Öffnen über <span class="ui">Tools → Room Correction</span> oder den Vergrößern-Button eines Correction-Blocks. Das Fenster hat die Tabs <span class="ui">Correction</span>, <span class="ui">Calibrate</span>, <span class="ui">Analysis</span> und <span class="ui">Edit</span> und folgt dem gewählten Hardware-Ausgang. Links stehen die gespeicherten Korrekturen und Messungen.</p>
   <h3>Der Assistent</h3>
   <p><span class="ui">+ Calibrate speakers</span> startet einen Assistenten Schritt für Schritt:</p>
@@ -2819,7 +2933,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="undo">
-  <h2><span class="num">25</span>Undo / Redo</h2>
+  <h2><span class="num">26</span>Undo / Redo</h2>
   <p><kbd>Ctrl</kbd>+<kbd>Z</kbd> macht die letzte Änderung rückgängig, <kbd>Ctrl</kbd>+<kbd>Y</kbd> (oder <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>) stellt sie wieder her. Das gilt im Hauptfenster und in allen Werkzeugfenstern. Ein Hinweis zeigt, was rückgängig gemacht wurde.</p>
   <ul>
     <li>Erfasst werden alle gespeicherten Parameter in <b>einer</b> Historie: Fader, Routing, EQ, Gate usw. Bis zu 200 Schritte.</li>
@@ -2830,7 +2944,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="midi">
-  <h2><span class="num">26</span>MIDI Learn</h2>
+  <h2><span class="num">27</span>MIDI Learn</h2>
   <p>Jeder Regler und Schalter in Hydra lässt sich mit einem MIDI-Controller steuern.</p>
   <h3>Einrichten</h3>
   <ol class="steps">
@@ -2859,7 +2973,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="apc">
-  <h2><span class="num">27</span>APC mini &amp; LED-Feedback</h2>
+  <h2><span class="num">28</span>APC mini &amp; LED-Feedback</h2>
   <p>Für Controller mit Pad-Raster (z. B. <b>Akai APC mini</b>) färbt Hydra die Pads nach Zustand ein:</p>
   <table>
     <thead><tr><th>Pad</th><th>Farbe (APC mini)</th></tr></thead>
@@ -2876,7 +2990,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="hotkeys">
-  <h2><span class="num">28</span>Tastenkürzel</h2>
+  <h2><span class="num">29</span>Tastenkürzel</h2>
   <p>Jeder Schalter (Mute, Solo, Routing, SEL, Szenen, Recorder …) lässt sich auf eine Taste oder Maustaste legen.</p>
   <ol class="steps">
     <li>Rechtsklick auf den Schalter → <span class="ui">Assign Keyboard Shortcut...</span></li>
@@ -2895,7 +3009,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="remote">
-  <h2><span class="num">29</span>Steuerung per Handy &amp; Tablet</h2>
+  <h2><span class="num">30</span>Steuerung per Handy &amp; Tablet</h2>
   <div style="display:grid;grid-template-columns:2.25fr 1fr;gap:14px;align-items:end;margin:14px 0"><img class="shot" style="margin:0" src="remote-tablet.png" width="1760" height="1320" loading="lazy" alt="Die Fernsteuerung auf einem Tablet (quer) und einem Handy (hochkant)"><img class="shot" style="margin:0" src="remote-phone.png" width="780" height="1600" loading="lazy" alt=""></div>
   <p>Steuere Hydra im Browser eines Handys oder Tablets im selben Netz: Fader, Mute, Solo, Mono, Routing, SEL und Szenen, mit Live-Metern. Nichts zu installieren.</p>
   <ol class="steps">
@@ -2914,7 +3028,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="android">
-  <h2><span class="num">30</span>Android-App (Hydra Link)</h2>
+  <h2><span class="num">31</span>Android-App (Hydra Link)</h2>
   <p>Die Android-App <b>Hydra Link</b> bringt Audio per WLAN zwischen Handy und Hydra. Sie ist in der Beta. Voraussetzungen: Android 9 oder neuer, Handy und PC im selben Netz, <a href="#network">Hydra Link</a> in Hydra eingeschaltet (<span class="ui">Settings → Network</span>).</p>
   <h3>Installieren</h3>
   <ol class="steps">
@@ -2937,7 +3051,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="settings">
-  <h2><span class="num">31</span>Settings</h2>
+  <h2><span class="num">32</span>Settings</h2>
   <p>Öffnen über das Zahnrad in der Top-Bar. Die kleinen <span class="ui">i</span>-Buttons erklären jeden Abschnitt.</p>
   <table>
     <thead><tr><th>Tab</th><th>Inhalt</th></tr></thead>
@@ -2958,7 +3072,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="backup">
-  <h2><span class="num">32</span>Backup &amp; Transfer</h2>
+  <h2><span class="num">33</span>Backup &amp; Transfer</h2>
   <h3>Automatische Backups</h3>
   <p>Hydra legt bei jedem Start und vor jedem Import eine Kopie deiner Einstellungen an (bis zu 40, doppelte werden übersprungen). In <span class="ui">Settings → Backup &amp; Transfer → Automatic Backups</span> wählst du eines aus und klickst <span class="ui">Restore</span>. <span class="ui">Open Folder</span> zeigt den Ordner.</p>
   <h3>Export / Import</h3>
@@ -2973,7 +3087,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="vmimport">
-  <h2><span class="num">33</span>Voicemeeter-Import</h2>
+  <h2><span class="num">34</span>Voicemeeter-Import</h2>
   <p>Wenn du von Voicemeeter Potato kommst, kannst du deine Einstellungen übernehmen.</p>
   <ol class="steps">
     <li>In Voicemeeter: <i>Menu → Save Settings</i> speichert eine XML-Datei (oft in <code>Dokumente</code>).</li>
@@ -2997,7 +3111,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="virtual">
-  <h2><span class="num">34</span>Virtuelle Kabel</h2>
+  <h2><span class="num">35</span>Virtuelle Kabel</h2>
   <p>Ein virtuelles Kabel ist ein Windows-Audiogerät, das andere Programme auswählen können. Was eine Seite abspielt, kommt auf der anderen Seite heraus. Hydra nutzt sie, damit z. B. Discord in einen Hydra-Input spielen oder OBS einen Hydra-Ausgang als Mikrofon aufnehmen kann.</p>
   <p>Hydra hat keinen eigenen Windows-Treiber: Ein Treiber lädt mit aktivem Secure Boot nur, wenn er über Microsoft mit einem EV-Zertifikat signiert ist, sonst braucht er den Testmodus, und der verhindert Spiele mit Anti-Cheat. Stattdessen arbeitet Hydra mit <a href="https://vac.muzychenko.net/en/">Virtual Audio Cable</a> (VAC) und verwaltet die Kabel für dich.</p>
   <h3>Ein Kabel pro Kanal</h3>
@@ -3024,7 +3138,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="recipes">
-  <h2><span class="num">35</span>Rezepte</h2>
+  <h2><span class="num">36</span>Rezepte</h2>
 
   <h3>Stream-Mix mit eigener Musiklautstärke</h3>
   <ol>
@@ -3072,7 +3186,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="shortcuts">
-  <h2><span class="num">36</span>Maus &amp; Tastatur</h2>
+  <h2><span class="num">37</span>Maus &amp; Tastatur</h2>
   <table>
     <thead><tr><th>Wo</th><th>Eingabe</th><th>Wirkung</th></tr></thead>
     <tbody>
@@ -3103,7 +3217,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="troubleshoot">
-  <h2><span class="num">37</span>Fehlerbehebung</h2>
+  <h2><span class="num">38</span>Fehlerbehebung</h2>
 
   <h4>Gar kein Ton</h4>
   <ul>
@@ -3149,7 +3263,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="files">
-  <h2><span class="num">38</span>Dateien &amp; Ordner</h2>
+  <h2><span class="num">39</span>Dateien &amp; Ordner</h2>
   <table>
     <thead><tr><th>Pfad</th><th>Inhalt</th></tr></thead>
     <tbody>
@@ -3168,7 +3282,7 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="glossary">
-  <h2><span class="num">39</span>Glossar</h2>
+  <h2><span class="num">40</span>Glossar</h2>
   <table>
     <tbody>
       <tr><td><b>ASIO</b></td><td>Treiberschnittstelle von Steinberg für Audio-Interfaces mit sehr geringer Latenz. Pro Treiber kann nur ein Programm gleichzeitig zugreifen.</td></tr>
@@ -3424,14 +3538,14 @@ cd Hydra-Mixer
   const viz = (sel, html) => document.querySelectorAll(sel).forEach(v => v.innerHTML = html);
   viz('.stat .viz.ins', [...Array(16)].map((_, i) => `<i style="--h:${45 + (i * 37) % 55}%;--d:${(-(i * 0.29) % 1.2).toFixed(2)}s"></i>`).join(''));
   viz('.stat .viz.outs', [...Array(16)].map((_, i) => `<i style="background:${i < 8 ? '#a288ff' : '#ff6aa6'}"></i>`).join(''));
-  viz('.stat .viz.fxs', ['#3ee08f', '#35d0f4', '#ffc23f', '#ff8f4d', '#ff6a7d', '#a78bfa', '#ff6ac1'].map(c => `<i style="background:${c};max-width:22px"></i>`).join(''));
+  viz('.stat .viz.fxs', ['#3ee08f', '#35d0f4', '#ffc23f', '#ff8f4d', '#ff6a7d', '#a78bfa', '#ff6ac1', '#56e0c8'].map(c => `<i style="background:${c};max-width:22px"></i>`).join(''));
 
   /* ---------- Effects: the settings window of an effect appears when pointing at its card ---------- */
   const FXT = {
     denoiser: ['Denoiser', 'settings window', 'Einstellungsfenster'], eq: ['Equalizer', 'large EQ window', 'großes EQ-Fenster'],
     gate: ['Gate', 'settings window', 'Einstellungsfenster'], comp: ['Compressor', 'settings window', 'Einstellungsfenster'],
     limiter: ['Limiter', 'block in the chain', 'Block in der Kette'], correction: ['Room correction', 'window', 'Fenster'],
-    phase: ['Phase', 'block in the chain', 'Block in der Kette'], vst: ['VST3', 'plugin window', 'Plugin-Fenster']
+    phase: ['Phase', 'block in the chain', 'Block in der Kette'], stems: ['Stem Separator', 'settings window', 'Einstellungsfenster'], vst: ['VST3', 'plugin window', 'Plugin-Fenster']
   };
   const pop = document.createElement('div');
   pop.className = 'fxpop'; pop.setAttribute('aria-hidden', 'true');

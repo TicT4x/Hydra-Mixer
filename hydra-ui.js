@@ -850,6 +850,35 @@
     b += T(W - 16, 297, '4 bands  ·  L/R aligned 0.42 ms', { size: 10, fill: C.dim, anchor: 'end' });
     return [W, H, b, 'Room correction window: measured response, correction, result and target'];
   };
+  // Stem Separator window (Inspector.cpp StemsPanel): latency mode, latency + GPU load, one fader per stem with M/S, models.
+  FX.stems = () => {
+    const W = 680, H = 420, col = '#56e0c8';
+    const stems = [['VOCALS', '#ff6ac1', 0, false], ['DRUMS', '#ffa53d', -6, false], ['BASS', '#8d6cff', 0, false], ['GUITAR', '#ffd84a', 0, true], ['REST', '#35c8f4', -3, false]];
+    let b = R(0, 0, W, H, 0, C.bg) + card(14, 14, W - 28, 104, 'Latency mode') + toggle(W - 58, 18, col);
+    b += R(24, 38, W - 48, 28, 6, '#07090c');
+    ['Live', 'Fast', 'Balanced', 'Best'].forEach((t, i) => {
+      const w = (W - 52) / 4, x = 26 + i * w, on = i === 3;
+      b += (on ? R(x, 40, w - 2, 24, 5, col) : '') + T(x + w / 2, 56, t, { size: 10.5, anchor: 'middle', weight: on ? 700 : 400, fill: on ? '#0a0c10' : C.dim });
+    });
+    b += T(24, 92, '3.6 s', { size: 15, weight: 700 }) + T(24, 108, 'Best quality, 6 stems', { size: 9.5, fill: C.dim });
+    b += T(390, 96, 'GPU', { size: 9.5, fill: C.dim }) + R(420, 89, 190, 8, 4, '#050608') + R(420, 89, 190 * 0.48, 8, 4, col) + T(W - 24, 97, '48 %', { size: 10, anchor: 'end' });
+    b += card(14, 126, W - 28, 214, 'Stems');
+    const y0 = 166, y1 = 300, yy = d => y1 - dbPos(d) * (y1 - y0);
+    stems.forEach(([n, c, db, muted], i) => {
+      const cw = (W - 28) / 5, cx = 14 + cw * i + cw / 2, fade = muted ? 0.35 : 1;
+      b += T(cx, 154, n, { size: 9.5, weight: 700, anchor: 'middle', fill: muted ? mix(c, C.panel2, 0.5) : c });
+      [[12, '12'], [0, '0'], [-12, '-12'], [-40, '-40'], [-60, '-inf']].forEach(([d, t]) => { b += T(cx - 16, yy(d) + 3, t, { size: 7, fill: C.faint, anchor: 'end' }); });
+      b += R(cx - 10, y0, 5, y1 - y0, 2.5, '#050608') + R(cx - 10, yy(db), 5, y1 - yy(db), 2.5, c, { op: 0.9 * fade });
+      b += R(cx - 20, yy(db) - 7, 25, 14, 3, '#c9ced8', { op: muted ? 0.45 : 1 }) + R(cx - 18, yy(db) - 1, 21, 2, 1, c);
+      const lvl = muted ? 0 : [0.7, 0.62, 0.55, 0, 0.5][i];
+      b += R(cx + 10, y0, 5, y1 - y0, 2.5, '#050608') + (lvl ? R(cx + 10, y1 - (y1 - y0) * lvl, 5, (y1 - y0) * lvl, 2.5, c, { op: 0.75 }) : '');
+      b += button(cx - 30, 310, 28, 20, 'M', { fill: muted ? C.mute : C.raised, color: muted ? '#ffffff' : C.dim, size: 9.5 }) + button(cx + 2, 310, 28, 20, 'S', { size: 9.5 });
+    });
+    b += card(14, 348, W - 28, 58, 'Models');
+    b += T(24, 384, 'BS-RoFormer SW, 6 stems  ·  Fast, Balanced, Best', { size: 10, weight: 600 }) + T(24, 398, 'HT-Demucs, 4 stems  ·  Live', { size: 10, weight: 600 });
+    b += button(W - 196, 376, 46, 18, 'AUTO', { fill: col, color: '#0a0c10' }) + R(W - 140, 383, 110, 5, 2.5, '#050608') + R(W - 140, 383, 60, 5, 2.5, mix(col, C.panel2, 0.4)) + `<circle cx="${W - 80}" cy="385.5" r="6" fill="${C.dim}"/>`;
+    return [W, H, b, 'Stem Separator window: latency mode Best, 3.6 s latency, 48 % GPU, faders for vocals, drums, bass, guitar (muted) and rest, the two models'];
+  };
   G.fxwin = function (host, k) {
     if (k === 'eq') return G.eq(host);
     const r = FX[k] && FX[k]();
