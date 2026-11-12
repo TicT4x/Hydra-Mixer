@@ -81,8 +81,9 @@ std::unique_ptr<juce::AudioPluginInstance> PluginHost::create (const juce::Plugi
 //==============================================================================
 namespace
 {
-const char* const kFxIds[]   = { "denoiser", "eq", "gate", "comp", "correction", "limiter", "utility", "stems", "transpose" };
-const char* const kFxNames[] = { "Denoiser", "Equalizer", "Gate", "Compressor", "Correction", "Limiter", "Utility", "Stem Separator", "Transpose" };
+const char* const kFxIds[]   = { "denoiser", "eq", "gate", "comp", "correction", "limiter", "utility", "stems", "transpose", "hpcorr" };
+const char* const kFxNames[] = { "Denoiser", "Equalizer", "Gate", "Compressor", "Speaker Correction", "Limiter", "Utility", "Stem Separator", "Transpose",
+                               "Headphone Correction" };
 } // namespace
 
 juce::String fxId (Fx f)   { return f == Fx::plugin ? juce::String ("plugin") : juce::String (kFxIds[(int) f]); }

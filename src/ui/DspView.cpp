@@ -336,7 +336,7 @@ void DspView::measure()
         r.selectIndex = busSelectIndex (b);
         double other = st (DspTimes::other);
         const int ch = busSelectIndex (b);
-        stage (r, correction, used (ch, Fx::correction), st (DspTimes::correction), other);
+        stage (r, correction, used (ch, Fx::correction) || used (ch, Fx::headphone), st (DspTimes::correction), other);
         stage (r, utility, used (ch, Fx::utility), st (DspTimes::utility), other);
         stage (r, eq, used (ch, Fx::eq), st (DspTimes::eq), other);
         stage (r, comp, used (ch, Fx::comp), st (DspTimes::comp), other);

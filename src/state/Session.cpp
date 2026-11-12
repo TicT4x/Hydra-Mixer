@@ -36,6 +36,42 @@ static juce::String protectedRemoteCode (const juce::String& code)
     return cache.get (code);
 }
 
+/** Headphone corrections (HPCORR instance="k") and the speaker corrections after the first (FXCORRECTION instance="k"):
+    the first speaker correction stays where older sessions keep it (CORRECTION of a bus, FXCORRECTION of an input). */
+static void saveMoreFx (const Engine& engine, juce::XmlElement& e, int ch)
+{
+    for (int k = 0; k < kFxInstances; ++k)
+    {
+        if (auto hp = engine.headphoneToXml (ch, k))
+        {
+            hp->setAttribute ("instance", k);
+            e.addChildElement (hp.release());
+        }
+        if (k == 0) continue;
+        const auto& p = engine.fxOf (ch).correctionAt (k).getProfile();
+        if (p.isEmpty()) continue;
+        auto* fc = e.createNewChildElement ("FXCORRECTION");
+        fc->setAttribute ("instance", k);
+        fc->addChildElement (p.toXml().release());
+    }
+}
+
+static void loadMoreFx (Engine& engine, const juce::XmlElement& e, int ch)
+{
+    for (int k = 0; k < kFxInstances; ++k)
+    {
+        const juce::XmlElement* hp = nullptr;
+        for (auto* x : e.getChildWithTagNameIterator ("HPCORR"))
+            if (x->getIntAttribute ("instance", 0) == k) hp = x;
+        engine.headphoneFromXml (ch, k, hp);
+        if (k == 0) continue;
+        const juce::XmlElement* corr = nullptr;
+        for (auto* x : e.getChildWithTagNameIterator ("FXCORRECTION"))
+            if (x->getIntAttribute ("instance", 0) == k) corr = x->getChildByName ("CORRECTION");
+        engine.setCorrection (ch, CorrectionProfile::fromXml (corr), k);
+    }
+}
+
 bool Session::save (const juce::File& f) const
 {
     juce::XmlElement root ("HYDRASESSION");
@@ -67,6 +103,7 @@ bool Session::save (const juce::File& f) const
         // Inputs can have a correction since 12.11. (old sessions' CORRECTION of inputs stays ignored).
         if (! s.correction.getProfile().isEmpty())
             e->createNewChildElement ("FXCORRECTION")->addChildElement (s.correction.getProfile().toXml().release());
+        saveMoreFx (engine, *e, i);
     }
     for (int b = 0; b < kMaxBuses; ++b)
     {
@@ -78,6 +115,7 @@ bool Session::save (const juce::File& f) const
         e->addChildElement (bus.output.toXml ("OUTPUT").release());
         e->addChildElement (bus.plugins.toXml().release());
         if (! bus.correction.getProfile().isEmpty()) e->addChildElement (bus.correction.getProfile().toXml().release());
+        saveMoreFx (engine, *e, kMaxInputs + b);
     }
 
     auto* app = root.createNewChildElement ("APP");
@@ -301,8 +339,11 @@ bool Session::load (const juce::File& f)
         auto& s = engine.inputs[(size_t) i];
         s.name = e->getStringAttribute ("name", s.name);
         s.source = IoTarget::fromXml (e->getChildByName ("SOURCE"));
-        auto* fc = e->getChildByName ("FXCORRECTION");
+        const juce::XmlElement* fc = nullptr;
+        for (auto* x : e->getChildWithTagNameIterator ("FXCORRECTION"))
+            if (x->getIntAttribute ("instance", 0) == 0) fc = x;
         engine.setCorrection (i, CorrectionProfile::fromXml (fc != nullptr ? fc->getChildByName ("CORRECTION") : nullptr));
+        loadMoreFx (engine, *e, i);
     }
     for (auto* e : root->getChildWithTagNameIterator ("BUS"))
     {
@@ -314,6 +355,7 @@ bool Session::load (const juce::File& f)
         bus.icon = e->getStringAttribute ("icon");
         bus.output = IoTarget::fromXml (e->getChildByName ("OUTPUT"));
         engine.setCorrection (kMaxInputs + b, CorrectionProfile::fromXml (e->getChildByName ("CORRECTION")));
+        loadMoreFx (engine, *e, kMaxInputs + b);
     }
 
     if (auto* m = root->getChildByName ("MASTER"))

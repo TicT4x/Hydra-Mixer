@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(HydraMixer VERSION 0.8.1 LANGUAGES C CXX)
+project(HydraMixer VERSION 0.8.2 LANGUAGES C CXX)
 # Pre-release part of the version ("beta.1"), empty for a normal release. A release with a suffix must be marked
 # as pre-release on GitHub: only users with "Include beta versions" get it as an update (state/Updater.h).
 set(HYDRA_VERSION_SUFFIX "")
@@ -92,6 +92,9 @@ endfunction()
 # Hydra Remote: the web app for phones / tablets, compiled into the exe (src/remote/RemoteControl.cpp serves it).
 juce_add_binary_data(HydraRemoteData HEADER_NAME RemoteData.h NAMESPACE RemoteData
     SOURCES resources/remote/index.html resources/remote/manifest.webmanifest resources/icon.png)
+# Headphone Correction: built-in headphone database (tools/fetch-headphones.py, AutoEq data, MIT).
+juce_add_binary_data(HydraHeadphoneData HEADER_NAME HeadphoneData.h NAMESPACE HeadphoneData
+    SOURCES resources/headphones.txt)
 
 # JUCE's resources.rc (file version shown in Explorer) depends only on the icon, not on the version: after a
 # version bump the exe kept the old one (0.8.1 built as 0.8.0). Removed at every configure, it is generated again.
@@ -151,7 +154,7 @@ target_link_libraries(HydraMixer
         juce::juce_audio_devices
         juce::juce_gui_extra
         juce::juce_dsp
-        rnnoise opus avrt ole32 oleaut32 uuid mmdevapi ws2_32 iphlpapi bcrypt crypt32 HydraRemoteData
+        rnnoise opus avrt ole32 oleaut32 uuid mmdevapi ws2_32 iphlpapi bcrypt crypt32 HydraRemoteData HydraHeadphoneData
     PUBLIC
         juce::juce_recommended_config_flags
         $<$<NOT:$<BOOL:${HYDRA_FAST}>>:juce::juce_recommended_lto_flags>)
@@ -175,13 +178,13 @@ endif()
 if(EXISTS "${CMAKE_SOURCE_DIR}/tests")
 # Offline DSP tests (run: build\<cfg>\HydraTests_artefacts\<cfg>\HydraTests.exe)
 juce_add_console_app(HydraTests PRODUCT_NAME "HydraTests")
-target_sources(HydraTests PRIVATE tests/DenoiserTest.cpp tests/SessionTest.cpp tests/MidiRangeTest.cpp tests/AppCaptureTest.cpp tests/LedTest.cpp tests/RecorderTest.cpp tests/AsioSecondaryTest.cpp tests/UndoTest.cpp tests/ReorderTest.cpp tests/SceneTest.cpp tests/SyncDelayTest.cpp tests/RoomAnalysisTest.cpp tests/CorrectionTest.cpp tests/DeviceNamesTest.cpp tests/FxChainTest.cpp tests/CorrectionPoolTest.cpp tests/VacTest.cpp tests/VacStreamTest.cpp tests/NetLinkTest.cpp tests/RemoteTest.cpp tests/LinkLiteTest.cpp tests/StemsTest.cpp tests/TransposeTest.cpp tests/InstallTest.cpp
-    src/core/StemDsp.cpp src/engine/Stems.cpp src/core/PitchShift.cpp src/core/KeyDetect.cpp src/engine/Transpose.cpp src/core/Denoiser.cpp src/core/RoomAnalysis.cpp src/core/Correction.cpp src/engine/Engine.cpp src/engine/IoStreams.cpp src/engine/VacStream.cpp src/engine/NetLink.cpp src/core/NetCodec.cpp src/core/NetCrypto.cpp src/remote/QrCode.cpp src/remote/RemoteServer.cpp src/remote/RemoteControl.cpp src/linkcore/LinkLite.cpp src/engine/AsioSecondary.cpp src/engine/Recorder.cpp src/engine/PluginChain.cpp
+target_sources(HydraTests PRIVATE tests/DenoiserTest.cpp tests/SessionTest.cpp tests/MidiRangeTest.cpp tests/AppCaptureTest.cpp tests/LedTest.cpp tests/RecorderTest.cpp tests/AsioSecondaryTest.cpp tests/UndoTest.cpp tests/ReorderTest.cpp tests/SceneTest.cpp tests/SyncDelayTest.cpp tests/RoomAnalysisTest.cpp tests/CorrectionTest.cpp tests/DeviceNamesTest.cpp tests/FxChainTest.cpp tests/CorrectionPoolTest.cpp tests/VacTest.cpp tests/VacStreamTest.cpp tests/NetLinkTest.cpp tests/RemoteTest.cpp tests/LinkLiteTest.cpp tests/StemsTest.cpp tests/TransposeTest.cpp tests/InstallTest.cpp tests/HeadphoneTest.cpp
+    src/core/StemDsp.cpp src/engine/Stems.cpp src/core/PitchShift.cpp src/core/KeyDetect.cpp src/engine/Transpose.cpp src/core/Denoiser.cpp src/core/RoomAnalysis.cpp src/core/Correction.cpp src/core/HeadphoneEq.cpp src/engine/Engine.cpp src/engine/IoStreams.cpp src/engine/VacStream.cpp src/engine/NetLink.cpp src/core/NetCodec.cpp src/core/NetCrypto.cpp src/remote/QrCode.cpp src/remote/RemoteServer.cpp src/remote/RemoteControl.cpp src/linkcore/LinkLite.cpp src/engine/AsioSecondary.cpp src/engine/Recorder.cpp src/engine/PluginChain.cpp
     src/midi/MidiMapper.cpp src/midi/Hotkeys.cpp src/state/Session.cpp src/state/VoicemeeterImport.cpp src/state/UndoHistory.cpp src/state/Scenes.cpp src/state/RoomMeasurements.cpp src/state/DeviceNames.cpp src/state/ChannelClipboard.cpp src/state/Presets.cpp src/state/CorrectionPool.cpp src/state/VacControl.cpp src/state/VacCables.cpp src/state/Install.cpp src/state/Updater.cpp src/state/Autostart.cpp)
 target_include_directories(HydraTests PRIVATE "${CMAKE_SOURCE_DIR}/src" ${HYDRA_SIGNALSMITH_INCLUDES})
 target_compile_definitions(HydraTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1 NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_definitions(HydraTests PRIVATE JUCE_ASIO=1 JUCE_PLUGINHOST_VST3=1 JUCE_PLUGINHOST_LV2=0 JUCE_PLUGINHOST_LADSPA=0)
-target_link_libraries(HydraTests PRIVATE juce::juce_audio_utils juce::juce_audio_processors juce::juce_gui_extra juce::juce_dsp rnnoise opus avrt ole32 oleaut32 uuid mmdevapi ws2_32 iphlpapi bcrypt crypt32 HydraRemoteData
+target_link_libraries(HydraTests PRIVATE juce::juce_audio_utils juce::juce_audio_processors juce::juce_gui_extra juce::juce_dsp rnnoise opus avrt ole32 oleaut32 uuid mmdevapi ws2_32 iphlpapi bcrypt crypt32 HydraRemoteData HydraHeadphoneData
                       PUBLIC juce::juce_recommended_config_flags)
 hydra_precompile_headers(HydraTests)
 hydra_use_stems(HydraTests)
@@ -205,7 +208,7 @@ if(HYDRA_SHOTS AND EXISTS "${CMAKE_SOURCE_DIR}/tools/Shots.cpp")
         JUCE_ASIO=1 JUCE_WASAPI=1 JUCE_DIRECTSOUND=0 JUCE_PLUGINHOST_VST3=1 JUCE_PLUGINHOST_VST=0 JUCE_PLUGINHOST_LV2=0 JUCE_PLUGINHOST_LADSPA=0
         JUCE_DISPLAY_SPLASH_SCREEN=0 JUCE_REPORT_APP_USAGE=0)
     target_link_libraries(HydraShots PRIVATE juce::juce_audio_utils juce::juce_audio_processors juce::juce_audio_devices juce::juce_gui_extra juce::juce_dsp
-        rnnoise opus avrt ole32 oleaut32 uuid mmdevapi ws2_32 iphlpapi bcrypt crypt32 HydraRemoteData PUBLIC juce::juce_recommended_config_flags)
+        rnnoise opus avrt ole32 oleaut32 uuid mmdevapi ws2_32 iphlpapi bcrypt crypt32 HydraRemoteData HydraHeadphoneData PUBLIC juce::juce_recommended_config_flags)
     hydra_use_stems(HydraShots)
     target_compile_options(HydraShots PRIVATE /W3 /permissive- /Zc:__cplusplus /MP /O2 /arch:AVX2 /fp:fast)
     target_link_options(HydraShots PRIVATE /STACK:16777216)

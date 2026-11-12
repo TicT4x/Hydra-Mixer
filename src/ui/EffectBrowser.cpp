@@ -19,6 +19,7 @@ juce::Colour fxColour (Fx f)
         case Fx::utility:    return theme::fxUtility;
         case Fx::transpose:  return theme::fxTranspose;
         case Fx::stems:      return theme::fxStems;
+        case Fx::headphone:  return theme::fxHeadphone;
         case Fx::denoiser:   return theme::good;
         default:             return theme::fx;
     }
@@ -31,6 +32,7 @@ juce::String placesOf (Fx f)
     {
         case Fx::stems:      return "for inputs";
         case Fx::correction: return "for H outputs";
+        case Fx::headphone:  return "for headphone outputs";
         default:             return {};
     }
 }
@@ -54,7 +56,7 @@ std::vector<int> stemsInputs (const Engine& e)
 }
 
 // Order in the browser: the everyday effects first.
-const Fx kBrowserOrder[] = { Fx::eq, Fx::comp, Fx::gate, Fx::limiter, Fx::utility, Fx::denoiser, Fx::transpose, Fx::stems, Fx::correction };
+const Fx kBrowserOrder[] = { Fx::eq, Fx::comp, Fx::gate, Fx::limiter, Fx::utility, Fx::denoiser, Fx::transpose, Fx::stems, Fx::headphone, Fx::correction };
 } // namespace
 
 //==============================================================================
@@ -144,7 +146,7 @@ void add (UiContext& ctx, int ch, const juce::var& d, int index, juce::Component
     if (untypical && ! off.contains (fxId (f)))
     {
         const juce::String text = f == Fx::correction
-            ? "Room Correction is made for hardware outputs (speakers): it corrects how the room and the speakers sound "
+            ? "Speaker Correction is made for hardware outputs (speakers): it corrects how the room and the speakers sound "
               "and is measured there. On this channel it can use a saved correction, but it cannot be measured here."
             : "The Stem Separator is made for inputs (music from an app or a device). On an output it separates the whole mix "
               "of that output, which costs a lot of GPU time and adds its latency to everything you hear there.";

@@ -3,6 +3,7 @@
 #include "state/Presets.h"
 #include "state/CorrectionPool.h"
 #include "EffectBrowser.h"
+#include "HeadphoneView.h"
 #include "state/Session.h"
 #include <juce_dsp/juce_dsp.h>
 #include <deque>
@@ -948,9 +949,9 @@ private:
 class CorrectionSection final : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
 {
 public:
-    CorrectionSection (UiContext& c, int channel, juce::Colour col)
-        : ctx (c), index (channel), corr (*c.engine.correctionFor (channel)), colour (col),
-          section ("Correction", theme::fxCorrection), onToggle (c, *corr.on, "ON", theme::fxCorrection)
+    CorrectionSection (UiContext& c, int channel, int instance, const juce::String& title, juce::Colour col)
+        : ctx (c), index (channel), k (instance), corr (*c.engine.correctionFor (channel, instance)), colour (col),
+          section (title, theme::fxCorrection), onToggle (c, *corr.on, "ON", theme::fxCorrection)
     {
         addAndMakeVisible (section);
         section.addAndMakeVisible (onToggle);
@@ -958,9 +959,9 @@ public:
         section.headerExtra = 32;
         expand.setTooltip ("Open the correction in a large window (measure, import, level, bands)");
         expand.onClick = [this] { open(); };
-        onToggle.setTooltip ("Room correction on or off (zero latency, before the EQ)");
+        onToggle.setTooltip ("Speaker correction on or off (zero latency, before the EQ)");
         section.setInterceptsMouseClicks (false, true);
-        setTooltip ("Room correction of the speakers. Click to open it: calibrate the speakers step by step "
+        setTooltip ("Speaker Correction: corrects the speakers in your room. Click to open it: calibrate the speakers step by step "
                     "or import an Equalizer APO file.");
         startTimerHz (5);
     }
@@ -990,7 +991,7 @@ public:
         g.drawText (p.isEmpty() ? juce::String ("No profile") : p.name, text.removeFromTop (15), juce::Justification::centredLeft, true);
         g.setFont (theme::font (10.5f));
         g.setColour (theme::textDim);
-        g.drawText (p.isEmpty() ? juce::String (Engine::isHwOutput (index) ? "Click to measure or import" : "Click to use a saved correction") : p.describe(),
+        g.drawText (p.isEmpty() ? juce::String (measurable() ? "Click to measure or import" : "Click to use a saved correction") : p.describe(),
                     text, juce::Justification::centredLeft, true);
 
         auto plot = r.reduced (0, 2).toFloat();
@@ -1030,20 +1031,20 @@ public:
 private:
     void open()
     {
-        if (Engine::isHwOutput (index)) { if (ctx.openCorrectionWindow) ctx.openCorrectionWindow (index); return; }
-        // Not a hardware output: no measuring here, but any saved correction (pool) can be used.
+        if (measurable()) { if (ctx.openCorrectionWindow) ctx.openCorrectionWindow (index); return; }
+        // Not a hardware output (or a further correction of one): no measuring here, but any saved correction (pool) can be used.
         juce::PopupMenu m;
         m.addSectionHeader ("Saved corrections");
         const auto entries = pool::list();
         for (auto& en : entries)
             m.addItem (en.profile.name + "   (" + en.profile.describe() + ")", true, en.id == corr.getProfile().poolId, [this, p = en.profile]
             {
-                ctx.engine.setCorrection (index, p);
+                ctx.engine.setCorrection (index, p, k);
                 corr.on->set (1.0f);
             });
         if (entries.empty()) m.addItem ("(none yet: calibrate a hardware output first)", false, false, nullptr);
         m.addSeparator();
-        m.addItem ("No correction", ! corr.getProfile().isEmpty(), false, [this] { ctx.engine.setCorrection (index, {}); });
+        m.addItem ("No correction", ! corr.getProfile().isEmpty(), false, [this] { ctx.engine.setCorrection (index, {}, k); });
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this));
     }
 
@@ -1053,13 +1054,115 @@ private:
         if (v != shown) { shown = v; repaint(); }
     }
 
+    /** The first correction of a hardware output is the measured one (Correction window); others use saved ones. */
+    bool measurable() const { return k == 0 && Engine::isHwOutput (index); }
+
     UiContext& ctx;
-    int index;
+    int index, k;
     Correction& corr;
     juce::Colour colour;
     Section section;
     Toggle onToggle;
     ExpandButton expand;
+    uint32_t shown = ~0u;
+};
+
+//==============================================================================
+/** Headphone Correction block: which headphones, what they should sound like (menus), the correction curve and
+    AMOUNT. The expand button (or a click on the curve) opens the window with searchable lists and the full graph. */
+class HeadphoneSection final : public juce::Component, private juce::Timer
+{
+public:
+    HeadphoneSection (UiContext& c, int channel, int instance, const juce::String& title)
+        : ctx (c), index (channel), k (instance), h (c.engine.fxOf (channel).headphones[(size_t) instance]), section (title, theme::fxHeadphone),
+          onToggle (c, *h.on, "ON", theme::fxHeadphone), amount (c, *h.amount, "AMOUNT", theme::fxHeadphone),
+          gain (c, *h.gain, "GAIN", theme::fxHeadphone), autoGain (c, *h.autoGain, "AUTO", theme::fxHeadphone)
+    {
+        addAndMakeVisible (section);
+        for (juce::Component* x : std::initializer_list<juce::Component*> { &onToggle, &fromChip, &toChip, &amount, &gain, &autoGain })
+            section.addAndMakeVisible (x);
+        section.enableGear ([this] { open(); });
+        onToggle.setTooltip ("Headphone correction on or off (zero latency)");
+        fromChip.setTooltip ("Your headphones (click to choose; missing ones can be added from a measurement file)");
+        toChip.setTooltip ("What they should sound like: neutral (Harman target), another sound or other headphones");
+        amount.setTooltip ("How much of the correction is applied");
+        gain.setTooltip ("Output level: the correction turns everything down so its boosts cannot clip, this brings it back up");
+        autoGain.setTooltip ("Auto makeup: gives back the loudness the correction takes away (loud peaks can then clip)");
+        fromChip.onClick = [this] { hpui::showMenu (ctx, index, k, false, &fromChip, [this] { refresh(); }); };
+        toChip.onClick = [this] { hpui::showMenu (ctx, index, k, true, &toChip, [this] { refresh(); }); };
+        section.setInterceptsMouseClicks (false, true);
+        refresh();
+        startTimerHz (5);
+    }
+
+    Section& getSection() noexcept { return section; }
+
+    void resized() override
+    {
+        section.setBounds (getLocalBounds());
+        onToggle.setBounds (section.headerSlot());
+        auto r = section.content();
+        fromChip.setBounds (r.removeFromTop (22));
+        r.removeFromTop (4);
+        toChip.setBounds (r.removeFromTop (22));
+        r.removeFromTop (6);
+        auto knobs = r.removeFromRight (116);
+        autoGain.setBounds (knobs.removeFromBottom (20).removeFromRight (58).reduced (4, 0));
+        knobs.removeFromBottom (2);
+        const int kh = juce::jmin (knobs.getHeight(), 66);
+        gain.setBounds (knobs.removeFromRight (58).withSizeKeepingCentre (58, kh));
+        amount.setBounds (knobs.withSizeKeepingCentre (58, kh));
+        r.removeFromRight (4);
+        plot = r;
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override { if (e.mods.isPopupMenu() && section.onMenu) section.onMenu(); }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (e.mouseWasClicked() && ! e.mods.isPopupMenu() && plot.contains (e.getPosition())) open();
+    }
+
+    void paintOverChildren (juce::Graphics& g) override
+    {
+        if (plot.getHeight() < 16) return;
+        hpui::drawCurves (g, plot.toFloat(), ctx.engine, index, k, true);
+        if (h.from.isEmpty())
+        {
+            g.setColour (theme::textDim);
+            g.setFont (theme::font (10.5f));
+            g.drawFittedText ("Choose your headphones above", plot.reduced (6), juce::Justification::centred, 2);
+        }
+    }
+
+private:
+    void open() { ctx.openPanel (hpui::makePanel (ctx, index, k), section.title + "  -  " + nameOf (ctx.engine, ctx.engine.fxOf (index))); }
+
+    void refresh()
+    {
+        const auto from = hpui::nameOf (h.from, false);
+        fromChip.text = from.isEmpty() ? juce::String ("Choose headphones") : from;
+        fromChip.colour = from.isEmpty() ? theme::textDim : theme::text;
+        toChip.text = "Like: " + hpui::nameOf (h.to, true);
+        fromChip.repaint();
+        toChip.repaint();
+        repaint();
+    }
+
+    void timerCallback() override
+    {
+        const auto v = h.version * 512u + (uint32_t) juce::roundToInt (h.amount->get()) * 2u + (h.on->isOn() ? 1u : 0u);
+        if (v != shown) { shown = v; refresh(); }
+    }
+
+    UiContext& ctx;
+    int index, k;
+    HeadphoneFx& h;
+    Section section;
+    Toggle onToggle;
+    Knob amount, gain;
+    Toggle autoGain;
+    Chip fromChip, toChip;
+    juce::Rectangle<int> plot;
     uint32_t shown = ~0u;
 };
 
@@ -1322,6 +1425,44 @@ struct StemSwitches
     Toggle mute, solo;
 };
 
+/** Advanced options of one stem (Stems window, shown while ADVANCED is on): pan, left / right side mute (above the
+    fader, like the knobs of a channel strip) and mono (beside solo, like MONO SOLO in a strip). */
+struct StemAdvanced
+{
+    StemAdvanced (UiContext& c, StemsFx& fx, int k)
+        : left (c, *fx.muteL[(size_t) k], "L", theme::mute), right (c, *fx.muteR[(size_t) k], "R", theme::mute),
+          mono (c, *fx.mono[(size_t) k], "MONO", theme::good), pan (c, *fx.pan[(size_t) k], "PAN", theme::stemColour (k))
+    {
+        const auto name = stems::stemName (k).toLowerCase();
+        left.setTooltip ("Mute the left side of the " + name + " (e.g. a part that is only on one side)");
+        right.setTooltip ("Mute the right side of the " + name);
+        mono.setTooltip ("The " + name + " in mono (both sides summed; with one side muted, the other one in the middle)");
+        pan.setTooltip ("Pan of the " + name + " (double-click: centre)");
+    }
+    /** Pan and L / R go into the box that opens above the faders, mono next to solo. */
+    void addTo (juce::Component& box, juce::Component& switchParent)
+    {
+        box.addAndMakeVisible (pan);
+        box.addAndMakeVisible (left);
+        box.addAndMakeVisible (right);
+        switchParent.addChildComponent (mono);
+    }
+    void setAlpha (float a) { for (juce::Component* c : { (juce::Component*) &left, (juce::Component*) &right, (juce::Component*) &mono, (juce::Component*) &pan }) c->setAlpha (a); }
+    /** Pan knob on top, L / R below it (buttonWidth wide, centred). */
+    void setBounds (juce::Rectangle<int> r, int buttonWidth)
+    {
+        pan.setBounds (r.removeFromTop (kKnob).withSizeKeepingCentre (juce::jmin (r.getWidth(), 64), kKnob));
+        r.removeFromTop (4);
+        auto lr = r.removeFromTop (22).withSizeKeepingCentre (buttonWidth, 22);
+        left.setBounds (lr.removeFromLeft ((lr.getWidth() - 3) / 2));
+        lr.removeFromLeft (3);
+        right.setBounds (lr);
+    }
+    static constexpr int kKnob = 56, kHeight = kKnob + 4 + 22 + 10;
+    Toggle left, right, mono;
+    Knob pan;
+};
+
 constexpr const char* kStemLabels[] = { "VOCALS", "DRUMS", "BASS", "GUITAR", "REST" };
 constexpr const char* kNoGuitarTip = "Live mode does not separate guitar: it is part of the rest";
 
@@ -1580,26 +1721,80 @@ StemsCover stemsCover (const ChannelFx& s)
     return c;
 }
 
-/** Window of the Stems effect: latency mode, a fader + level + mute / solo per stem, the models. */
+/** Folding caption of a card (the Models card of the Stems window): a click anywhere on it folds the card in / out.
+    Arrow at the right; folded in, a short summary stands before it. */
+class FoldCaption final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    FoldCaption() { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+    std::function<void()> onClick;
+    void setOpen (bool o) { if (o != open) { open = o; repaint(); } }
+    void setSummary (const juce::String& s) { if (s != summary) { summary = s; repaint(); } }
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        if (hover)
+        {
+            g.setColour (theme::text.withAlpha (0.04f));
+            g.fillRoundedRectangle (r, 4.0f);
+        }
+        auto arrow = r.removeFromRight (28.0f).withSizeKeepingCentre (10.0f, 10.0f);
+        juce::Path p;
+        if (open) p.addTriangle (arrow.getX(), arrow.getY() + 2.5f, arrow.getRight(), arrow.getY() + 2.5f, arrow.getCentreX(), arrow.getBottom() - 1.5f);
+        else      p.addTriangle (arrow.getX() + 2.5f, arrow.getY(), arrow.getX() + 2.5f, arrow.getBottom(), arrow.getRight() - 1.0f, arrow.getCentreY());
+        g.setColour (hover ? theme::text : theme::textDim);
+        g.fillPath (p);
+        if (! open && summary.isNotEmpty())
+        {
+            g.setColour (theme::textFaint);
+            g.setFont (theme::font (11.0f));
+            g.drawText (summary, r.withTrimmedLeft (90.0f).toNearestInt(), juce::Justification::centredRight, true);
+        }
+    }
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
+    void mouseUp (const juce::MouseEvent& e) override  { if (e.mouseWasClicked() && onClick) onClick(); }
+
+private:
+    bool open = false, hover = false;
+    juce::String summary;
+};
+
+/** Models card of the Stems window folded out (kept while the app runs; folded in at first). */
+bool gStemModelsOpen = false;
+
+/** Window of the Stems effect: latency mode, a strip per stem (fader + level, SOLO / MUTE like a channel strip;
+    ADVANCED adds pan, L / R side mutes and MONO), the models (folded in by default). Switching ADVANCED or
+    folding the models makes the window grow / shrink smoothly. */
 class StemsPanel final : public AdvancedPanel
 {
 public:
     StemsPanel (UiContext& c, ChannelFx& s)
         : ctx (c), strip (s), fx (s.stems), mode (c, *fx.mode, theme::fxStems, { "Live", "Fast", "Balanced", "Best" }, stems::modeOrder()),
-          on (c, *fx.on, "ON", theme::fxStems)
+          on (c, *fx.on, "ON", theme::fxStems), advanced (c, *fx.advanced, "ADVANCED", theme::fxStems)
     {
-        for (juce::Component* k : std::initializer_list<juce::Component*> { &mode, &on, &info, &latency, &gpu, &mixBox })
+        for (juce::Component* k : std::initializer_list<juce::Component*> { &mode, &on, &info, &latency, &gpu, &mixBox, &advanced, &modelsBox, &fold })
             addAndMakeVisible (k);
+        advanced.setTooltip ("Advanced options per stem: pan, mute its left or right side, mono. Off: they are kept but not used");
         addChildComponent (loading);
         mixBox.onPaint = [this] (juce::Graphics& g) { paintNames (g); };
+        mixBox.addChildComponent (advBox);
+        advBox.setInterceptsMouseClicks (false, true);
+        modelsBox.onPaint = [this] (juce::Graphics& g) { paintModels (g); };
+        fold.onClick = [this] { setModelsOpen (! modelsOpen); };
+        fold.setTooltip ("Show or hide the models (download, delete, GPU share)");
         for (int k = 0; k < stems::numStems; ++k)
         {
             auto& f = faders.emplace_back (std::make_unique<Fader> (c, *fx.gain[(size_t) k], theme::stemColour (k)));
             auto& m = meters.emplace_back (std::make_unique<StemMeter> (fx, k));
             auto& sw = switches.emplace_back (std::make_unique<StemSwitches> (c, fx, k));
+            sw->mute.text = "MUTE";   // full words like in a channel strip (the block keeps M / S)
+            sw->solo.text = "SOLO";
+            auto& ad = advancedRows.emplace_back (std::make_unique<StemAdvanced> (c, fx, k));
             mixBox.addAndMakeVisible (*f);
             mixBox.addAndMakeVisible (*m);
             sw->addTo (mixBox);
+            ad->addTo (advBox, mixBox);
         }
         for (int m = 0; m < stems::kNumModels; ++m)
         {
@@ -1622,13 +1817,13 @@ public:
                                  juce::String (stems::modelInfo (model).name) + " is deleted. Channels using it then play unseparated "
                                  "until it is downloaded again.", "Delete", [model] { stems::Service::get().removeModel (model); });
             };
-            addAndMakeVisible (*b);
-            addChildComponent (*d);
+            modelsBox.addAndMakeVisible (*b);
+            modelsBox.addChildComponent (*d);
             auto& au = autoToggles.emplace_back (std::make_unique<Toggle> (c, *c.engine.stemsAuto[(size_t) m], "AUTO", theme::fxStems));
             au->setTooltip ("Auto: the usual latency of each mode (Live 1.3 s ... Best 3.6 s). Off: set the GPU share yourself");
             auto& sh = shareSliders.emplace_back (std::make_unique<ShareSlider> (c, *c.engine.stemsGpu[(size_t) m], *c.engine.stemsAuto[(size_t) m]));
-            addAndMakeVisible (*au);
-            addAndMakeVisible (*sh);
+            modelsBox.addAndMakeVisible (*au);
+            modelsBox.addAndMakeVisible (*sh);
         }
         on.setTooltip ("Switch the separation on or off");
         info.setText ("The Stem Separator (beta) splits the channel into vocals, drums, bass, guitar and the rest. The rest is what remains "
@@ -1638,8 +1833,20 @@ public:
                       "2.2 / 2.8 / 3.6 s late; Best is the cleanest.\n\n"
                       "The channel plays late so the model can hear what comes next: meant for playback you play or sing along to. "
                       "If the GPU is late, that part plays unseparated instead of a dropout.");
+        on.setTooltip ("Switch the separation on or off");
+        info.setText ("The Stem Separator (beta) splits the channel into vocals, drums, bass, guitar and the rest. The rest is what remains "
+                      "after the others, so nothing is lost: all at 0 dB = the original.\n\n"
+                      "Live: HT-Demucs (4 stems, guitar stays in the rest), ~1.3 s late, much lighter on the GPU.\n"
+                      "Fast / Balanced / Best: BS-RoFormer SW (6 stems, piano and other instruments are part of the rest), "
+                      "2.2 / 2.8 / 3.6 s late; Best is the cleanest.\n\n"
+                      "The channel plays late so the model can hear what comes next: meant for playback you play or sing along to. "
+                      "If the GPU is late, that part plays unseparated instead of a dropout.");
         fx.meterUsers.fetch_add (1);
-        setSize (720, 2 * kPad + kModeCard + kGap + kStemsCard + kGap + kModelsCard);
+        modelsOpen = gStemModelsOpen;
+        advPos = advTarget();
+        modelsPos = modelsTarget();
+        fold.setOpen (modelsOpen);
+        setSize (kWidth, heightNow());
         tick();
     }
     ~StemsPanel() override { fx.meterUsers.fetch_sub (1); }
@@ -1658,26 +1865,71 @@ public:
         latency.setBounds (modeArea);
         r.removeFromTop (kGap);
 
-        auto mix = card (r.removeFromTop (kStemsCard), "Stems");
+        const float adv = eased (advPos);
+        const int advH = juce::roundToInt (adv * StemAdvanced::kHeight);
+        const auto stemsArea = r.removeFromTop (kStemsCard + advH);
+        auto mix = card (stemsArea, "Stems");
+        advanced.setBounds (captionSlot (stemsArea, 86));
         mixBox.setBounds (mix);
         loading.setBounds (mix);
-        mix = mixBox.getLocalBounds();
-        mix.removeFromTop (16);   // names (painted)
-        const int n = stems::numStems, colW = mix.getWidth() / n;
+        layoutStems (mixBox.getLocalBounds(), adv, advH);
+        r.removeFromTop (kGap);
+
+        // Models: the caption folds the card; its content sits in a box that is cut off while the card folds.
+        const int bodyH = juce::roundToInt (eased (modelsPos) * (kModelsBody + 8));
+        const auto modelsArea = r.removeFromTop (kCaption + 2 + bodyH);
+        cards.push_back ({ modelsArea, "Models" });
+        fold.setBounds (modelsArea.withHeight (kCaption + 2).reduced (4, 2));
+        modelsBox.setBounds (modelsArea.reduced (10, 0).withTrimmedTop (kCaption).withHeight (juce::jmax (0, bodyH - 4)));
+        modelsBox.setVisible (bodyH > 4);
+        layoutModels (juce::Rectangle<int> (0, 0, modelsBox.getWidth(), kModelsBody));
+    }
+
+    /** One strip per stem, like a channel strip: (ADVANCED: pan, L / R) fader + level, SOLO (MONO SOLO), MUTE.
+        Buttons centred under the fader cap + level, the advanced rows open from under the names. */
+    void layoutStems (juce::Rectangle<int> mix, float adv, int advH)
+    {
         names.clear();
+        mix.removeFromTop (16);   // names (painted)
+        advBox.setBounds (mix.removeFromTop (advH));
+        advBox.setVisible (advH > 0);
+        const int n = stems::numStems, colW = mix.getWidth() / n;
         for (int k = 0; k < n; ++k)
         {
             auto col = juce::Rectangle<int> (mix.getX() + k * colW, mix.getY(), colW, mix.getHeight()).reduced (8, 0);
-            names.push_back (col.withY (col.getY() - 16).withHeight (16));
-            switches[(size_t) k]->setBounds (col.removeFromBottom (22).withSizeKeepingCentre (juce::jmin (col.getWidth(), 64), 22));
-            col.removeFromBottom (6);
-            auto f = col.withSizeKeepingCentre (juce::jmin (col.getWidth(), 70), col.getHeight());
-            meters[(size_t) k]->setBounds (f.removeFromRight (6).reduced (0, 8));
-            faders[(size_t) k]->setBounds (f);
-        }
-        r.removeFromTop (kGap);
+            names.push_back ({ col.getX(), 0, col.getWidth(), 16 });
+            // Fader cap (30, Fader::paint) + gap + level, as one group in the middle of the column.
+            constexpr int meterW = 10, gapW = 4, group = 30 + gapW + meterW;
+            const int bw = juce::jmin (col.getWidth(), kButtonWidth);
+            const int centreX = col.getCentreX();
 
-        auto models = card (r, "Models");
+            auto& sw = *switches[(size_t) k];
+            auto& ad = *advancedRows[(size_t) k];
+            auto buttons = col.removeFromBottom (20 + 3 + 24).withSizeKeepingCentre (bw, 20 + 3 + 24);
+            auto row = buttons.removeFromTop (20);
+            buttons.removeFromTop (3);
+            sw.mute.setBounds (buttons);
+            const int monoW = juce::roundToInt (adv * (float) (bw - 3) * 0.5f);   // MONO slides in beside SOLO
+            ad.mono.setVisible (monoW > 4);
+            if (monoW > 4)
+            {
+                ad.mono.setBounds (row.removeFromLeft (monoW));
+                row.removeFromLeft (3);
+            }
+            sw.solo.setBounds (row);
+            col.removeFromBottom (8);
+
+            auto meterArea = juce::Rectangle<int> (centreX - group / 2, col.getY(), group, col.getHeight()).removeFromRight (meterW);
+            meters[(size_t) k]->setBounds (meterArea.reduced (0, 14));
+            faders[(size_t) k]->setBounds (col.withRight (meterArea.getX() - gapW));
+
+            // Advanced rows at their full size, anchored to the bottom of the opening box (they slide out from under the names).
+            ad.setBounds (juce::Rectangle<int> (col.getX(), advH - StemAdvanced::kHeight, col.getWidth(), StemAdvanced::kHeight), bw);
+        }
+    }
+
+    void layoutModels (juce::Rectangle<int> models)
+    {
         modelRows.clear();
         gpuRows.clear();
         for (int m = 0; m < stems::kNumModels; ++m)
@@ -1708,7 +1960,7 @@ public:
         }
     }
 
-    void paintOverChildren (juce::Graphics& g) override
+    void paintModels (juce::Graphics& g)
     {
         for (int m = 0; m < (int) modelRows.size(); ++m)
         {
@@ -1751,11 +2003,49 @@ public:
         }
     }
 
+    /** For the screenshots: fold the models in / out at once. */
+    void showModels (bool o) { setModelsOpen (o); modelsPos = modelsTarget(); applySize(); }
+
 private:
+    static constexpr int kWidth = 720, kButtonWidth = 92;
     static constexpr int kModeCard = kCaption + 30 + 6 + 40 + 8;
-    static constexpr int kStemsCard = kCaption + 16 + 230 + 8;
+    static constexpr int kStemsCard = kCaption + 16 + 214 + 8 + 20 + 3 + 24 + 8;
     static constexpr int kModelRow = 54 + 30;
-    static constexpr int kModelsCard = kCaption + 2 * kModelRow + 8;
+    static constexpr int kModelsBody = 2 * kModelRow;
+    static constexpr double kGlideSeconds = 0.24;
+
+    float advTarget() const { return fx.advanced->isOn() ? 1.0f : 0.0f; }
+    float modelsTarget() const { return modelsOpen ? 1.0f : 0.0f; }
+    static float eased (float p) { return p * p * (3.0f - 2.0f * p); }
+    int heightNow() const
+    {
+        return 2 * kPad + kModeCard + kGap + kStemsCard + juce::roundToInt (eased (advPos) * StemAdvanced::kHeight)
+             + kGap + kCaption + 2 + juce::roundToInt (eased (modelsPos) * (kModelsBody + 8));
+    }
+    void setModelsOpen (bool o)
+    {
+        modelsOpen = gStemModelsOpen = o;
+        fold.setOpen (o);
+    }
+    /** Takes the height of the current glide position: the window grows / shrinks with it (top edge stays). */
+    void applySize()
+    {
+        const int h = heightNow();
+        if (h == getHeight()) { resized(); return; }
+        if (auto* w = findParentComponentOfClass<juce::ResizableWindow>()) w->setContentComponentSize (getWidth(), h);
+        else setSize (getWidth(), h);
+    }
+    void frame (double t)
+    {
+        const float at = advTarget(), mt = modelsTarget();
+        if (advPos == at && modelsPos == mt) { lastFrame = 0.0; return; }
+        const float step = lastFrame > 0.0 ? (float) (juce::jlimit (0.0, 0.05, t - lastFrame) / kGlideSeconds) : 1.0f / 15.0f;
+        lastFrame = t;
+        auto approach = [step] (float& p, float target) { p = p < target ? juce::jmin (target, p + step) : juce::jmax (target, p - step); };
+        approach (advPos, at);
+        approach (modelsPos, mt);
+        applySize();
+    }
 
     void tick() override
     {
@@ -1783,9 +2073,31 @@ private:
         const float a = guitar ? 1.0f : 0.35f;
         faders[stems::guitar]->setAlpha (a);
         switches[stems::guitar]->setAlpha (a);
+        advancedRows[stems::guitar]->setAlpha (a);
         faders[stems::guitar]->setTooltip (guitar ? juce::String() : kNoGuitarTip);
         key << (int) guitar;
-        if (key != shownKey) { shownKey = key; repaint(); mixBox.repaint(); }
+        if (key != shownKey) { shownKey = key; repaint(); mixBox.repaint(); modelsBox.repaint(); }
+        // Models folded in: open it by itself once when the current mode's model needs attention (not downloaded,
+        // downloading, failed), so the "download it below" line points at something visible.
+        {
+            const auto model = stems::modelFor (juce::roundToInt (fx.mode->get()));
+            const auto& st = status[(size_t) model];
+            const bool attention = st.state == S::failed || st.state == S::downloading || st.state == S::preparing
+                                || (st.state == S::noModel && ! stems::Service::modelFile (model).existsAsFile());
+            if (attention && ! modelsOpen && ! openedForAttention) { openedForAttention = true; setModelsOpen (true); }
+            juce::StringArray parts;
+            for (int m = 0; m < stems::kNumModels; ++m)
+            {
+                const auto mdl = (stems::Model) m;
+                const juce::String name = juce::String (stems::modelInfo (mdl).name).upToFirstOccurrenceOf (" ", false, false).upToFirstOccurrenceOf (",", false, false);
+                const auto& ms = status[(size_t) m];
+                parts.add (name + ": " + (ms.state == S::failed ? "error" : ms.state == S::downloading ? "downloading"
+                                          : stems::Service::modelFile (mdl).existsAsFile() ? "downloaded" : "not downloaded"));
+            }
+            fold.setSummary (parts.joinIntoString ("   "));
+        }
+        // Not on screen (no frames come): no glide, take the new size at once.
+        if (! isShowing() && (advTarget() != advPos || modelsTarget() != modelsPos)) { advPos = advTarget(); modelsPos = modelsTarget(); applySize(); }
         const auto cover = stemsCover (strip);
         loading.set (cover.spin, cover.line);
         loading.setVisible (cover.show);
@@ -1800,11 +2112,18 @@ private:
     InfoButton info;
     StemsLatency latency;
     GpuBar gpu;
-    BlurBox mixBox;
+    BlurBox mixBox, modelsBox;
+    juce::Component advBox;
+    FoldCaption fold;
     StemsLoading loading;
     std::vector<std::unique_ptr<Fader>> faders;
     std::vector<std::unique_ptr<StemMeter>> meters;
     std::vector<std::unique_ptr<StemSwitches>> switches;
+    std::vector<std::unique_ptr<StemAdvanced>> advancedRows;
+    Toggle advanced;
+    bool modelsOpen = false, openedForAttention = false;
+    float advPos = 0.0f, modelsPos = 0.0f;   // glide 0..1 (linear; eased when used)
+    double lastFrame = 0.0;
     std::vector<std::unique_ptr<Chip>> modelButtons;
     std::vector<std::unique_ptr<TrashButton>> deleteButtons;
     std::vector<std::unique_ptr<Toggle>> autoToggles;
@@ -1813,6 +2132,7 @@ private:
     MissWindow misses;
     std::array<stems::Service::Status, stems::kNumModels> status;
     juce::String shownKey;
+    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
 };
 
 /** Lights up the arc of each knob of the block in its stem's colour with the stem's level (after gain, mute and solo).
@@ -2279,8 +2599,8 @@ public:
             if (! inKey[pc] && fx.heard[(size_t) pc]->get() >= kHeardMin) outside.add (noteName (pc + semi));
         const int parts = juce::roundToInt (fx.parts->get());
         juce::String line = "Filled = heard";
-        if (outside.size() > 0) line << "   ·   also heard: " << outside.joinIntoString (", ");
-        if (parts > 0) line << "   ·   " << parts << (parts == 1 ? " part of the song" : " parts of the song");
+        if (outside.size() > 0) line << "   Â·   also heard: " << outside.joinIntoString (", ");
+        if (parts > 0) line << "   Â·   " << parts << (parts == 1 ? " part of the song" : " parts of the song");
         g.setColour (theme::textFaint);
         g.setFont (theme::font (11.0f));
         g.drawFittedText (line, r.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
@@ -2626,9 +2946,17 @@ std::unique_ptr<BuiltUnit> makeBuiltinUnit (UiContext& ctx, int channel, Fx f, i
             }
             case Fx::correction:
             {
-                auto c = std::make_unique<CorrectionSection> (ctx, channel, colour);
+                auto c = std::make_unique<CorrectionSection> (ctx, channel, k, title, colour);
                 sec = &c->getSection();
-                u.width = 220;
+                u.width = 230;
+                u.comp = std::move (c);
+                break;
+            }
+            case Fx::headphone:
+            {
+                auto c = std::make_unique<HeadphoneSection> (ctx, channel, k, title);
+                sec = &c->getSection();
+                u.width = 290;
                 u.comp = std::move (c);
                 break;
             }

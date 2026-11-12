@@ -4,6 +4,7 @@
 #include "core/ParamEq.h"
 #include "core/Denoiser.h"
 #include "core/Correction.h"
+#include "core/HeadphoneEq.h"
 #include "core/Utility.h"
 #include "IoStreams.h"
 #include "Stems.h"
@@ -149,6 +150,12 @@ struct StemsFx
 {
     Param *on {}, *mode {};
     std::array<Param*, stems::numStems> gain {}, mute {}, solo {};
+    /** Advanced options (Stems window, "ADVANCED"; applied only while advanced is on): left / right side of a stem
+        muted (e.g. a guitar solo only on the right), mono, pan. */
+    std::array<Param*, stems::numStems> muteL {}, muteR {}, mono {}, pan {};
+    Param* advanced {};
+    /** The mix of each stem (gain() plus the advanced options). Any thread. */
+    void mixes (stems::StemMix* out) const noexcept;
     /** Linear gain of each stem: mute = 0; while any stem is soloed, only soloed ones play (also a muted one). In Live mode (no
         guitar) the guitar follows the rest, which contains it. Any thread. */
     void gains (float* out) const noexcept;
@@ -164,6 +171,28 @@ struct StemsFx
     std::unique_ptr<stems::Instance> inst;            // message thread
     std::atomic<stems::Instance*> live { nullptr };   // what the audio thread reads
     bool wasOn = false;                               // audio thread: processed in the previous block
+};
+
+//==============================================================================
+/** Headphone Correction (once per channel): EQ that makes headphones 'from' sound like 'to' (hp::Library ids;
+    'to' empty = neutral). The fitted profile (full strength) is kept with the channel, so it keeps working when an
+    imported headphone file is gone. amount scales it, gain and auto makeup set the level (applied by the Engine timer). */
+struct HeadphoneFx
+{
+    Param *on {}, *amount {};
+    Param *gain {};       // output level (dB) on top of the preamp
+    Param *autoGain {};   // auto makeup: gives back the loudness the correction takes (pink noise level), may clip
+    /** What the dsp runs: the profile at amount, its preamp plus makeup and gain. */
+    CorrectionProfile output() const;
+    /** Makeup that auto gain adds (dB, >= 0): the loudness the correction at amount takes away. */
+    double makeupDb() const;
+    juce::String from, to;        // message thread
+    CorrectionProfile full;       // at 100 %
+    double rmsBeforeDb = 0.0, rmsAfterDb = 0.0;
+    uint32_t version = 0;         // bumped with every change of from / to (views)
+    std::array<float, 3> applied { -1.0f, 0.0f, 0.0f };   // amount, gain, auto the dsp profile was built for
+    std::array<float, 3> settings() const { return { amount->get(), gain->get(), autoGain->get() }; }
+    Correction dsp;               // runs the scaled profile (dsp.on == on)
 };
 
 //==============================================================================
@@ -183,7 +212,13 @@ struct ChannelFx
     std::array<UtilityFx, kFxInstances> utilities;
     StemsFx stems;                                  // source separation (once per channel)
     TransposeFx transpose;                          // pitch shift (once per channel)
-    Correction correction;                          // room correction (once; made for hardware outputs)
+    /** Speaker correction: the first instance is the one measured for a hardware output (Correction window, pool,
+        wizard); further ones (since 12.11., up to kFxInstances) use saved corrections. */
+    Correction correction;
+    std::array<Correction, kFxInstances - 1> moreCorrections;
+    Correction& correctionAt (int k) noexcept             { return k <= 0 ? correction : moreCorrections[(size_t) juce::jmin (k, kFxInstances - 1) - 1]; }
+    const Correction& correctionAt (int k) const noexcept { return k <= 0 ? correction : moreCorrections[(size_t) juce::jmin (k, kFxInstances - 1) - 1]; }
+    std::array<HeadphoneFx, kFxInstances> headphones;   // headphone correction (instances like the other effects)
     Param *fxBypass {};
     Param *fxPost {};   // effect chain after the fader (and pan) instead of before (Inspector: PRE / POST)
 
@@ -513,7 +548,7 @@ public:
         the correction. */
     std::vector<Fx> typicalFx (int channel) const;
     /** How many instances of f a channel can have (correction: 1). */
-    static int maxInstances (Fx f) noexcept { return f == Fx::correction || f == Fx::stems || f == Fx::transpose ? 1 : kFxInstances; }
+    static int maxInstances (Fx f) noexcept { return f == Fx::stems || f == Fx::transpose ? 1 : kFxInstances; }
     PluginChain& chainFor (int channel) noexcept
     {
         return channel < kMaxInputs ? inputs[(size_t) channel].plugins : buses[(size_t) (channel - kMaxInputs)].plugins;
@@ -545,9 +580,10 @@ public:
     // Correction (room + speaker / headphone) of a channel, selection index scheme (inputs, then buses).
     // Every channel has one (since 12.11.); measuring and the Correction window are for hardware outputs only
     // (isHwOutput), other channels can use a saved correction.
-    Correction* correctionFor (int selectIndex) noexcept
+    Correction* correctionFor (int selectIndex, int k = 0) noexcept
     {
-        return juce::isPositiveAndBelow (selectIndex, kMaxInputs + kMaxBuses) ? &fxOf (selectIndex).correction : nullptr;
+        return juce::isPositiveAndBelow (selectIndex, kMaxInputs + kMaxBuses) && juce::isPositiveAndBelow (k, kFxInstances)
+                   ? &fxOf (selectIndex).correctionAt (k) : nullptr;
     }
     static bool isHwOutput (int selectIndex) noexcept
     {
@@ -564,7 +600,16 @@ public:
         return channel < kMaxInputs ? static_cast<const ChannelFx&> (inputs[(size_t) channel]) : buses[(size_t) (channel - kMaxInputs)];
     }
     /** Replaces a channel's correction profile (message thread). Ignored for channels without a correction. */
-    void setCorrection (int selectIndex, CorrectionProfile profile);
+    void setCorrection (int selectIndex, CorrectionProfile profile, int k = 0);
+
+    /** Headphone Correction of a channel (message thread): makes headphones 'from' sound like 'to' (hp::Library ids,
+        empty 'to' = neutral). Fits the EQ; an unknown 'from' leaves the channel without correction. */
+    void setHeadphone (int channel, int k, const juce::String& from, const juce::String& to);
+    /** Session / clipboard: HPCORR element with from, to and the fitted profile of instance k (nullptr if nothing is set). */
+    std::unique_ptr<juce::XmlElement> headphoneToXml (int channel, int k) const;
+    void headphoneFromXml (int channel, int k, const juce::XmlElement* hpcorr);
+    /** Applies changed AMOUNT knobs and frees retired coefficient sets (Engine timer, 10 Hz). */
+    void updateHeadphones();
 
     //--------------------------------------------------------------------------
     // Room measurement (Tools > Room Measurement), see MeasureRun. Message thread.

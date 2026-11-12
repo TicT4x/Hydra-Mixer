@@ -304,6 +304,11 @@ private:
     std::unique_ptr<EffectBrowser> browser;   // effect browser at the left edge (prefs.fxBrowser); browserTab folds it in / out
     BrowserTab browserTab;
     bool browserOpen() const;
+    void browserFrame();
+    float browserShown = -1.0f, browserGlideFrom = 0.0f;   // 0 = folded in .. 1 = out (glides)
+    double browserGlideStart = 0.0;
+    bool browserGliding = false;
+    juce::VBlankAttachment browserVBlank { this, [this] (double) { browserFrame(); } };
     int browserWidth() const { return (browserOpen() ? EffectBrowser::kWidth : 0) + BrowserTab::kWidth + 4; }
     /** Settings of an effect ("..." in its header: gate / denoiser / compressor) in their own window. */
     void openPanelWindow (std::unique_ptr<juce::Component> content, const juce::String& title);

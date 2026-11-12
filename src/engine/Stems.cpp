@@ -516,7 +516,7 @@ void Instance::prepare (double fs)
     mode = -1;        // the first block starts a stream
     wasReady = false;
     wetLast = 0.0f;
-    lastGain.fill (1.0f);
+    lastMix.fill (StemMix::gain (1.0f));
     latencyNow = 0;
     latency.store (0);
     writtenShared.store (0);
@@ -554,6 +554,14 @@ void Instance::restartStream (int m, const Tuning& tuning) noexcept
 void Instance::process (float* l, float* r, int n, const float* gains, int m, bool restart, const Tuning& tuning,
                         std::atomic<float>* peaks, int readers) noexcept
 {
+    std::array<StemMix, numStems> mix;
+    for (int s = 0; s < numStems; ++s) mix[(size_t) s] = StemMix::gain (gains[s]);
+    process (l, r, n, mix.data(), m, restart, tuning, peaks, readers);
+}
+
+void Instance::process (float* l, float* r, int n, const StemMix* mixIn, int m, bool restart, const Tuning& tuning,
+                        std::atomic<float>* peaks, int readers) noexcept
+{
     if (inBuf.empty()) return;
     blocks.store (blocks.load (std::memory_order_relaxed) + 1, std::memory_order_relaxed);   // only this thread writes
     m = juce::jlimit (0, kNumModes - 1, m);
@@ -589,8 +597,8 @@ void Instance::process (float* l, float* r, int n, const float* gains, int m, bo
     const float wetNext = cover ? juce::jmin (1.0f, wetLast + maxStep) : juce::jmax (0.0f, wetLast - maxStep);
     const bool metering = cover && peaks != nullptr;
 
-    std::array<float, numStems> target {};
-    for (int s = 0; s < numStems; ++s) target[(size_t) s] = gains[s];
+    std::array<StemMix, numStems> target {};
+    for (int s = 0; s < numStems; ++s) target[(size_t) s] = mixIn[s];
     if (wetLast == 0.0f && wetNext == 0.0f)
     {
         for (int i = 0; i < n; ++i)
@@ -613,16 +621,23 @@ void Instance::process (float* l, float* r, int n, const float* gains, int m, bo
             const auto at = (size_t) (p & inMask), sat = (size_t) (p & stemMask);
             const float t = (float) (i + 1) * inv;
             const float wet = wetLast + (wetNext - wetLast) * t;
-            float g[numStems];
-            for (int s = 0; s < numStems; ++s) g[s] = lastGain[(size_t) s] + (target[(size_t) s] - lastGain[(size_t) s]) * t;
+            // Each stem's 2x2 mix glides over the block. The rest is the input minus the model's stems, so
+            // out = Rest * input + sum (Stem_s - Rest) * stem_s.
+            StemMix g[numStems];
+            for (int s = 0; s < numStems; ++s)
+            {
+                const auto& a = lastMix[(size_t) s];
+                const auto& b = target[(size_t) s];
+                g[s] = { a.ll + (b.ll - a.ll) * t, a.lr + (b.lr - a.lr) * t, a.rl + (b.rl - a.rl) * t, a.rr + (b.rr - a.rr) * t };
+            }
             const float dl = p >= 0 ? inL[at] : 0.0f, dr = p >= 0 ? inR[at] : 0.0f;
-            float ml = g[rest] * dl, mr = g[rest] * dr, restL = dl, restR = dr;
+            const auto& R = g[rest];
+            float ml = R.ll * dl + R.lr * dr, mr = R.rl * dl + R.rr * dr, restL = dl, restR = dr;
             for (int s = 0; s < kModelStems; ++s)
             {
                 const float sl = st[2 * s][sat], sr = st[2 * s + 1][sat];
-                const float k = g[s] - g[rest];
-                ml += k * sl;
-                mr += k * sr;
+                ml += (g[s].ll - R.ll) * sl + (g[s].lr - R.lr) * sr;
+                mr += (g[s].rl - R.rl) * sl + (g[s].rr - R.rr) * sr;
                 if (metering)
                 {
                     pk[(size_t) s] = juce::jmax (pk[(size_t) s], std::abs (sl), std::abs (sr));
@@ -640,7 +655,7 @@ void Instance::process (float* l, float* r, int n, const float* gains, int m, bo
                     if (auto& a = peaks[rd * numStems + s]; pk[(size_t) s] > a.load (std::memory_order_relaxed))
                         a.store (pk[(size_t) s], std::memory_order_relaxed);
     }
-    lastGain = target;
+    lastMix = target;
     wetLast = wetNext;
     wetShown.store (wetNext > 0.0f, std::memory_order_relaxed);
     if (wetNext > 0.0f && ! everWet.load (std::memory_order_relaxed)) everWet.store (true, std::memory_order_relaxed);

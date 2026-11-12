@@ -7,8 +7,9 @@ juce::Colour BusCorrectionTarget::colour() const { return index < kMaxInputs ? t
 
 CorrectionPoolSync::CorrectionPoolSync (Engine& e) : engine (e)
 {
-    for (int ch = 0; ch < kMaxInputs + kMaxBuses; ++ch)   // every channel can have a correction since 12.11.
-        outputs.emplace_back (std::make_unique<BusCorrectionTarget> (engine, ch), pool::Link (pool::kMixer));
+    for (int ch = 0; ch < kMaxInputs + kMaxBuses; ++ch)   // every channel can have corrections since 12.11.
+        for (int k = 0; k < kFxInstances; ++k)
+            outputs.emplace_back (std::make_unique<BusCorrectionTarget> (engine, ch, k), pool::Link (pool::kMixer));
     timerCallback();
     startTimer (500);
 }

@@ -35,8 +35,9 @@ private:
     up to kFxInstances times (correction once); every instance has its own parameters (Engine).
     Inputs offer stems, transpose, utility, denoiser, EQ, gate, compressor, limiter; buses utility, EQ, compressor,
     limiter and (hardware outputs) correction. builtinMask holds kFxInstances bits per effect (64 bits).
-    utility took the place (and value) of the former phase block: session files with builtin="phase" load as utility. */
-enum class Fx : int { plugin = -1, denoiser = 0, eq, gate, comp, correction, limiter, utility, stems, transpose, numBuiltins };
+    utility took the place (and value) of the former phase block: session files with builtin="phase" load as utility.
+    correction is shown as "Speaker Correction" (room + speakers), headphone = "Headphone Correction" (id "hpcorr"). */
+enum class Fx : int { plugin = -1, denoiser = 0, eq, gate, comp, correction, limiter, utility, stems, transpose, headphone, numBuiltins };
 constexpr int kFxInstances = 4;
 static_assert ((int) Fx::numBuiltins * kFxInstances <= 64, "PluginChain::builtinMask has 64 bits");
 

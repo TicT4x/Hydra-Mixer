@@ -91,6 +91,14 @@ struct Separator
 
 class Service;
 
+/** How one stem goes into the channel's mix: out L = ll * L + lr * R, out R = rl * L + rr * R
+    (its gain, and with the advanced options: left / right side muted, mono, pan). */
+struct StemMix
+{
+    float ll = 1.0f, lr = 0.0f, rl = 0.0f, rr = 1.0f;
+    static StemMix gain (float g) noexcept { return { g, 0.0f, 0.0f, g }; }
+};
+
 /** The effect state of one channel. Created / prepared on the message thread, processed on the audio thread, filled by
     a worker. */
 class Instance
@@ -107,6 +115,9 @@ public:
         effect was off (or the chain bypassed) since the last block, so the stream starts over. peaks (readers x
         numStems, or nullptr): raises each to the stem's peak (before its gain) while the stems are mixed in. */
     void process (float* l, float* r, int n, const float* gains, int mode, bool restart, const Tuning& tuning = {},
+                  std::atomic<float>* peaks = nullptr, int readers = 1) noexcept;
+    /** The same with a 2x2 mix per stem (side mutes, mono, pan: the advanced options; numStems entries). */
+    void process (float* l, float* r, int n, const StemMix* mix, int mode, bool restart, const Tuning& tuning = {},
                   std::atomic<float>* peaks = nullptr, int readers = 1) noexcept;
 
     /** Latency of the output right now (0 while the separation does not run, e.g. no model yet). Any thread. */
@@ -158,7 +169,7 @@ private:
     uint32_t epoch = 0;
     int mode = -1, latencyNow = 0;
     float wetLast = 0.0f;
-    std::array<float, numStems> lastGain {};
+    std::array<StemMix, numStems> lastMix {};
     bool wasReady = false;
     Tuning tuningNow, tuningPending;
     int64_t pendingSince = 0;        // samples the pending tuning has stayed unchanged

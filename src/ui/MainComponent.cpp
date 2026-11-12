@@ -1170,9 +1170,28 @@ void MainComponent::toggleEffectBrowser()
     if (ctx.session == nullptr) return;
     ctx.session->prefs.fxBrowser = ! ctx.session->prefs.fxBrowser;
     ctx.session->prefsVersion.fetch_add (1);
-    if (! browserOpen()) browser.reset();
+    // Glides open / shut (browserFrame); meanwhile strips and inspector follow directly instead of jumping.
+    browserGlideFrom = browserShown;
+    browserGlideStart = juce::Time::getMillisecondCounterHiRes();
+    browserGliding = true;
     resized();
-    repaint();
+}
+
+void MainComponent::browserFrame()
+{
+    if (! browserGliding) return;
+    constexpr double kMs = 230.0;
+    const float target = browserOpen() ? 1.0f : 0.0f;
+    const double t = juce::jlimit (0.0, 1.0, (juce::Time::getMillisecondCounterHiRes() - browserGlideStart) / kMs);
+    const float eased = 1.0f - std::pow (1.0f - (float) t, 3.0f);   // ease out
+    browserShown = browserGlideFrom + (target - browserGlideFrom) * eased;
+    const bool done = t >= 1.0;
+    if (done) { browserShown = target; browserGliding = false; }
+    const bool wasInstant = ctx.instantLayout;
+    ctx.instantLayout = ! done;
+    resized();
+    ctx.instantLayout = wasInstant;
+    if (done && target == 0.0f) browser.reset();
 }
 
 void MainComponent::restartAudioEngine()
@@ -1517,17 +1536,15 @@ void MainComponent::resized()
     auto r = juce::Rectangle<int> (0, 0, logicalWidth(), logicalHeight());
     top.setBounds (r.removeFromTop (54));
     r.removeFromTop (4);
-    // Effect browser at the left edge like Ableton's, the full height below the top bar; its tab stays at the
-    // very left in both states (click: fold in / out).
+    // Effect browser at the left edge like Ableton's, the full height below the top bar; its tab sits at its
+    // right edge and moves out with it (click: fold in / out). Opening and closing glide (browserFrame).
+    if (! browserGliding) browserShown = browserOpen() ? 1.0f : 0.0f;
     if (browserTab.getParentComponent() != this)
     {
         browserTab.onClick = [this] { toggleEffectBrowser(); };
         addAndMakeVisible (browserTab);
     }
-    browserTab.setTransform (scale);
-    browserTab.setOpen (browserOpen());
-    browserTab.setBounds (r.removeFromLeft (BrowserTab::kWidth + 4).withTrimmedBottom (4).withTrimmedLeft (4));
-    if (browserOpen())
+    if (browserShown > 0.0f)
     {
         if (browser == nullptr)
         {
@@ -1535,9 +1552,16 @@ void MainComponent::resized()
             browser->onMessage = [this] (const juce::String& text) { showToast (text, 2.5); };
             addAndMakeVisible (*browser);
         }
+        // Slides in from the left: always laid out at its full width, the part that is out shows.
+        const int full = juce::jmin (EffectBrowser::kWidth, r.getWidth() / 2);
+        const int shown = juce::roundToInt ((float) full * browserShown);
+        auto area = r.removeFromLeft (shown).withTrimmedBottom (4);
         browser->setTransform (scale);
-        browser->setBounds (r.removeFromLeft (juce::jmin (EffectBrowser::kWidth, r.getWidth() / 2)).withTrimmedBottom (4));
+        browser->setBounds (area.withX (area.getRight() - full).withWidth (full));
     }
+    browserTab.setTransform (scale);
+    browserTab.setOpen (browserOpen());
+    browserTab.setBounds (r.removeFromLeft (BrowserTab::kWidth + 4).withTrimmedBottom (4).withTrimmedLeft (browserShown > 0.0f ? 2 : 4).withTrimmedRight (browserShown > 0.0f ? 2 : 0));
     if (sceneBar != nullptr)
     {
         sceneBar->setTransform (scale);

@@ -210,7 +210,8 @@ public:
     /** Stability before latency (virtual cables, app capture; wish of the user 8.11.): after a dropout the
         target never goes back below the level that failed (plus one step). Without this the back-off decayed
         after 10 min and the target walked down into the same rare timing spike again: on the user's VAC inputs
-        one dropout per stream every 20-35 min (hydra.log, 9.11.). Set before prepare(). */
+        one dropout per stream every 20-35 min (hydra.log, 9.11.). Since 12.11. the floor rises by half the level that
+        failed (at least 3 steps) per dropout instead of one step. Set before prepare(). */
     void setHoldFloor (bool on) noexcept { holdFloor = on; }
 
     void prepare (double initialTarget, double minTarget, double maxTarget, double quantumFrames,
@@ -256,8 +257,12 @@ public:
             // proportion: such a spike is usually much larger than the jitter the target was tuned to.
             // Dropouts in the first 2 s are the start (priming, device settling): no back-off for those.
             if (warmupBlocks <= 0) tightenSeconds = juce::jmin (kTightenMax, tightenSeconds * 8.0);
-            if (warmupBlocks <= 0 && holdFloor) floor = juce::jmin (hi, juce::jmax (floor, target + quantum));
+            // Cables (holdFloor): the floor jumps well above the level that failed (x1.5, at least 3 steps more).
+            // One step was too little: hydra.log of 12.11. still showed one dropout per cable every 5-30 min at 4-10 ms,
+            // often on several cables in the same second (a rare timing spike much larger than the usual jitter).
+            if (warmupBlocks <= 0 && holdFloor) floor = juce::jmin (hi, juce::jmax (floor, juce::jmax (target * 1.5, target + 3.0 * quantum)));
             target = juce::jmin (hi, target + 2.0 * quantum * std::sqrt (tightenSeconds / kTightenMin));
+            if (holdFloor) target = juce::jmax (target, floor);
             quietBlocks = 0;
             avg = fill;
             slackMin = 1.0e9;

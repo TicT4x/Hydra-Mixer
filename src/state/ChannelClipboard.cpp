@@ -130,11 +130,60 @@ juce::String describe (const juce::XmlElement* clip)
 }
 
 //==============================================================================
+namespace
+{
+/** Effects whose settings are more than parameters keep them inside their SLOT element of a clip: Headphone Correction
+    its headphones and EQ (HPCORR), Speaker Correction its profile (CORRECTION). */
+void addFxData (const Engine& e, int ch, Fx f, int k, juce::XmlElement& slot)
+{
+    if (f == Fx::headphone)
+        if (auto hp = e.headphoneToXml (ch, k)) slot.addChildElement (hp.release());
+    if (f == Fx::correction)
+        if (const auto& p = e.fxOf (ch).correctionAt (k).getProfile(); ! p.isEmpty()) slot.addChildElement (p.toXml().release());
+}
+
+/** slot: the SLOT element of the clip (nullptr: none). A headphone correction without data is cleared, a speaker
+    correction keeps its profile (clips of older versions carry none). */
+void applyFxData (Engine& e, int ch, Fx f, int k, const juce::XmlElement* slot)
+{
+    if (f == Fx::headphone)
+        e.headphoneFromXml (ch, k, slot != nullptr ? slot->getChildByName ("HPCORR") : nullptr);
+    if (f == Fx::correction && slot != nullptr)
+        if (auto* c = slot->getChildByName ("CORRECTION")) e.setCorrection (ch, CorrectionProfile::fromXml (c), k);
+}
+
+void addChainData (const Engine& e, int ch, juce::XmlElement* chainXml)
+{
+    if (chainXml == nullptr) return;
+    for (auto* slot : chainXml->getChildWithTagNameIterator ("SLOT"))
+        if (slot->hasAttribute ("builtin"))
+            addFxData (e, ch, fxFromId (slot->getStringAttribute ("builtin")), slot->getIntAttribute ("instance", 0), *slot);
+}
+
+void applyChainData (Engine& e, int ch, const juce::XmlElement* chainXml)
+{
+    for (int k = 0; k < kFxInstances; ++k)
+    {
+        const juce::XmlElement* hp = nullptr;
+        if (chainXml != nullptr)
+            for (auto* slot : chainXml->getChildWithTagNameIterator ("SLOT"))
+            {
+                const auto f = fxFromId (slot->getStringAttribute ("builtin"));
+                if (! slot->hasAttribute ("builtin") || slot->getIntAttribute ("instance", 0) != k) continue;
+                if (f == Fx::headphone) hp = slot;
+                if (f == Fx::correction) applyFxData (e, ch, f, k, slot);
+            }
+        applyFxData (e, ch, Fx::headphone, k, hp);
+    }
+}
+} // namespace
+
 std::unique_ptr<juce::XmlElement> copyBuiltin (const Engine& e, int ch, Fx f, int k)
 {
     auto xml = newClip (What::fx, ch);
     auto* slot = xml->createNewChildElement ("SLOT");
     slot->setAttribute ("builtin", fxId (f));
+    addFxData (e, ch, f, k, *slot);
     const auto base = fxBase (ch, f, k);
     for (auto* p : e.fxParams (ch, f, k))   // ids relative to the instance: ".thr", "" for phase
         addParam (*xml, p->id.substring (base.length()), p->get());
@@ -158,7 +207,9 @@ std::unique_ptr<juce::XmlElement> copyChain (const Engine& e, int ch)
     const auto prefix = prefixOf (ch);
     for (auto& suffix : chainSuffixes (e, ch))
         if (auto* p = e.params.find (prefix + suffix)) addParam (*xml, suffix, p->get());
-    xml->addChildElement (chainOf (e, ch).toXml().release());
+    auto* chainXml = chainOf (e, ch).toXml().release();
+    addChainData (e, ch, chainXml);
+    xml->addChildElement (chainXml);
     return xml;
 }
 
@@ -175,6 +226,7 @@ std::unique_ptr<juce::XmlElement> copyBlocks (const Engine& e, int ch, std::vect
         auto* s = chain.getSlot (i);
         if (s == nullptr) continue;
         c->addChildElement (chain.slotToXml (i).release());
+        if (! s->isPlugin()) addFxData (e, ch, s->builtin, s->fxInstance, *c->getChildElement (c->getNumChildElements() - 1));
         if (! s->isPlugin())
             for (auto* p : e.fxParams (ch, s->builtin, s->fxInstance))
                 addParam (*xml, p->id.substring (prefix.length()), p->get());
@@ -200,7 +252,9 @@ std::unique_ptr<juce::XmlElement> copyChannel (const Engine& e, int ch)
     const auto prefix = prefixOf (ch);
     for (auto& suffix : channelSuffixes (e, ch))
         if (auto* p = e.params.find (prefix + suffix)) addParam (*xml, suffix, p->get());
-    xml->addChildElement (chainOf (e, ch).toXml().release());
+    auto* chainXml = chainOf (e, ch).toXml().release();
+    addChainData (e, ch, chainXml);
+    xml->addChildElement (chainXml);
     return xml;
 }
 
@@ -244,6 +298,7 @@ bool pasteBuiltinSettings (Engine& e, int ch, Fx f, int k, const juce::XmlElemen
     const auto base = fxBase (ch, f, k);
     for (auto* p : e.fxParams (ch, f, k)) p->reset();
     if (auto* on = e.fxOnParam (ch, f, k)) on->set (0.0f);
+    applyFxData (e, ch, f, k, slotOf (&clip));
     for (auto* x : clip.getChildWithTagNameIterator ("P"))
     {
         auto rel = x->getStringAttribute ("id");
@@ -324,6 +379,7 @@ bool pasteChain (Engine& e, int ch, const juce::XmlElement& clip)
     auto& chain = e.chainFor (ch);
     if (auto* c = clip.getChildByName ("CHAIN")) chain.fromXml (*c, e.pluginHost);
     else chain.clear();
+    applyChainData (e, ch, clip.getChildByName ("CHAIN"));
     e.ensureBuiltins();   // drops effects this channel cannot have (e.g. a gate onto a bus), creates denoisers
     e.sendChangeMessage();
     return true;
@@ -341,6 +397,7 @@ bool pasteChannel (Engine& e, int ch, const juce::XmlElement& clip)
     auto& chain = e.chainFor (ch);
     if (auto* c = clip.getChildByName ("CHAIN")) chain.fromXml (*c, e.pluginHost);
     else chain.clear();
+    applyChainData (e, ch, clip.getChildByName ("CHAIN"));
     e.ensureBuiltins();
     e.rebuildGraph();
     e.sendChangeMessage();

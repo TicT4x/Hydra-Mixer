@@ -79,6 +79,31 @@ void StemsFx::gains (float* out) const noexcept
     }
 }
 
+void StemsFx::mixes (stems::StemMix* out) const noexcept
+{
+    float g[stems::numStems];
+    gains (g);
+    const bool guitar = stems::hasGuitar (juce::roundToInt (mode->get()));
+    const bool adv = advanced->isOn();
+    for (int k = 0; k < stems::numStems; ++k)
+    {
+        if (! adv) { out[k] = stems::StemMix::gain (g[k]); continue; }
+        const auto i = (size_t) (! guitar && k == stems::guitar ? (int) stems::rest : k);   // Live: guitar = rest
+        // Side mutes, then mono (the sides still in, summed: one side alone keeps its level), then pan, then gain.
+        const float sl = muteL[i]->isOn() ? 0.0f : 1.0f, sr = muteR[i]->isOn() ? 0.0f : 1.0f;
+        float ll = sl, lr = 0.0f, rl = 0.0f, rr = sr;
+        if (mono[i]->isOn())
+        {
+            const float h = sl > 0.0f && sr > 0.0f ? 0.5f : 1.0f;
+            ll = rl = sl * h;
+            lr = rr = sr * h;
+        }
+        const float p = pan[i]->get();
+        const float pl = p > 0.0f ? 1.0f - p : 1.0f, pr = p < 0.0f ? 1.0f + p : 1.0f;
+        out[k] = { g[k] * pl * ll, g[k] * pl * lr, g[k] * pr * rl, g[k] * pr * rr };
+    }
+}
+
 dsp::DenoiserSettings DenoiserFx::settings() const
 {
     dsp::DenoiserSettings d;
@@ -207,6 +232,7 @@ void Engine::createFxParams (ChannelFx& c, const juce::String& p, const juce::St
         const auto sp = p + fxPart (Fx::stems, 0) + ".";
         st.on   = &params.addToggle (sp + "on", n + "Stem Separator On");
         st.mode = &params.addChoice (sp + "mode", n + "Stem Separator Latency Mode", stems::modeNames(), stems::kDefaultMode);
+        st.advanced = &params.addToggle (sp + "advanced", n + "Stem Separator Advanced");
         for (int k = 0; k < stems::numStems; ++k)
         {
             const auto name = stems::stemName (k);
@@ -214,6 +240,11 @@ void Engine::createFxParams (ChannelFx& c, const juce::String& p, const juce::St
                                                stemGainRange(), 0.0f, " dB");
             st.mute[(size_t) k] = &params.addToggle (sp + name.toLowerCase() + ".mute", n + "Stem Separator " + name + " Mute");
             st.solo[(size_t) k] = &params.addToggle (sp + name.toLowerCase() + ".solo", n + "Stem Separator " + name + " Solo");
+            st.muteL[(size_t) k] = &params.addToggle (sp + name.toLowerCase() + ".mutel", n + "Stem Separator " + name + " Left Mute");
+            st.muteR[(size_t) k] = &params.addToggle (sp + name.toLowerCase() + ".muter", n + "Stem Separator " + name + " Right Mute");
+            st.mono[(size_t) k]  = &params.addToggle (sp + name.toLowerCase() + ".mono", n + "Stem Separator " + name + " Mono");
+            st.pan[(size_t) k]   = &params.add (sp + name.toLowerCase() + ".pan", n + "Stem Separator " + name + " Pan", ParamType::Continuous,
+                                                linRange (-1, 1, 0.01f), 0.0f);
         }
     }
     {
@@ -242,7 +273,19 @@ void Engine::createFxParams (ChannelFx& c, const juce::String& p, const juce::St
             t.heard[(size_t) pc] = &params.add (tp + "pc" + juce::String (pc), n + "Transpose Heard " + dsp::keyName (pc).upToFirstOccurrenceOf (" ", false, false),
                                                 ParamType::Continuous, linRange (0, 1, 0.01f), 0.0f);
     }
-    c.correction.on = &params.addToggle (p + "corr.on", n + "Correction On");
+    for (int k = 0; k < kFxInstances; ++k)
+    {
+        // Ids "corr.on" / "corr2.on" ..., "hp.*" / "hp2.*" ...; names "Speaker Correction 2 On" ...
+        const auto num = k == 0 ? juce::String() : " " + juce::String (k + 1);
+        c.correctionAt (k).on = &params.addToggle (p + fxPart (Fx::correction, k) + ".on", n + "Speaker Correction" + num + " On");
+        auto& h = c.headphones[(size_t) k];
+        const auto hp = p + fxPart (Fx::headphone, k) + ".", hn = n + "Headphone Correction" + num + " ";
+        h.on       = &params.addToggle (hp + "on", hn + "On");
+        h.amount   = &params.add (hp + "amount", hn + "Amount", ParamType::Continuous, linRange (0, 100, 1.0f), 100.0f, " %");
+        h.gain     = &params.add (hp + "gain", hn + "Gain", ParamType::Continuous, linRange (-12, 12, 0.1f), 0.0f, " dB");
+        h.autoGain = &params.addToggle (hp + "auto", hn + "Auto Makeup");
+        h.dsp.on = h.on;
+    }
     c.fxBypass = &params.addToggle (p + "fx.bypass", n + "FX Bypass");
     c.fxPost   = &params.addToggle (p + "fx.post", n + "FX Post-Fader");
 }
@@ -395,7 +438,7 @@ std::vector<Param*> Engine::removeInput (int i)
     s.name = "Input " + juce::String (i + 1);
     s.source = {};
     s.plugins.clear();
-    setCorrection (i, {});
+    for (int k = 0; k < kFxInstances; ++k) { setCorrection (i, {}, k); setHeadphone (i, k, {}, {}); }
     rebuildGraph();
     sendChangeMessage();
     return reset;
@@ -417,7 +460,7 @@ std::vector<Param*> Engine::removeBus (int b)
     bus.icon = {};
     bus.output = {};
     bus.plugins.clear();
-    setCorrection (kMaxInputs + b, {});
+    for (int k = 0; k < kFxInstances; ++k) { setCorrection (kMaxInputs + b, {}, k); setHeadphone (kMaxInputs + b, k, {}, {}); }
     if (selOwner == b) selOwner = -1;
     rebuildGraph();
     sendChangeMessage();
@@ -514,13 +557,18 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
         std::array<juce::String, kMaxInputs> names;
         std::array<IoTarget, kMaxInputs> sources;
         std::array<std::vector<std::unique_ptr<PluginSlot>>, kMaxInputs> chains;
-        std::array<CorrectionProfile, kMaxInputs> corrections;
+        std::array<std::array<CorrectionProfile, kFxInstances>, kMaxInputs> corrections;
+        std::array<std::array<std::unique_ptr<juce::XmlElement>, kFxInstances>, kMaxInputs> headphones;
         for (int i : used)
         {
+            for (int k = 0; k < kFxInstances; ++k)
+            {
+                headphones[(size_t) i][(size_t) k] = headphoneToXml (i, k);
+                corrections[(size_t) i][(size_t) k] = inputs[(size_t) i].correctionAt (k).getProfile();
+            }
             names[(size_t) i] = inputs[(size_t) i].name;
             sources[(size_t) i] = inputs[(size_t) i].source;
             chains[(size_t) i] = inputs[(size_t) i].plugins.takeAll();
-            corrections[(size_t) i] = inputs[(size_t) i].correction.getProfile();
         }
         for (int i : used)
         {
@@ -528,7 +576,11 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
             to.name = names[(size_t) i];
             to.source = sources[(size_t) i];
             to.plugins.putAll (std::move (chains[(size_t) i]));
-            setCorrection (dest[(size_t) i], corrections[(size_t) i]);
+            for (int k = 0; k < kFxInstances; ++k)
+            {
+                setCorrection (dest[(size_t) i], corrections[(size_t) i][(size_t) k], k);
+                headphoneFromXml (dest[(size_t) i], k, headphones[(size_t) i][(size_t) k].get());
+            }
         }
     }
     else
@@ -536,14 +588,19 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
         std::array<juce::String, kMaxBuses> names, icons;
         std::array<IoTarget, kMaxBuses> outputs;
         std::array<std::vector<std::unique_ptr<PluginSlot>>, kMaxBuses> chains;
-        std::array<CorrectionProfile, kMaxBuses> corrections;
+        std::array<std::array<CorrectionProfile, kFxInstances>, kMaxBuses> corrections;
+        std::array<std::array<std::unique_ptr<juce::XmlElement>, kFxInstances>, kMaxBuses> headphones;
         for (int b : used)
         {
+            for (int k = 0; k < kFxInstances; ++k)
+            {
+                headphones[(size_t) b][(size_t) k] = headphoneToXml (kMaxInputs + b, k);
+                corrections[(size_t) b][(size_t) k] = buses[(size_t) b].correctionAt (k).getProfile();
+            }
             names[(size_t) b] = buses[(size_t) b].name;
             icons[(size_t) b] = buses[(size_t) b].icon;
             outputs[(size_t) b] = buses[(size_t) b].output;
             chains[(size_t) b] = buses[(size_t) b].plugins.takeAll();
-            corrections[(size_t) b] = buses[(size_t) b].correction.getProfile();
         }
         for (int b : used)
         {
@@ -552,7 +609,11 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
             to.icon = icons[(size_t) b];
             to.output = outputs[(size_t) b];
             to.plugins.putAll (std::move (chains[(size_t) b]));
-            setCorrection (kMaxInputs + dest[(size_t) b], corrections[(size_t) b]);
+            for (int k = 0; k < kFxInstances; ++k)
+            {
+                setCorrection (kMaxInputs + dest[(size_t) b], corrections[(size_t) b][(size_t) k], k);
+                headphoneFromXml (kMaxInputs + dest[(size_t) b], k, headphones[(size_t) b][(size_t) k].get());
+            }
         }
         // Choices that name a bus follow it.
         if (group == Group::virtBuses)
@@ -965,14 +1026,14 @@ void Engine::prepareChains()
 std::vector<Fx> Engine::allowedFx (int ch) const
 {
     // Every effect everywhere, in the usual order of the channel's kind (where ensureBuiltins inserts them).
-    if (ch < kMaxInputs) return { Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::correction, Fx::limiter };
-    return { Fx::correction, Fx::stems, Fx::transpose, Fx::denoiser, Fx::gate, Fx::utility, Fx::eq, Fx::comp, Fx::limiter };
+    if (ch < kMaxInputs) return { Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::correction, Fx::headphone, Fx::limiter };
+    return { Fx::correction, Fx::headphone, Fx::stems, Fx::transpose, Fx::denoiser, Fx::gate, Fx::utility, Fx::eq, Fx::comp, Fx::limiter };
 }
 
 std::vector<Fx> Engine::typicalFx (int ch) const
 {
     if (ch < kMaxInputs) return { Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::limiter };
-    if (isHwBus (ch - kMaxInputs)) return { Fx::correction, Fx::utility, Fx::eq, Fx::comp, Fx::limiter };
+    if (isHwBus (ch - kMaxInputs)) return { Fx::correction, Fx::headphone, Fx::utility, Fx::eq, Fx::comp, Fx::limiter };
     return { Fx::utility, Fx::eq, Fx::comp, Fx::limiter };
 }
 
@@ -980,7 +1041,7 @@ juce::String Engine::fxPart (Fx f, int k)
 {
     const juce::String base = f == Fx::denoiser ? "dn" : f == Fx::eq ? "eq" : f == Fx::gate ? "gate" : f == Fx::comp ? "comp"
                             : f == Fx::limiter ? "lim" : f == Fx::utility ? "util" : f == Fx::stems ? "stems"
-                            : f == Fx::transpose ? "tp" : "corr";
+                            : f == Fx::transpose ? "tp" : f == Fx::headphone ? "hp" : "corr";
     return k == 0 ? base : base + juce::String (k + 1);
 }
 
@@ -999,7 +1060,8 @@ Param* Engine::fxOnParam (int ch, Fx f, int k) const
         case Fx::limiter:    return c.limiters[i].on;
         case Fx::stems:      return c.stems.on;
         case Fx::transpose:  return c.transpose.on;
-        case Fx::correction: return c.correction.on;
+        case Fx::correction: return c.correctionAt (k).on;
+        case Fx::headphone:  return c.headphones[i].on;
         default:             return nullptr;
     }
 }
@@ -1060,7 +1122,8 @@ void Engine::removeBuiltin (int ch, Fx f, int k)
     if (const int i = chain.indexOf (f, k); i >= 0) chain.remove (i);
     for (auto* p : fxParams (ch, f, k)) p->reset();
     if (auto* on = fxOnParam (ch, f, k)) on->set (0.0f);   // e.g. the first limiter is on by default
-    if (f == Fx::correction) setCorrection (ch, {});
+    if (f == Fx::correction) setCorrection (ch, {}, k);
+    if (f == Fx::headphone) setHeadphone (ch, k, {}, {});
     if (f == Fx::stems) releaseStems (fxOf (ch));
 }
 
@@ -1335,9 +1398,98 @@ void Engine::publishGraph (std::unique_ptr<Graph> g)
 }
 
 //==============================================================================
-void Engine::setCorrection (int selectIndex, CorrectionProfile profile)
+void Engine::setCorrection (int selectIndex, CorrectionProfile profile, int k)
 {
-    if (auto* c = correctionFor (selectIndex)) c->setProfile (std::move (profile), sampleRate, callbackCount.load());
+    if (auto* c = correctionFor (selectIndex, k)) c->setProfile (std::move (profile), sampleRate, callbackCount.load());
+}
+
+void Engine::setHeadphone (int ch, int k, const juce::String& from, const juce::String& to)
+{
+    if (! juce::isPositiveAndBelow (ch, kMaxInputs + kMaxBuses) || ! juce::isPositiveAndBelow (k, kFxInstances)) return;
+    auto& h = fxOf (ch).headphones[(size_t) k];
+    auto& lib = hp::Library::get();
+    h.from = from;
+    h.to = to == "target:neutral" ? juce::String() : to;
+    h.full = {};
+    h.rmsBeforeDb = h.rmsAfterDb = 0.0;
+    const auto* a = lib.find (from);
+    const auto* b = h.to.isEmpty() ? lib.find ("target:neutral") : lib.find (h.to);
+    if (a != nullptr && b != nullptr && a != b)
+    {
+        auto d = hp::design (a->db, b->db, {}, sampleRate);
+        h.full = std::move (d.profile);
+        h.full.name = a->name + " -> " + b->name;
+        h.rmsBeforeDb = d.rmsBeforeDb;
+        h.rmsAfterDb = d.rmsAfterDb;
+    }
+    h.applied = h.settings();   // built at once here, so it plays within this call
+    h.dsp.setProfile (h.output(), sampleRate, callbackCount.load());
+    ++h.version;
+}
+
+double HeadphoneFx::makeupDb() const
+{
+    if (full.isEmpty()) return 0.0;
+    return juce::jmax (0.0, -hp::loudnessDb (hp::scaled (full, amount->get() / 100.0f)));
+}
+
+CorrectionProfile HeadphoneFx::output() const
+{
+    auto p = hp::scaled (full, amount->get() / 100.0f);
+    if (p.bands.empty()) return p;   // nothing chosen: no correction, also no gain (the block does nothing)
+    p.preampDb += (float) ((autoGain->isOn() ? makeupDb() : 0.0) + gain->get());
+    return p;
+}
+
+void Engine::updateHeadphones()
+{
+    const auto now = callbackCount.load();
+    for (int ch = 0; ch < kMaxInputs + kMaxBuses; ++ch)
+        for (auto& h : fxOf (ch).headphones)
+    {
+        // AMOUNT scales the fitted profile, GAIN / AUTO set its level.
+        if (const auto s = h.settings(); s != h.applied)
+        {
+            h.applied = s;
+            h.dsp.setProfile (h.output(), sampleRate, now);
+        }
+        h.dsp.update (sampleRate, now, running);
+    }
+}
+
+std::unique_ptr<juce::XmlElement> Engine::headphoneToXml (int ch, int k) const
+{
+    if (! juce::isPositiveAndBelow (ch, kMaxInputs + kMaxBuses) || ! juce::isPositiveAndBelow (k, kFxInstances)) return nullptr;
+    const auto& h = fxOf (ch).headphones[(size_t) k];
+    if (h.from.isEmpty() && h.full.isEmpty()) return nullptr;
+    auto x = std::make_unique<juce::XmlElement> ("HPCORR");
+    x->setAttribute ("from", h.from);
+    if (h.to.isNotEmpty()) x->setAttribute ("to", h.to);
+    x->setAttribute ("rmsBefore", h.rmsBeforeDb);
+    x->setAttribute ("rmsAfter", h.rmsAfterDb);
+    if (! h.full.isEmpty()) x->addChildElement (h.full.toXml().release());
+    return x;
+}
+
+void Engine::headphoneFromXml (int ch, int k, const juce::XmlElement* x)
+{
+    if (! juce::isPositiveAndBelow (ch, kMaxInputs + kMaxBuses) || ! juce::isPositiveAndBelow (k, kFxInstances)) return;
+    if (x == nullptr) { setHeadphone (ch, k, {}, {}); return; }
+    auto& h = fxOf (ch).headphones[(size_t) k];
+    auto* c = x->getChildByName ("CORRECTION");
+    if (c == nullptr)   // no fitted profile stored: fit it again
+    {
+        setHeadphone (ch, k, x->getStringAttribute ("from"), x->getStringAttribute ("to"));
+        return;
+    }
+    h.from = x->getStringAttribute ("from");
+    h.to = x->getStringAttribute ("to");
+    h.full = CorrectionProfile::fromXml (c);
+    h.rmsBeforeDb = x->getDoubleAttribute ("rmsBefore");
+    h.rmsAfterDb = x->getDoubleAttribute ("rmsAfter");
+    h.applied = h.settings();
+    h.dsp.setProfile (h.output(), sampleRate, callbackCount.load());
+    ++h.version;
 }
 
 //==============================================================================
@@ -1483,8 +1635,9 @@ void Engine::timerCallback()
     updateSyncDelays();
 
     const auto now = callbackCount.load();
-    for (auto& s : inputs) s.correction.update (sampleRate, now, running);
-    for (auto& b : buses)  b.correction.update (sampleRate, now, running);
+    for (int ch = 0; ch < kMaxInputs + kMaxBuses; ++ch)
+        for (int k = 0; k < kFxInstances; ++k) fxOf (ch).correctionAt (k).update (sampleRate, now, running);
+    updateHeadphones();
     measureGraveyard.erase (std::remove_if (measureGraveyard.begin(), measureGraveyard.end(),
                                             [&] (const auto& r) { return now >= r.second || ! running; }),
                             measureGraveyard.end());
@@ -1590,7 +1743,11 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
         s.transpose.wasOn = false;
         if (s.stems.inst != nullptr) s.stems.inst->prepare (sampleRate);
         s.stems.wasOn = false;
-        s.correction.reset();
+        for (int k = 0; k < kFxInstances; ++k)
+        {
+            s.correctionAt (k).reset();
+            s.headphones[(size_t) k].dsp.reset();
+        }
     };
     for (auto& s : inputs)
     {
@@ -1991,7 +2148,11 @@ void Engine::runFxChain (ChannelFx& s, float* l, float* r, int n, bool timed, bo
                     break;
                 }
                 case Fx::correction:
-                    s.correction.process (l, r, n, sampleRate);
+                    s.correctionAt (k).process (l, r, n, sampleRate);
+                    lap (DspTimes::correction);
+                    break;
+                case Fx::headphone:
+                    s.headphones[i].dsp.process (l, r, n, sampleRate);
                     lap (DspTimes::correction);
                     break;
                 case Fx::transpose:
@@ -2012,10 +2173,10 @@ void Engine::runFxChain (ChannelFx& s, float* l, float* r, int n, bool timed, bo
                     auto& st = s.stems;
                     auto* inst = st.live.load (std::memory_order_acquire);
                     if (! st.on->isOn() || inst == nullptr) break;
-                    float gains[stems::numStems];
-                    st.gains (gains);
+                    stems::StemMix mix[stems::numStems];
+                    st.mixes (mix);
                     const int mode = juce::roundToInt (st.mode->get());
-                    inst->process (l, r, n, gains, mode, ! st.wasOn, stemsTuning (stems::modelFor (mode)),
+                    inst->process (l, r, n, mix, mode, ! st.wasOn, stemsTuning (stems::modelFor (mode)),
                                    st.meterUsers.load (std::memory_order_relaxed) > 0 ? st.peaks.data() : nullptr, StemsFx::numReaders);
                     stemsLatency = inst->getLatencySamples();
                     stemsRan = true;

@@ -8,22 +8,25 @@ namespace hydra
 class BusCorrectionTarget final : public CorrectionTarget
 {
 public:
-    BusCorrectionTarget (Engine& e, int selectIndex) : engine (e), index (selectIndex) {}
+    BusCorrectionTarget (Engine& e, int selectIndex, int instance = 0) : engine (e), index (selectIndex), k (instance) {}
 
     const CorrectionProfile& getProfile() const override { return corr().getProfile(); }
     uint32_t getVersion() const override                 { return corr().getVersion(); }
-    void setProfile (CorrectionProfile p) override       { engine.setCorrection (index, std::move (p)); }
+    void setProfile (CorrectionProfile p) override       { engine.setCorrection (index, std::move (p), k); }
     bool isOn() const override                           { return corr().on->isOn(); }
     void setOn (bool on) override                        { corr().on->set (on ? 1.0f : 0.0f); }
     double getSampleRate() const override                { return engine.getSampleRate(); }
-    juce::String label() const override                  { return index < kMaxInputs ? "IN " + juce::String (index + 1) : busLabel (index - kMaxInputs); }
+    juce::String label() const override
+    {
+        return (index < kMaxInputs ? "IN " + juce::String (index + 1) : busLabel (index - kMaxInputs)) + (k > 0 ? " (" + juce::String (k + 1) + ")" : juce::String());
+    }
     juce::Colour colour() const override;
     bool hasLimiter() const override                     { return engine.fxOf (index).limiters[0].on->isOn(); }
 
 private:
-    Correction& corr() const { return *engine.correctionFor (index); }
+    Correction& corr() const { return *engine.correctionFor (index, k); }
     Engine& engine;
-    const int index;
+    const int index, k;   // channel, instance of its speaker correction
 };
 
 /** Keeps the corrections of all hardware outputs linked to the shared pool (pool::Link per output, twice a second):
