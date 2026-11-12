@@ -790,7 +790,7 @@ CorrectionWizard::~CorrectionWizard()
 //==============================================================================
 void CorrectionWizard::setOutput (int selectIndex)
 {
-    if (ctx.engine.correctionFor (selectIndex) == nullptr || selectIndex == output) return;
+    if (! Engine::isHwOutput (selectIndex) || selectIndex == output) return;
     output = selectIndex;
     // Validating belongs to the old output's correction: back to calibrating.
     if (mode == Mode::validate && ! isRunning() && ! analysing)

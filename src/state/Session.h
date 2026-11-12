@@ -74,6 +74,8 @@ public:
         bool horizontalStrips = false; // channels as rows (fader sideways) instead of vertical strips
         bool fitWindow = false;        // the window takes the size the channels need each time it appears (and when channels change)
         bool sidePanel = false;        // side panel (routing matrix) right of the strips while there is room for it
+        juce::String fxWarnOff;        // effects ("correction,stems") whose "made for other channels" note is off
+        bool fxBrowser = false;        // effect browser at the right edge open (else only its narrow tab)
         bool stripDividers = true;     // draggable dividers between the groups of strips while they do not fit
         juce::String theme = "default"; // look of the app (theme::styleFromName)
         bool netEnabled = false;       // Hydra Link: audio over the network (engine/NetLink.h); off = no port open

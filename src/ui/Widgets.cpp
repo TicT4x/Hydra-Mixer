@@ -441,17 +441,7 @@ void Fader::paint (juce::Graphics& g)
     g.setGradientFill (juce::ColourGradient (accent.withAlpha (0.35f), cx, t.getBottom(), accent, cx, thumbY, false));
     g.fillRoundedRectangle (tr.withTop (thumbY), 3.0f);
 
-    // Calibrated MIDI range: yellow bracket beside the track
-    if (hasCustomMidiRange())
-    {
-        const float yMin = t.getBottom() - midiMin * t.getHeight();
-        const float yMax = t.getBottom() - midiMax * t.getHeight();
-        g.setColour (theme::learn.withAlpha (0.8f));
-        g.fillRect (cx + 6.0f, juce::jmin (yMin, yMax), 2.0f, std::abs (yMin - yMax));
-        g.fillRect (cx + 6.0f, yMax - 1.0f, 6.0f, 2.0f);
-        g.fillRect (cx + 6.0f, yMin - 1.0f, 6.0f, 2.0f);
-    }
-
+    // (A calibrated MIDI range is no longer drawn beside the track: the user found the yellow bracket ugly, 12.11.)
     if (theme::deep())
     {
         // Thumb: light rectangular cap (stands out from the slot in any channel colour) with a centre line in the accent colour
@@ -503,15 +493,6 @@ void Fader::paintHorizontal (juce::Graphics& g)
     const float thumbX = xOf (norm);
     g.setGradientFill (juce::ColourGradient (accent.withAlpha (0.35f), t.getX(), cy, accent, thumbX, cy, false));
     g.fillRoundedRectangle (tr.withRight (thumbX), 3.0f);
-
-    if (hasCustomMidiRange())
-    {
-        const float xMin = xOf (midiMin), xMax = xOf (midiMax);
-        g.setColour (theme::learn.withAlpha (0.8f));
-        g.fillRect (juce::jmin (xMin, xMax), cy - 8.0f, std::abs (xMin - xMax), 2.0f);
-        g.fillRect (xMax - 1.0f, cy - 12.0f, 2.0f, 6.0f);
-        g.fillRect (xMin - 1.0f, cy - 12.0f, 2.0f, 6.0f);
-    }
 
     if (theme::deep())
     {
@@ -738,6 +719,17 @@ void Toggle::paint (juce::Graphics& g)
         const float h = juce::jmin (18.0f, r.getHeight());
         auto line = r.withSizeKeepingCentre (r.getWidth(), h);
         theme::drawSwitch (g, line.withLeft (line.getRight() - h * 1.8f), pos, onColour, hover, true);
+        return;
+    }
+    if (onText.isNotEmpty())
+    {
+        g.setColour (hover ? theme::raised.brighter (0.08f) : theme::raised);
+        g.fillRoundedRectangle (r, 5.0f);
+        g.setColour (on ? onColour.withAlpha (0.8f) : theme::outline);
+        g.drawRoundedRectangle (r, 5.0f, 1.0f);
+        g.setColour (on ? onColour : theme::text);
+        g.setFont (theme::font (juce::jmin (11.5f, r.getHeight() * 0.6f), true));
+        g.drawText (on ? onText : text, r, juce::Justification::centred);
         return;
     }
     const bool tinted = soft && theme::deep();

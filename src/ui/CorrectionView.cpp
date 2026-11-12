@@ -63,7 +63,7 @@ void CorrectionView::refreshOutputs()
     outputBox.clear (juce::dontSendNotification);
     shownOutputs = {};
     for (int b = 0; b < kMaxBuses; ++b)
-        if (e.isBusActive (b) && e.correctionFor (kMaxInputs + b) != nullptr)
+        if (e.isBusActive (b) && Engine::isHwOutput (kMaxInputs + b))
         {
             const auto& bus = e.buses[(size_t) b];
             const auto code = busLabel (b);
@@ -107,7 +107,7 @@ void CorrectionView::timerCallback()
     auto& e = ctx.engine;
     juce::String sig;
     for (int b = 0; b < kMaxBuses; ++b)
-        if (e.isBusActive (b) && e.correctionFor (kMaxInputs + b) != nullptr) sig << busLabel (b) << e.buses[(size_t) b].name << "|";
+        if (e.isBusActive (b) && Engine::isHwOutput (kMaxInputs + b)) sig << busLabel (b) << e.buses[(size_t) b].name << "|";
     if (sig != shownOutputs && ! outputBox.isPopupActive())
     {
         refreshOutputs();
@@ -124,7 +124,7 @@ bool CorrectionView::isBusy() const
 
 void CorrectionView::showOutput (int selectIndex)
 {
-    if (ctx.engine.correctionFor (selectIndex) == nullptr || ! ctx.engine.isBusActive (selectIndex - kMaxInputs)) return;
+    if (! Engine::isHwOutput (selectIndex) || ! ctx.engine.isBusActive (selectIndex - kMaxInputs)) return;
     if (selectIndex != output || correction == nullptr)
     {
         output = selectIndex;

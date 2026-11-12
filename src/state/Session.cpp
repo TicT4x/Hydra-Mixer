@@ -64,6 +64,9 @@ bool Session::save (const juce::File& f) const
         e->setAttribute ("name", s.name);
         e->addChildElement (s.source.toXml ("SOURCE").release());
         e->addChildElement (s.plugins.toXml().release());
+        // Inputs can have a correction since 12.11. (old sessions' CORRECTION of inputs stays ignored).
+        if (! s.correction.getProfile().isEmpty())
+            e->createNewChildElement ("FXCORRECTION")->addChildElement (s.correction.getProfile().toXml().release());
     }
     for (int b = 0; b < kMaxBuses; ++b)
     {
@@ -98,6 +101,8 @@ bool Session::save (const juce::File& f) const
     app->setAttribute ("eqShowInput", prefs.eqShowInput);
     app->setAttribute ("adaptiveStrips", prefs.adaptiveStrips);
     app->setAttribute ("sidePanel", prefs.sidePanel);
+    app->setAttribute ("fxBrowser", prefs.fxBrowser);
+    app->setAttribute ("fxWarnOff", prefs.fxWarnOff);
     app->setAttribute ("horizontalStrips", prefs.horizontalStrips);
     app->setAttribute ("fitWindow", prefs.fitWindow);
     app->setAttribute ("stripDividers", prefs.stripDividers);
@@ -208,6 +213,8 @@ bool Session::load (const juce::File& f)
         prefs.eqShowInput = app->getBoolAttribute ("eqShowInput", false);
         prefs.adaptiveStrips = app->getBoolAttribute ("adaptiveStrips", true);
         prefs.sidePanel = app->getBoolAttribute ("sidePanel", false);
+        prefs.fxBrowser = app->getBoolAttribute ("fxBrowser", false);
+        prefs.fxWarnOff = app->getStringAttribute ("fxWarnOff");
         prefs.horizontalStrips = app->getBoolAttribute ("horizontalStrips", false);
         prefs.fitWindow = app->getBoolAttribute ("fitWindow", false);
         prefs.stripDividers = app->getBoolAttribute ("stripDividers", true);
@@ -294,6 +301,8 @@ bool Session::load (const juce::File& f)
         auto& s = engine.inputs[(size_t) i];
         s.name = e->getStringAttribute ("name", s.name);
         s.source = IoTarget::fromXml (e->getChildByName ("SOURCE"));
+        auto* fc = e->getChildByName ("FXCORRECTION");
+        engine.setCorrection (i, CorrectionProfile::fromXml (fc != nullptr ? fc->getChildByName ("CORRECTION") : nullptr));
     }
     for (auto* e : root->getChildWithTagNameIterator ("BUS"))
     {

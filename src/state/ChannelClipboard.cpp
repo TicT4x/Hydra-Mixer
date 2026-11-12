@@ -162,6 +162,35 @@ std::unique_ptr<juce::XmlElement> copyChain (const Engine& e, int ch)
     return xml;
 }
 
+std::unique_ptr<juce::XmlElement> copyBlocks (const Engine& e, int ch, std::vector<int> slots)
+{
+    std::sort (slots.begin(), slots.end());
+    slots.erase (std::unique (slots.begin(), slots.end()), slots.end());
+    auto xml = newClip (What::chain, ch);
+    const auto prefix = prefixOf (ch);
+    const auto& chain = chainOf (e, ch);
+    auto* c = xml->createNewChildElement ("CHAIN");
+    for (int i : slots)
+    {
+        auto* s = chain.getSlot (i);
+        if (s == nullptr) continue;
+        c->addChildElement (chain.slotToXml (i).release());
+        if (! s->isPlugin())
+            for (auto* p : e.fxParams (ch, s->builtin, s->fxInstance))
+                addParam (*xml, p->id.substring (prefix.length()), p->get());
+    }
+    return xml;
+}
+
+int numBlocks (const juce::XmlElement* clip)
+{
+    const auto w = whatOf (clip);
+    if (w == What::fx) return slotOf (clip) != nullptr ? 1 : 0;
+    if (w != What::chain && w != What::channel) return 0;
+    auto* c = clip->getChildByName ("CHAIN");
+    return c != nullptr ? c->getNumChildElements() : 0;
+}
+
 std::unique_ptr<juce::XmlElement> copyChannel (const Engine& e, int ch)
 {
     auto xml = newClip (What::channel, ch);
@@ -203,7 +232,7 @@ bool insertBlock (Engine& e, int ch, const juce::XmlElement& clip, int index)
         return chain.insertPluginFromXml (*slotOf (&clip), e.pluginHost, index);
     const int k = freeInstance (e, ch, f);
     pasteBuiltinSettings (e, ch, f, k, clip);
-    if (f == Fx::denoiser) e.prepareDenoiser (e.inputs[(size_t) ch].denoisers[(size_t) k]);
+    if (f == Fx::denoiser) e.prepareDenoiser (e.fxOf (ch).denoisers[(size_t) k]);
     chain.addBuiltin (f, k, index);
     return true;
 }
@@ -250,6 +279,41 @@ bool pasteSettings (Engine& e, int ch, int slotIndex, const juce::XmlElement& cl
     }
     s->bypassed = slotOf (&clip)->getBoolAttribute ("bypass");
     return true;
+}
+
+int insertBlocks (Engine& e, int ch, const juce::XmlElement& clip, int index)
+{
+    const auto w = whatOf (&clip);
+    if (w == What::fx) return insertBlock (e, ch, clip, index) ? 1 : 0;
+    if (w != What::chain && w != What::channel) return 0;
+    auto* c = clip.getChildByName ("CHAIN");
+    if (c == nullptr) return 0;
+    auto& chain = e.chainFor (ch);
+    int at = index < 0 || index > chain.size() ? chain.size() : index, done = 0;
+    for (auto* slot : c->getChildWithTagNameIterator ("SLOT"))
+    {
+        // One block as an fx clip: a plugin as it is, a built-in effect with its parameters relative to its
+        // instance (the chain clip has them as "gate2.thr": part "gate2" -> ".thr").
+        auto one = std::make_unique<juce::XmlElement> ("HYDRACLIP");
+        one->setAttribute ("version", 2);
+        one->setAttribute ("what", "fx");
+        one->setAttribute ("kind", clip.getStringAttribute ("kind"));
+        auto* copy = new juce::XmlElement (*slot);
+        copy->removeAttribute ("instance");
+        one->addChildElement (copy);
+        if (slot->hasAttribute ("builtin"))
+        {
+            const auto part = Engine::fxPart (fxFromId (slot->getStringAttribute ("builtin")), slot->getIntAttribute ("instance", 0));
+            for (auto* x : clip.getChildWithTagNameIterator ("P"))
+            {
+                const auto id = x->getStringAttribute ("id");
+                if (id == part || id.startsWith (part + "."))
+                    addParam (*one, id.substring (part.length()), (float) x->getDoubleAttribute ("v"));
+            }
+        }
+        if (insertBlock (e, ch, *one, at)) { ++at; ++done; }
+    }
+    return done;
 }
 
 bool pasteChain (Engine& e, int ch, const juce::XmlElement& clip)

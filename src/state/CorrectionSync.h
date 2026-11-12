@@ -4,7 +4,7 @@
 
 namespace hydra
 {
-/** A hardware output of the mixer as a CorrectionTarget (selection index scheme, see busSelectIndex). */
+/** A channel of the mixer (usually a hardware output) as a CorrectionTarget (selection index scheme, see busSelectIndex). */
 class BusCorrectionTarget final : public CorrectionTarget
 {
 public:
@@ -16,9 +16,9 @@ public:
     bool isOn() const override                           { return corr().on->isOn(); }
     void setOn (bool on) override                        { corr().on->set (on ? 1.0f : 0.0f); }
     double getSampleRate() const override                { return engine.getSampleRate(); }
-    juce::String label() const override                  { return busLabel (index - kMaxInputs); }
+    juce::String label() const override                  { return index < kMaxInputs ? "IN " + juce::String (index + 1) : busLabel (index - kMaxInputs); }
     juce::Colour colour() const override;
-    bool hasLimiter() const override                     { return engine.buses[(size_t) (index - kMaxInputs)].limOn->isOn(); }
+    bool hasLimiter() const override                     { return engine.fxOf (index).limiters[0].on->isOn(); }
 
 private:
     Correction& corr() const { return *engine.correctionFor (index); }

@@ -469,6 +469,7 @@ void InputStripView::DbPoll::pollParams()
 
 void InputStripView::paintOverChildren (juce::Graphics& g)
 {
+    drop.paintOver (g, getLocalBounds().toFloat());
     if (faderBus < 0 || fader == nullptr) return;
     // Tag above the fader: which bus the fader currently controls.
     const auto colour = theme::busColour (faderBus);

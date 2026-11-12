@@ -175,7 +175,7 @@ private:
     float midiGlow = 0;
 };
 
-class MainComponent final : public juce::Component, private juce::Timer, private juce::ChangeListener
+class MainComponent final : public juce::Component, public juce::DragAndDropContainer, private juce::Timer, private juce::ChangeListener
 {
 public:
     MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys, Session& session);
@@ -203,6 +203,8 @@ public:
     void toggleLearnMode();
     /** Shows / hides the scene sidebar on the left. */
     void toggleSceneEditor();
+    /** Folds the effect browser at the right edge out / in (Ctrl+Alt+B). */
+    void toggleEffectBrowser();
     /** Closes and reopens the master device and every other device (same settings), e.g. after a driver
         stopped delivering audio without reporting an error. */
     void restartAudioEngine();
@@ -224,6 +226,7 @@ public:
 
     /** Screenshot tool (tools/Shots.cpp) only: select a channel / advance the meters without a window and v-sync. */
     void demoSelect (int index)       { select (index); }
+    UiContext& demoContext()          { return ctx; }
     void demoMeterFrame (double t)    { meterFrame (t); }
     std::unique_ptr<juce::Component> demoStemsPanel (int input) { return makeStemsPanel (ctx, ctx.engine.inputs[(size_t) input]); }
     std::unique_ptr<juce::Component> demoUtilityPanel (int input) { return makeUtilityPanel (ctx, ctx.engine.inputs[(size_t) input].utilities[0]); }
@@ -298,6 +301,10 @@ private:
     Inspector inspector;
     std::unique_ptr<SceneSidebar> sceneBar;   // Tools > Scene Editor
     std::unique_ptr<SidePanel> sidePanel;     // Settings > Display > Side panel, only while there is room (resized)
+    std::unique_ptr<EffectBrowser> browser;   // effect browser at the left edge (prefs.fxBrowser); browserTab folds it in / out
+    BrowserTab browserTab;
+    bool browserOpen() const;
+    int browserWidth() const { return (browserOpen() ? EffectBrowser::kWidth : 0) + BrowserTab::kWidth + 4; }
     /** Settings of an effect ("..." in its header: gate / denoiser / compressor) in their own window. */
     void openPanelWindow (std::unique_ptr<juce::Component> content, const juce::String& title);
     void closePanelWindow();

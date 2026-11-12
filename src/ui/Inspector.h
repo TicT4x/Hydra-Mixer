@@ -129,11 +129,14 @@ private:
 };
 
 /** The window of an input's Stems effect (Inspector uses it; the screenshot tool renders it offscreen). */
-std::unique_ptr<juce::Component> makeStemsPanel (UiContext&, InputStrip&);
+std::unique_ptr<juce::Component> makeStemsPanel (UiContext&, ChannelFx&);
 /** The Utility / Transpose windows (HydraShots). */
 std::unique_ptr<juce::Component> makeUtilityPanel (UiContext&, UtilityFx&);
-std::unique_ptr<juce::Component> makeTransposePanel (UiContext&, InputStrip&);
+std::unique_ptr<juce::Component> makeTransposePanel (UiContext&, ChannelFx&);
 std::unique_ptr<juce::Component> makeCompPanel (UiContext&, CompFx&);
+/** Picture of the block an entry of the effect browser becomes (fxdrag description), as it looks in the chain;
+    pixels = logical size x pixelScale. logicalWidth: its width in the chain. Null if it cannot be drawn. */
+juce::Image renderFxBlock (UiContext&, const juce::var& drag, float pixelScale, int& logicalWidth);
 
 //==============================================================================
 /** Bottom panel showing the details of the selected input, bus or the recorder. */
@@ -160,7 +163,7 @@ private:
     UiContext& ctx;
     int current = -1;
     std::unique_ptr<juce::Component> content;
-    std::unique_ptr<Toggle> bypass;
+    std::unique_ptr<Toggle> bypass, post;   // header: bypass the chain / PRE-POST fader
     bool idleShown = false;
 };
 } // namespace hydra

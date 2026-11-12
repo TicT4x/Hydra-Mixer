@@ -136,7 +136,7 @@ Engine::~Engine()
     opener.reset();   // finishes closing what it was given (it uses the device types)
     for (auto& s : inputs) { s.plugins.clear(); releaseStems (s); }
     stemsGraveyard.clear();
-    for (auto& b : buses)  { b.plugins.clear(); }
+    for (auto& b : buses)  { b.plugins.clear(); releaseStems (b); }
 }
 
 static void createCompParams (ParamRegistry& params, CompFx& c, const juce::String& idPrefix, const juce::String& namePrefix)
@@ -166,6 +166,87 @@ static void createUtilityParams (ParamRegistry& params, UtilityFx& u, const juce
     u.dc       = &params.addToggle (idPrefix + "dc", namePrefix + "DC Filter");
 }
 
+void Engine::createFxParams (ChannelFx& c, const juce::String& p, const juce::String& n)
+{
+    // Every built-in effect with all its instances, the same ids on inputs and buses ("in1.gate2.thr", "bus.A1.gate2.thr").
+    for (int k = 0; k < kFxInstances; ++k)
+    {
+        // Instance k: ids "in1.gate.*" (first), "in1.gate2.*" ...; names "In 1 Gate ...", "In 1 Gate 2 ...".
+        const auto num = k == 0 ? juce::String() : juce::String (k + 1);
+        const auto lbl = [&] (const char* what) { return n + what + (k == 0 ? juce::String() : " " + num) + " "; };
+        createUtilityParams (params, c.utilities[(size_t) k], p + fxPart (Fx::utility, k) + ".", lbl ("Utility"));
+        // The former phase block (old sessions / scenes / MIDI maps): becomes a Utility in ensureBuiltins.
+        c.utilities[(size_t) k].legacyPhase = &params.addToggle (p + "phase" + num, lbl ("Phase").trimEnd() + " Invert (old)");
+        c.eqs[(size_t) k].create (params, p, n, fxPart (Fx::eq, k), "EQ" + (k == 0 ? juce::String() : " " + num));
+        auto& g = c.gates[(size_t) k];
+        const auto gp = p + fxPart (Fx::gate, k) + ".";
+        g.on       = &params.addToggle (gp + "on", lbl ("Gate") + "On");
+        g.thr      = &params.add (gp + "thr", lbl ("Gate") + "Threshold", ParamType::Continuous, linRange (-80, 0, 0.1f), -50.0f, " dB");
+        g.range    = &params.add (gp + "range", lbl ("Gate") + "Range", ParamType::Continuous, linRange (-80, 0, 0.1f), -80.0f, " dB");
+        g.attack   = &params.add (gp + "attack", lbl ("Gate") + "Attack", ParamType::Continuous, logRange (0.1f, 100.0f), 1.0f, " ms");
+        g.hold     = &params.add (gp + "hold", lbl ("Gate") + "Hold", ParamType::Continuous, linRange (0, 1000, 1.0f), 80.0f, " ms");
+        g.release  = &params.add (gp + "release", lbl ("Gate") + "Release", ParamType::Continuous, logRange (5.0f, 2000.0f), 120.0f, " ms");
+        g.scOn     = &params.addToggle (gp + "sc.on", lbl ("Gate") + "Sidechain Filter");
+        g.scFreq   = &params.add (gp + "sc.freq", lbl ("Gate") + "Sidechain Freq", ParamType::Continuous, logRange (50.0f, 8000.0f), 1000.0f, " Hz");
+        g.voice    = &params.addToggle (gp + "voice", lbl ("Gate") + "Voice Key");
+        g.voiceThr = &params.add (gp + "voice.thr", lbl ("Gate") + "Voice Threshold", ParamType::Continuous, linRange (0, 100, 1.0f), 50.0f, " %");
+        createCompParams (params, c.comps[(size_t) k], p + fxPart (Fx::comp, k) + ".", lbl ("Comp"));
+        auto& d = c.denoisers[(size_t) k];
+        const auto dp = p + fxPart (Fx::denoiser, k) + ".";
+        d.on     = &params.addToggle (dp + "on", lbl ("Denoiser") + "On");
+        d.amount = &params.add (dp + "amount", lbl ("Denoiser") + "Amount", ParamType::Continuous, linRange (0, 100, 1.0f), 100.0f, " %");
+        d.mode   = &params.addChoice (dp + "mode", lbl ("Denoiser") + "Latency Mode", dsp::Denoiser::modeNames(), dsp::Denoiser::Low);
+        auto& lim = c.limiters[(size_t) k];
+        const auto lp = p + fxPart (Fx::limiter, k) + ".";
+        lim.on      = &params.addToggle (lp + "on", lbl ("Limiter") + "On");
+        lim.ceiling = &params.add (lp + "ceiling", lbl ("Limiter") + "Ceiling", ParamType::Continuous, linRange (-30, 0, 0.1f), 0.0f, " dB");
+    }
+    {
+        // Stems: ids "in1.stems.on", "in1.stems.mode", "in1.stems.vocals" (gain), "in1.stems.vocals.mute" ...
+        auto& st = c.stems;
+        const auto sp = p + fxPart (Fx::stems, 0) + ".";
+        st.on   = &params.addToggle (sp + "on", n + "Stem Separator On");
+        st.mode = &params.addChoice (sp + "mode", n + "Stem Separator Latency Mode", stems::modeNames(), stems::kDefaultMode);
+        for (int k = 0; k < stems::numStems; ++k)
+        {
+            const auto name = stems::stemName (k);
+            st.gain[(size_t) k] = &params.add (sp + name.toLowerCase(), n + "Stem Separator " + name, ParamType::Continuous,
+                                               stemGainRange(), 0.0f, " dB");
+            st.mute[(size_t) k] = &params.addToggle (sp + name.toLowerCase() + ".mute", n + "Stem Separator " + name + " Mute");
+            st.solo[(size_t) k] = &params.addToggle (sp + name.toLowerCase() + ".solo", n + "Stem Separator " + name + " Solo");
+        }
+    }
+    {
+        auto& t = c.transpose;
+        const auto tp = p + fxPart (Fx::transpose, 0) + ".";
+        t.on       = &params.addToggle (tp + "on", n + "Transpose On");
+        t.semi     = &params.add (tp + "semi", n + "Transpose Semitones", ParamType::Continuous, linRange (-24, 24, 1.0f), 0.0f, " st");
+        t.fine     = &params.add (tp + "fine", n + "Transpose Fine", ParamType::Continuous, linRange (-50, 50, 0.1f), 0.0f, " ct");
+        t.quality  = &params.addChoice (tp + "quality", n + "Transpose Quality", dsp::PitchShifter::qualityNames(), dsp::PitchShifter::normal);
+        t.timbre   = &params.addToggle (tp + "timbre", n + "Transpose Keep Timbre");
+        t.autoTune = &params.addToggle (tp + "auto", n + "Transpose Auto Tune");
+        t.findKey  = &params.addToggle (tp + "findkey", n + "Transpose Find Key");
+        t.addPart  = &params.addToggle (tp + "addpart", n + "Transpose Add Part");
+        t.autoTune->persistent = false;
+        t.findKey->persistent = false;
+        t.addPart->persistent = false;
+        juce::StringArray keys { "-" };
+        for (int key = 0; key < 24; ++key) keys.add (dsp::keyName (key));
+        t.key      = &params.addChoice (tp + "key", n + "Transpose Found Key", keys, 0);
+        t.key2     = &params.addChoice (tp + "key2", n + "Transpose Second Key", keys, 0);
+        t.prob     = &params.add (tp + "prob", n + "Transpose Key Probability", ParamType::Continuous, linRange (0, 1, 0.001f), 0.0f);
+        t.prob2    = &params.add (tp + "prob2", n + "Transpose Second Key Probability", ParamType::Continuous, linRange (0, 1, 0.001f), 0.0f);
+        t.parts    = &params.add (tp + "parts", n + "Transpose Parts Heard", ParamType::Continuous, linRange (0, 100, 1.0f), 0.0f);
+        t.cents    = &params.add (tp + "cents", n + "Transpose Found Offset", ParamType::Continuous, linRange (-50, 50, 0.1f), 0.0f, " ct");
+        for (int pc = 0; pc < 12; ++pc)
+            t.heard[(size_t) pc] = &params.add (tp + "pc" + juce::String (pc), n + "Transpose Heard " + dsp::keyName (pc).upToFirstOccurrenceOf (" ", false, false),
+                                                ParamType::Continuous, linRange (0, 1, 0.01f), 0.0f);
+    }
+    c.correction.on = &params.addToggle (p + "corr.on", n + "Correction On");
+    c.fxBypass = &params.addToggle (p + "fx.bypass", n + "FX Bypass");
+    c.fxPost   = &params.addToggle (p + "fx.post", n + "FX Post-Fader");
+}
+
 void Engine::createParams()
 {
     for (int i = 0; i < kMaxInputs; ++i)
@@ -181,80 +262,7 @@ void Engine::createParams()
         s.mute       = &params.addToggle (p + "mute", n + "Mute");
         s.solo       = &params.addToggle (p + "solo", n + "Solo");
         s.mono       = &params.addToggle (p + "mono", n + "Mono");
-        for (int k = 0; k < kFxInstances; ++k)
-        {
-            // Instance k: ids "in1.gate.*" (first), "in1.gate2.*" ...; names "In 1 Gate ...", "In 1 Gate 2 ...".
-            const auto num = k == 0 ? juce::String() : juce::String (k + 1);
-            const auto lbl = [&] (const char* what) { return n + what + (k == 0 ? juce::String() : " " + num) + " "; };
-            createUtilityParams (params, s.utilities[(size_t) k], p + fxPart (Fx::utility, k) + ".", lbl ("Utility"));
-            // The former phase block (old sessions / scenes / MIDI maps): becomes a Utility in ensureBuiltins.
-            s.utilities[(size_t) k].legacyPhase = &params.addToggle (p + "phase" + num, lbl ("Phase").trimEnd() + " Invert (old)");
-            s.eqs[(size_t) k].create (params, p, n, fxPart (Fx::eq, k), "EQ" + (k == 0 ? juce::String() : " " + num));
-            auto& g = s.gates[(size_t) k];
-            const auto gp = p + fxPart (Fx::gate, k) + ".";
-            g.on       = &params.addToggle (gp + "on", lbl ("Gate") + "On");
-            g.thr      = &params.add (gp + "thr", lbl ("Gate") + "Threshold", ParamType::Continuous, linRange (-80, 0, 0.1f), -50.0f, " dB");
-            g.range    = &params.add (gp + "range", lbl ("Gate") + "Range", ParamType::Continuous, linRange (-80, 0, 0.1f), -80.0f, " dB");
-            g.attack   = &params.add (gp + "attack", lbl ("Gate") + "Attack", ParamType::Continuous, logRange (0.1f, 100.0f), 1.0f, " ms");
-            g.hold     = &params.add (gp + "hold", lbl ("Gate") + "Hold", ParamType::Continuous, linRange (0, 1000, 1.0f), 80.0f, " ms");
-            g.release  = &params.add (gp + "release", lbl ("Gate") + "Release", ParamType::Continuous, logRange (5.0f, 2000.0f), 120.0f, " ms");
-            g.scOn     = &params.addToggle (gp + "sc.on", lbl ("Gate") + "Sidechain Filter");
-            g.scFreq   = &params.add (gp + "sc.freq", lbl ("Gate") + "Sidechain Freq", ParamType::Continuous, logRange (50.0f, 8000.0f), 1000.0f, " Hz");
-            g.voice    = &params.addToggle (gp + "voice", lbl ("Gate") + "Voice Key");
-            g.voiceThr = &params.add (gp + "voice.thr", lbl ("Gate") + "Voice Threshold", ParamType::Continuous, linRange (0, 100, 1.0f), 50.0f, " %");
-            createCompParams (params, s.comps[(size_t) k], p + fxPart (Fx::comp, k) + ".", lbl ("Comp"));
-            auto& d = s.denoisers[(size_t) k];
-            const auto dp = p + fxPart (Fx::denoiser, k) + ".";
-            d.on     = &params.addToggle (dp + "on", lbl ("Denoiser") + "On");
-            d.amount = &params.add (dp + "amount", lbl ("Denoiser") + "Amount", ParamType::Continuous, linRange (0, 100, 1.0f), 100.0f, " %");
-            d.mode   = &params.addChoice (dp + "mode", lbl ("Denoiser") + "Latency Mode", dsp::Denoiser::modeNames(), dsp::Denoiser::Low);
-            auto& lim = s.limiters[(size_t) k];
-            const auto lp = p + fxPart (Fx::limiter, k) + ".";
-            lim.on      = &params.addToggle (lp + "on", lbl ("Limiter") + "On");
-            lim.ceiling = &params.add (lp + "ceiling", lbl ("Limiter") + "Ceiling", ParamType::Continuous, linRange (-30, 0, 0.1f), 0.0f, " dB");
-        }
-        {
-            // Stems: ids "in1.stems.on", "in1.stems.mode", "in1.stems.vocals" (gain), "in1.stems.vocals.mute" ...
-            auto& st = s.stems;
-            const auto sp = p + fxPart (Fx::stems, 0) + ".";
-            st.on   = &params.addToggle (sp + "on", n + "Stem Separator On");
-            st.mode = &params.addChoice (sp + "mode", n + "Stem Separator Latency Mode", stems::modeNames(), stems::kDefaultMode);
-            for (int k = 0; k < stems::numStems; ++k)
-            {
-                const auto name = stems::stemName (k);
-                st.gain[(size_t) k] = &params.add (sp + name.toLowerCase(), n + "Stem Separator " + name, ParamType::Continuous,
-                                                   stemGainRange(), 0.0f, " dB");
-                st.mute[(size_t) k] = &params.addToggle (sp + name.toLowerCase() + ".mute", n + "Stem Separator " + name + " Mute");
-                st.solo[(size_t) k] = &params.addToggle (sp + name.toLowerCase() + ".solo", n + "Stem Separator " + name + " Solo");
-            }
-        }
-        {
-            auto& t = s.transpose;
-            const auto tp = p + fxPart (Fx::transpose, 0) + ".";
-            t.on       = &params.addToggle (tp + "on", n + "Transpose On");
-            t.semi     = &params.add (tp + "semi", n + "Transpose Semitones", ParamType::Continuous, linRange (-24, 24, 1.0f), 0.0f, " st");
-            t.fine     = &params.add (tp + "fine", n + "Transpose Fine", ParamType::Continuous, linRange (-50, 50, 0.1f), 0.0f, " ct");
-            t.quality  = &params.addChoice (tp + "quality", n + "Transpose Quality", dsp::PitchShifter::qualityNames(), dsp::PitchShifter::normal);
-            t.timbre   = &params.addToggle (tp + "timbre", n + "Transpose Keep Timbre");
-            t.autoTune = &params.addToggle (tp + "auto", n + "Transpose Auto Tune");
-            t.findKey  = &params.addToggle (tp + "findkey", n + "Transpose Find Key");
-            t.addPart  = &params.addToggle (tp + "addpart", n + "Transpose Add Part");
-            t.autoTune->persistent = false;
-            t.findKey->persistent = false;
-            t.addPart->persistent = false;
-            juce::StringArray keys { "-" };
-            for (int key = 0; key < 24; ++key) keys.add (dsp::keyName (key));
-            t.key      = &params.addChoice (tp + "key", n + "Transpose Found Key", keys, 0);
-            t.key2     = &params.addChoice (tp + "key2", n + "Transpose Second Key", keys, 0);
-            t.prob     = &params.add (tp + "prob", n + "Transpose Key Probability", ParamType::Continuous, linRange (0, 1, 0.001f), 0.0f);
-            t.prob2    = &params.add (tp + "prob2", n + "Transpose Second Key Probability", ParamType::Continuous, linRange (0, 1, 0.001f), 0.0f);
-            t.parts    = &params.add (tp + "parts", n + "Transpose Parts Heard", ParamType::Continuous, linRange (0, 100, 1.0f), 0.0f);
-            t.cents    = &params.add (tp + "cents", n + "Transpose Found Offset", ParamType::Continuous, linRange (-50, 50, 0.1f), 0.0f, " ct");
-            for (int pc = 0; pc < 12; ++pc)
-                t.heard[(size_t) pc] = &params.add (tp + "pc" + juce::String (pc), n + "Transpose Heard " + dsp::keyName (pc).upToFirstOccurrenceOf (" ", false, false),
-                                                    ParamType::Continuous, linRange (0, 1, 0.01f), 0.0f);
-        }
-        s.fxBypass   = &params.addToggle (p + "fx.bypass", n + "FX Bypass");
+        createFxParams (s, p, n);
         s.syncOn     = &params.addToggle (p + "sync", n + "Sync Delay Auto");
         s.delayMs    = &params.add (p + "delay", n + "Sync Delay", ParamType::Continuous,
                                     linRange (0, (float) dsp::DelayLine::kMaxMs, 0.1f), 0.0f, " ms");
@@ -275,22 +283,7 @@ void Engine::createParams()
         bus.gain     = &params.add (p + "gain", n + "Fader", ParamType::Continuous, faderRange(), 0.0f, " dB");
         bus.mute     = &params.addToggle (p + "mute", n + "Mute");
         bus.mono     = &params.addToggle (p + "mono", n + "Mono");
-        if (isHwBus (b)) bus.correction.on = &params.addToggle (p + "corr.on", n + "Correction On");
-        for (int k = 0; k < kFxInstances; ++k)
-        {
-            const auto num = k == 0 ? juce::String() : " " + juce::String (k + 1);
-            bus.eqs[(size_t) k].create (params, p, n, fxPart (Fx::eq, k), "EQ" + num);
-            auto& l = bus.limiters[(size_t) k];
-            // Off by default: since the LIM button is gone (9.11.) a bus gets a limiter only from the effect menu.
-            // Sessions before version 3 had the first one on by default (Session::load keeps it on there).
-            l.on      = &params.addToggle (p + fxPart (Fx::limiter, k) + ".on", n + "Limiter" + num + " On", false);
-            l.ceiling = &params.add (p + fxPart (Fx::limiter, k) + ".ceiling", n + "Limiter" + num + " Ceiling", ParamType::Continuous,
-                                     linRange (-30, 0, 0.1f), 0.0f, " dB");
-            createUtilityParams (params, bus.utilities[(size_t) k], p + fxPart (Fx::utility, k) + ".", n + "Utility" + num + " ");
-            bus.utilities[(size_t) k].legacyPhase = &params.addToggle (p + "phase" + num.trim(), n + "Phase" + num + " Invert (old)");
-            createCompParams (params, bus.comps[(size_t) k], p + fxPart (Fx::comp, k) + ".", n + "Comp" + num + " ");
-        }
-        bus.fxBypass = &params.addToggle (p + "fx.bypass", n + "FX Bypass");
+        createFxParams (bus, p, n);
         bus.sel      = &params.addToggle (p + "sel", n + "Select (SEL)");
         bus.syncOn   = &params.addToggle (p + "sync", n + "Sync Delay Auto");
         bus.delayMs  = &params.add (p + "delay", n + "Sync Delay", ParamType::Continuous,
@@ -402,6 +395,7 @@ std::vector<Param*> Engine::removeInput (int i)
     s.name = "Input " + juce::String (i + 1);
     s.source = {};
     s.plugins.clear();
+    setCorrection (i, {});
     rebuildGraph();
     sendChangeMessage();
     return reset;
@@ -520,11 +514,13 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
         std::array<juce::String, kMaxInputs> names;
         std::array<IoTarget, kMaxInputs> sources;
         std::array<std::vector<std::unique_ptr<PluginSlot>>, kMaxInputs> chains;
+        std::array<CorrectionProfile, kMaxInputs> corrections;
         for (int i : used)
         {
             names[(size_t) i] = inputs[(size_t) i].name;
             sources[(size_t) i] = inputs[(size_t) i].source;
             chains[(size_t) i] = inputs[(size_t) i].plugins.takeAll();
+            corrections[(size_t) i] = inputs[(size_t) i].correction.getProfile();
         }
         for (int i : used)
         {
@@ -532,6 +528,7 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
             to.name = names[(size_t) i];
             to.source = sources[(size_t) i];
             to.plugins.putAll (std::move (chains[(size_t) i]));
+            setCorrection (dest[(size_t) i], corrections[(size_t) i]);
         }
     }
     else
@@ -967,7 +964,13 @@ void Engine::prepareChains()
 //==============================================================================
 std::vector<Fx> Engine::allowedFx (int ch) const
 {
-    // In their usual order (where ensureBuiltins inserts them).
+    // Every effect everywhere, in the usual order of the channel's kind (where ensureBuiltins inserts them).
+    if (ch < kMaxInputs) return { Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::correction, Fx::limiter };
+    return { Fx::correction, Fx::stems, Fx::transpose, Fx::denoiser, Fx::gate, Fx::utility, Fx::eq, Fx::comp, Fx::limiter };
+}
+
+std::vector<Fx> Engine::typicalFx (int ch) const
+{
     if (ch < kMaxInputs) return { Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::limiter };
     if (isHwBus (ch - kMaxInputs)) return { Fx::correction, Fx::utility, Fx::eq, Fx::comp, Fx::limiter };
     return { Fx::utility, Fx::eq, Fx::comp, Fx::limiter };
@@ -983,32 +986,20 @@ juce::String Engine::fxPart (Fx f, int k)
 
 Param* Engine::fxOnParam (int ch, Fx f, int k) const
 {
-    if (! juce::isPositiveAndBelow (k, maxInstances (f))) return nullptr;
+    if (! juce::isPositiveAndBelow (k, maxInstances (f)) || ! juce::isPositiveAndBelow (ch, kMaxInputs + kMaxBuses)) return nullptr;
     const auto i = (size_t) k;
-    if (ch < kMaxInputs)
-    {
-        const auto& s = inputs[(size_t) ch];
-        switch (f)
-        {
-            case Fx::denoiser: return s.denoisers[i].on;
-            case Fx::eq:       return s.eqs[i].on;
-            case Fx::gate:     return s.gates[i].on;
-            case Fx::comp:     return s.comps[i].on;
-            case Fx::utility:  return s.utilities[i].on;
-            case Fx::limiter:  return s.limiters[i].on;
-            case Fx::stems:    return s.stems.on;
-            case Fx::transpose: return s.transpose.on;
-            default:           return nullptr;
-        }
-    }
-    const auto& b = buses[(size_t) (ch - kMaxInputs)];
+    const auto& c = fxOf (ch);
     switch (f)
     {
-        case Fx::eq:         return b.eqs[i].on;
-        case Fx::limiter:    return b.limiters[i].on;
-        case Fx::comp:       return b.comps[i].on;
-        case Fx::utility:    return b.utilities[i].on;
-        case Fx::correction: return b.correction.on;
+        case Fx::denoiser:   return c.denoisers[i].on;
+        case Fx::eq:         return c.eqs[i].on;
+        case Fx::gate:       return c.gates[i].on;
+        case Fx::comp:       return c.comps[i].on;
+        case Fx::utility:    return c.utilities[i].on;
+        case Fx::limiter:    return c.limiters[i].on;
+        case Fx::stems:      return c.stems.on;
+        case Fx::transpose:  return c.transpose.on;
+        case Fx::correction: return c.correction.on;
         default:             return nullptr;
     }
 }
@@ -1052,10 +1043,10 @@ int Engine::addBuiltin (int ch, Fx f, int index)
         auto* on = fxOnParam (ch, f, k);
         if (on == nullptr) return -1;
         if (chain.hasBuiltin (f, k)) continue;
-        if (f == Fx::denoiser) prepareDenoiser (inputs[(size_t) ch].denoisers[(size_t) k]);
+        if (f == Fx::denoiser) prepareDenoiser (fxOf (ch).denoisers[(size_t) k]);
         for (auto* p : fxParams (ch, f, k)) p->reset();   // a fresh instance
-        if (f == Fx::stems) prepareStems (inputs[(size_t) ch]);
-        if (f == Fx::transpose) prepareTranspose (inputs[(size_t) ch]);
+        if (f == Fx::stems) prepareStems (fxOf (ch));
+        if (f == Fx::transpose) prepareTranspose (fxOf (ch));
         chain.addBuiltin (f, k, index >= 0 ? index : usualIndex (chain, f, allowedFx (ch)));
         on->set (1.0f);
         return k;
@@ -1070,10 +1061,10 @@ void Engine::removeBuiltin (int ch, Fx f, int k)
     for (auto* p : fxParams (ch, f, k)) p->reset();
     if (auto* on = fxOnParam (ch, f, k)) on->set (0.0f);   // e.g. the first limiter is on by default
     if (f == Fx::correction) setCorrection (ch, {});
-    if (f == Fx::stems && ch < kMaxInputs) releaseStems (inputs[(size_t) ch]);
+    if (f == Fx::stems) releaseStems (fxOf (ch));
 }
 
-void Engine::prepareStems (InputStrip& s)
+void Engine::prepareStems (ChannelFx& s)
 {
     auto& st = s.stems;
     if (st.inst != nullptr) return;
@@ -1084,7 +1075,7 @@ void Engine::prepareStems (InputStrip& s)
     st.live.store (st.inst.get(), std::memory_order_release);
 }
 
-void Engine::releaseStems (InputStrip& s)
+void Engine::releaseStems (ChannelFx& s)
 {
     auto& st = s.stems;
     if (st.inst == nullptr) return;
@@ -1095,7 +1086,7 @@ void Engine::releaseStems (InputStrip& s)
     stemsGraveyard.emplace_back (std::move (st.inst), callbackCount.load() + 2);
 }
 
-void Engine::prepareTranspose (InputStrip& s)
+void Engine::prepareTranspose (ChannelFx& s)
 {
     auto& t = s.transpose;
     if (t.dsp != nullptr) return;
@@ -1125,7 +1116,7 @@ void Engine::ensureBuiltins()
         // The former phase block (old session, scene, MIDI): Utility k with its phase inverted.
         for (int k = 0; k < kFxInstances; ++k)
         {
-            auto& u = ch < kMaxInputs ? inputs[(size_t) ch].utilities[(size_t) k] : buses[(size_t) (ch - kMaxInputs)].utilities[(size_t) k];
+            auto& u = fxOf (ch).utilities[(size_t) k];
             if (! u.legacyPhase->isOn()) continue;
             u.legacyPhase->set (0.0f);
             u.phase->set (1.0f);
@@ -1139,13 +1130,12 @@ void Engine::ensureBuiltins()
             for (int k = 0; k < maxInstances (f); ++k)
                 if (auto* on = fxOnParam (ch, f, k); on != nullptr && on->isOn() && ! chain.hasBuiltin (f, k))
                 {
-                    if (f == Fx::denoiser) prepareDenoiser (inputs[(size_t) ch].denoisers[(size_t) k]);
-                    if (f == Fx::transpose) prepareTranspose (inputs[(size_t) ch]);
+                    if (f == Fx::denoiser) prepareDenoiser (fxOf (ch).denoisers[(size_t) k]);
+                    if (f == Fx::transpose) prepareTranspose (fxOf (ch));
                     chain.addBuiltin (f, k, usualIndex (chain, f, allowed));
                 }
-        if (ch < kMaxInputs)   // denoisers / stems loaded from a session (or a chain pasted / removed)
-        {
-            auto& s = inputs[(size_t) ch];
+        {   // denoisers / stems loaded from a session (or a chain pasted / removed)
+            auto& s = fxOf (ch);
             for (int k = 0; k < kFxInstances; ++k)
                 if (chain.hasBuiltin (Fx::denoiser, k)) prepareDenoiser (s.denoisers[(size_t) k]);
             if (chain.hasBuiltin (Fx::stems)) prepareStems (s);
@@ -1153,8 +1143,10 @@ void Engine::ensureBuiltins()
             if (chain.hasBuiltin (Fx::transpose)) prepareTranspose (s);
         }
     }
-    for (int i = 0; i < kMaxInputs; ++i)   // a removed input slot keeps no stems state
+    for (int i = 0; i < kMaxInputs; ++i)   // a removed slot keeps no stems state
         if (! isInputActive (i)) releaseStems (inputs[(size_t) i]);
+    for (int b = 0; b < kMaxBuses; ++b)
+        if (! isBusActive (b)) releaseStems (buses[(size_t) b]);
 }
 
 //==============================================================================
@@ -1485,11 +1477,13 @@ void Engine::timerCallback()
     enforceExclusiveSelect();
     ensureBuiltins();
     for (auto& s : inputs) s.transpose.tick (callbackCount.load(), running, sampleRate);
+    for (auto& b : buses)  b.transpose.tick (callbackCount.load(), running, sampleRate);
     updateDropoutLogs();
     updateOverloadLog();
     updateSyncDelays();
 
     const auto now = callbackCount.load();
+    for (auto& s : inputs) s.correction.update (sampleRate, now, running);
     for (auto& b : buses)  b.correction.update (sampleRate, now, running);
     measureGraveyard.erase (std::remove_if (measureGraveyard.begin(), measureGraveyard.end(),
                                             [&] (const auto& r) { return now >= r.second || ! running; }),
@@ -1579,7 +1573,7 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
     sampleRate = d->getCurrentSampleRate();
     blockSize = juce::jmin (kMaxBlock, d->getCurrentBufferSizeSamples());
 
-    for (auto& s : inputs)
+    auto prepareFx = [this] (ChannelFx& s)
     {
         for (int k = 0; k < kFxInstances; ++k)
         {
@@ -1596,6 +1590,11 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
         s.transpose.wasOn = false;
         if (s.stems.inst != nullptr) s.stems.inst->prepare (sampleRate);
         s.stems.wasOn = false;
+        s.correction.reset();
+    };
+    for (auto& s : inputs)
+    {
+        prepareFx (s);
         s.delay.prepare (sampleRate);
         s.lastTrim = 1; s.lastL = s.lastR = 0;
         s.lastRoute.fill (0.0f);
@@ -1604,11 +1603,7 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
     recorder.setSampleRate (sampleRate);
     for (auto& b : buses)
     {
-        for (auto& eq : b.eqs) eq.prepare();
-        for (auto& l : b.limiters) l.dsp.prepare (sampleRate);
-        for (auto& c : b.comps) c.dsp.prepare (sampleRate);
-        for (auto& u : b.utilities) u.dsp.prepare (sampleRate);
-        b.correction.reset();
+        prepareFx (b);
         b.delay.prepare (sampleRate);
         b.lastGain = 0;
     }
@@ -1902,10 +1897,35 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
         run->pos.store (run->stop.load (std::memory_order_relaxed) ? run->length : runStart + runCount, std::memory_order_release);
 }
 
-void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, int n, bool anySolo, bool monoSource, bool timed,
-                           const std::array<bool, kMaxBuses>& busOpen) noexcept
+bool Engine::fxWatched (const ChannelFx& c) const noexcept
 {
-    // Profiling (DSP view open): each lap adds the time since the previous lap to a stage.
+    // Open views that show the effects' output (EQ spectrum, Stems levels, compressor window) and Find Key keep
+    // a channel's effects running while it is not heard.
+    bool watched = c.spectrum.users.load (std::memory_order_relaxed) > 0
+                || c.stems.meterUsers.load (std::memory_order_relaxed) > 0
+                || c.transpose.isListening();
+    for (const auto& comp : c.comps) watched |= comp.views.load (std::memory_order_relaxed) > 0;
+    return watched;
+}
+
+void Engine::pauseFx (ChannelFx& c) noexcept
+{
+    // The chain is skipped: resuming starts like switching the effects on (denoiser, Stems, Transpose restart).
+    c.stems.wasOn = false;
+    c.transpose.wasOn = false;
+    for (int k = 0; k < kFxInstances; ++k)
+    {
+        c.denoisers[(size_t) k].wasOn = false;
+        c.gates[(size_t) k].dsp.shownGain.store (1.0f, std::memory_order_relaxed);
+        c.comps[(size_t) k].gr.store (0.0f, std::memory_order_relaxed);
+        c.comps[(size_t) k].inPeak.store (0.0f, std::memory_order_relaxed);
+    }
+}
+
+void Engine::runFxChain (ChannelFx& s, float* l, float* r, int n, bool timed, bool stereo) noexcept
+{
+    // Plugins and built-in effects in chain order. Profiling (DSP view open): each lap adds the time since the
+    // previous lap to a stage.
     auto mark = timed ? juce::Time::getHighResolutionTicks() : 0;
     auto lap = [&] (DspTimes::Stage stage)
     {
@@ -1914,70 +1934,6 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
         s.dspTimes.add (stage, t - mark);
         mark = t;
     };
-    float* l = s.l.data();
-    float* r = s.r.data();
-    std::memcpy (l, srcL, (size_t) n * sizeof (float));
-    std::memcpy (r, srcR, (size_t) n * sizeof (float));
-
-    const float trim = dbToGain (s.trim->get(), -100.0f);
-    dsp::applyRamp (l, n, s.lastTrim, trim);
-    dsp::applyRamp (r, n, s.lastTrim, trim);
-    s.lastTrim = trim;
-    s.preMeter.push (dsp::peak (l, n), dsp::peak (r, n));
-
-    // Nothing of this channel can be heard (muted / another channel soloed, fader at -inf, not routed to a bus
-    // that is heard) and it has faded out: skip its effects, Sync Delay and routing. Its meter shows the level
-    // before the effects. Resuming starts from silence (fader and sends fade in, denoiser, Stems and Transpose
-    // restart, the delay line holds silence), like switching the channel on. Open views that show the effects'
-    // output (EQ spectrum, Stems levels, compressor window) and Find Key keep it running.
-    {
-        const bool silentNow = anySolo ? ! s.solo->isOn() : s.mute->isOn();
-        const bool faderOpen = ! silentNow && dbToGain (s.gain->get()) > 0.0f;
-        const bool fadingOut = s.lastL != 0.0f || s.lastR != 0.0f;
-        bool heard = false;
-        for (int b = 0; b < kMaxBuses && ! heard; ++b)
-        {
-            if (! busOpen[(size_t) b]) continue;
-            if (fadingOut && s.lastRoute[(size_t) b] != 0.0f) heard = true;
-            else if (faderOpen && s.route[(size_t) b]->isOn() && dbToGain (s.send[(size_t) b]->get()) > 0.0f) heard = true;
-        }
-        bool watched = s.spectrum.users.load (std::memory_order_relaxed) > 0
-                       || s.stems.meterUsers.load (std::memory_order_relaxed) > 0
-                       || s.transpose.isListening();
-        for (const auto& c : s.comps) watched |= c.views.load (std::memory_order_relaxed) > 0;
-        if (! heard && ! watched)
-        {
-            s.fxIdle.store (true, std::memory_order_relaxed);
-            const float fader = dbToGain (s.gain->get());
-            const float pan = s.pan->get();
-            const float panL = pan > 0.0f ? 1.0f - pan : 1.0f;
-            const float panR = pan < 0.0f ? 1.0f + pan : 1.0f;
-            s.meter.push (dsp::peak (l, n) * fader * panL, dsp::peak (r, n) * fader * panR);
-            s.meter.muted.store (silentNow, std::memory_order_relaxed);
-            s.lastL = s.lastR = 0.0f;
-            s.lastRoute.fill (0.0f);
-            s.stems.wasOn = false;
-            s.transpose.wasOn = false;
-            for (int k = 0; k < kFxInstances; ++k)
-            {
-                s.denoisers[(size_t) k].wasOn = false;
-                s.gates[(size_t) k].dsp.shownGain.store (1.0f, std::memory_order_relaxed);
-                s.comps[(size_t) k].gr.store (0.0f, std::memory_order_relaxed);
-                s.comps[(size_t) k].inPeak.store (0.0f, std::memory_order_relaxed);
-            }
-            // The delay line keeps running on silence, so resuming does not play what it held from before.
-            std::memset (l, 0, (size_t) n * sizeof (float));
-            std::memset (r, 0, (size_t) n * sizeof (float));
-            s.delay.process (l, r, n, delaySamples (s.index));
-            lap (DspTimes::other);
-            return;
-        }
-        s.fxIdle.store (false, std::memory_order_relaxed);
-    }
-
-    lap (DspTimes::other);
-
-    // Effect chain: plugins and built-in effects in the order the user set (pre-fader).
     uint32_t ran = 0;   // bit k: denoiser k / gate k / compressor k ran (shifted by 0 / 8 / 16)
     int latency = 0;
     bool tapped = false;
@@ -1997,7 +1953,7 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
                     auto* dn = d.live.load (std::memory_order_acquire);
                     if (! d.on->isOn() || dn == nullptr) break;
                     if (! d.wasOn) dn->reset();
-                    dn->process (l, r, n, d.settings(), ! monoSource);
+                    dn->process (l, r, n, d.settings(), stereo);
                     latency += dn->getLatencySamples();
                     ran |= 1u << k;
                     lap (DspTimes::denoiser);
@@ -2034,6 +1990,10 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
                     lap (DspTimes::utility);
                     break;
                 }
+                case Fx::correction:
+                    s.correction.process (l, r, n, sampleRate);
+                    lap (DspTimes::correction);
+                    break;
                 case Fx::transpose:
                 {
                     auto& t = s.transpose;
@@ -2082,9 +2042,83 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
     }
     s.dspLatency.store (latency, std::memory_order_relaxed);
     if (! tapped) s.spectrum.push (l, r, n);   // the shown EQ is not in the chain: the analyzer shows the chain's output
+}
 
-    // Sync Delay (aligns this input with slower ones); nothing to do while it is 0.
-    s.delay.process (l, r, n, delaySamples (s.index));
+void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, int n, bool anySolo, bool monoSource, bool timed,
+                           const std::array<bool, kMaxBuses>& busOpen) noexcept
+{
+    // Profiling (DSP view open): each lap adds the time since the previous lap to a stage.
+    auto mark = timed ? juce::Time::getHighResolutionTicks() : 0;
+    auto lap = [&] (DspTimes::Stage stage)
+    {
+        if (! timed) return;
+        const auto t = juce::Time::getHighResolutionTicks();
+        s.dspTimes.add (stage, t - mark);
+        mark = t;
+    };
+    float* l = s.l.data();
+    float* r = s.r.data();
+    std::memcpy (l, srcL, (size_t) n * sizeof (float));
+    std::memcpy (r, srcR, (size_t) n * sizeof (float));
+
+    const float trim = dbToGain (s.trim->get(), -100.0f);
+    dsp::applyRamp (l, n, s.lastTrim, trim);
+    dsp::applyRamp (r, n, s.lastTrim, trim);
+    s.lastTrim = trim;
+    s.preMeter.push (dsp::peak (l, n), dsp::peak (r, n));
+
+    // Nothing of this channel can be heard (muted / another channel soloed, fader at -inf, not routed to a bus
+    // that is heard) and it has faded out: skip its effects, Sync Delay and routing. Its meter shows the level
+    // before the effects. Resuming starts from silence (fader and sends fade in, denoiser, Stems and Transpose
+    // restart, the delay line holds silence), like switching the channel on. Open views that show the effects'
+    // output (EQ spectrum, Stems levels, compressor window) and Find Key keep it running.
+    {
+        const bool silentNow = anySolo ? ! s.solo->isOn() : s.mute->isOn();
+        const bool faderOpen = ! silentNow && dbToGain (s.gain->get()) > 0.0f;
+        const bool fadingOut = s.lastL != 0.0f || s.lastR != 0.0f;
+        bool heard = false;
+        for (int b = 0; b < kMaxBuses && ! heard; ++b)
+        {
+            if (! busOpen[(size_t) b]) continue;
+            if (fadingOut && s.lastRoute[(size_t) b] != 0.0f) heard = true;
+            else if (faderOpen && s.route[(size_t) b]->isOn() && dbToGain (s.send[(size_t) b]->get()) > 0.0f) heard = true;
+        }
+        if (! heard && ! fxWatched (s))
+        {
+            s.fxIdle.store (true, std::memory_order_relaxed);
+            const float fader = dbToGain (s.gain->get());
+            const float pan = s.pan->get();
+            const float panL = pan > 0.0f ? 1.0f - pan : 1.0f;
+            const float panR = pan < 0.0f ? 1.0f + pan : 1.0f;
+            s.meter.push (dsp::peak (l, n) * fader * panL, dsp::peak (r, n) * fader * panR);
+            s.meter.muted.store (silentNow, std::memory_order_relaxed);
+            s.lastL = s.lastR = 0.0f;
+            s.lastRoute.fill (0.0f);
+            pauseFx (s);
+            // The delay line keeps running on silence, so resuming does not play what it held from before.
+            std::memset (l, 0, (size_t) n * sizeof (float));
+            std::memset (r, 0, (size_t) n * sizeof (float));
+            s.delay.process (l, r, n, delaySamples (s.index));
+            lap (DspTimes::other);
+            return;
+        }
+        s.fxIdle.store (false, std::memory_order_relaxed);
+    }
+
+    lap (DspTimes::other);
+
+    // Effect chain (runFxChain) in the order the user set; before the fader and pan (PRE, default) or after them
+    // (POST, fx.post), then the Sync Delay.
+    auto runChain = [&]
+    {
+        lap (DspTimes::other);
+        runFxChain (s, l, r, n, timed, ! monoSource);
+        mark = timed ? juce::Time::getHighResolutionTicks() : 0;
+        // Sync Delay (aligns this input with slower ones); nothing to do while it is 0.
+        s.delay.process (l, r, n, delaySamples (s.index));
+    };
+    const bool post = s.fxPost->isOn();
+    if (! post) runChain();
 
     if (s.mono->isOn())
     {
@@ -2110,10 +2144,14 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
     const bool wasSilent = s.lastL == 0.0f && s.lastR == 0.0f && gl == 0.0f && gr == 0.0f;
     s.lastL = gl; s.lastR = gr;
 
+    // POST: the chain gets the faded / panned signal; it keeps running while the fader is closed, so reverb
+    // tails and the like still reach the buses.
+    if (post) runChain();
+
     if (! silent)
         s.meter.push (dsp::peak (l, n), dsp::peak (r, n));
 
-    if (wasSilent)
+    if (wasSilent && ! post)
     {
         s.lastRoute.fill (0.0f);
         lap (DspTimes::other);
@@ -2147,11 +2185,9 @@ void Engine::processBus (Bus& b, int n, bool timed, bool used) noexcept
     float* l = b.l.data();
     float* r = b.r.data();
 
-    // Not heard (nothing takes its signal, or muted and faded out) and no spectrum open: skip its effects.
+    // Not heard (nothing takes its signal, or muted and faded out) and no view open: skip its effects.
     // The meter shows the level before the effects; resuming fades in from silence (see processStrip).
-    bool watched = b.spectrum.users.load (std::memory_order_relaxed) > 0;
-    for (const auto& c : b.comps) watched |= c.views.load (std::memory_order_relaxed) > 0;
-    if ((! used || (b.mute->isOn() && b.lastGain == 0.0f)) && ! watched)
+    if ((! used || (b.mute->isOn() && b.lastGain == 0.0f)) && ! fxWatched (b))
     {
         b.fxIdle.store (true, std::memory_order_relaxed);
         const float fader = dbToGain (b.gain->get());
@@ -2160,64 +2196,23 @@ void Engine::processBus (Bus& b, int n, bool timed, bool used) noexcept
         std::memset (l, 0, (size_t) n * sizeof (float));
         std::memset (r, 0, (size_t) n * sizeof (float));
         b.lastGain = 0.0f;
-        for (int k = 0; k < kFxInstances; ++k)
-        {
-            b.comps[(size_t) k].gr.store (0.0f, std::memory_order_relaxed);
-            b.comps[(size_t) k].inPeak.store (0.0f, std::memory_order_relaxed);
-        }
+        pauseFx (b);
         b.delay.process (l, r, n, delaySamples (busChannel (b.index)));
         lap (DspTimes::other);
         return;
     }
     b.fxIdle.store (false, std::memory_order_relaxed);
 
-    // Effect chain (pre-fader), in the order the user set: correction, utility, EQ, compressor, limiter and plugins.
-    bool tapped = false;
-    uint32_t compsRan = 0;
-    const int tapEq = b.spectrum.eqInstance.load (std::memory_order_relaxed);
-    if (! b.fxBypass->isOn())
-        b.plugins.process (l, r, n, timed, [&] (Fx f, int k)
-        {
-            lap (DspTimes::plugins);
-            const auto i = (size_t) k;
-            switch (f)
-            {
-                case Fx::correction:
-                    b.correction.process (l, r, n, sampleRate);
-                    lap (DspTimes::correction);
-                    break;
-                case Fx::eq:
-                    if (k == tapEq) b.spectrum.pushPre (l, r, n);
-                    b.eqs[i].process (l, r, n, sampleRate);
-                    if (k == tapEq) { b.spectrum.push (l, r, n); tapped = true; }
-                    lap (DspTimes::eq);
-                    break;
-                case Fx::limiter:
-                    if (b.limiters[i].on->isOn()) b.limiters[i].dsp.process (l, r, n, b.limiters[i].ceiling->get());
-                    lap (DspTimes::limiter);
-                    break;
-                case Fx::comp:
-                    if (! b.comps[i].on->isOn()) break;
-                    b.comps[i].tapInput (l, r, n);
-                    b.comps[i].dsp.process (l, r, n, b.comps[i].settings());
-                    b.comps[i].gr.store (b.comps[i].dsp.lastGr, std::memory_order_relaxed);
-                    compsRan |= 1u << k;
-                    lap (DspTimes::comp);
-                    break;
-                case Fx::utility:
-                {
-                    auto& u = b.utilities[i];
-                    u.dsp.process (l, r, n, u.settings(), u.on->isOn());
-                    lap (DspTimes::utility);
-                    break;
-                }
-                default: break;
-            }
-        });
-    lap (DspTimes::plugins);
-    for (int k = 0; k < kFxInstances; ++k)
-        if (! ((compsRan >> k) & 1u)) { b.comps[(size_t) k].gr.store (0.0f, std::memory_order_relaxed); b.comps[(size_t) k].inPeak.store (0.0f, std::memory_order_relaxed); }
-    if (! tapped) b.spectrum.push (l, r, n);
+    // Effect chain (runFxChain) in the order the user set: before mono and the fader (PRE, default) or after them
+    // (POST, fx.post: e.g. a limiter that also catches the fader).
+    auto runChain = [&]
+    {
+        lap (DspTimes::other);
+        runFxChain (b, l, r, n, timed, true);
+        mark = timed ? juce::Time::getHighResolutionTicks() : 0;
+    };
+    const bool post = b.fxPost->isOn();
+    if (! post) runChain();
 
     if (b.mono->isOn())
     {
@@ -2236,6 +2231,8 @@ void Engine::processBus (Bus& b, int n, bool timed, bool used) noexcept
     dsp::applyRamp (l, n, b.lastGain, g);
     dsp::applyRamp (r, n, b.lastGain, g);
     b.lastGain = g;
+
+    if (post) runChain();
 
     b.delay.process (l, r, n, delaySamples (busChannel (b.index)));
 

@@ -1,5 +1,6 @@
 #pragma once
 #include "Widgets.h"
+#include "EffectBrowser.h"
 
 namespace hydra
 {
@@ -38,7 +39,7 @@ private:
 };
 
 //==============================================================================
-class InputStripView final : public juce::Component
+class InputStripView final : public juce::Component, public juce::DragAndDropTarget
 {
 public:
     InputStripView (UiContext& c, int index);
@@ -59,6 +60,12 @@ public:
     /** -1: the fader controls the strip level. 0..7: it controls the send level to that bus (bus SEL). */
     void setFaderTarget (int bus);
     void paintOverChildren (juce::Graphics&) override;
+    // Effects dragged from the effect browser (FxDropZone): appended to the chain, held still = open the chain.
+    bool isInterestedInDragSource (const SourceDetails& d) override { return drop.interested (d.description); }
+    void itemDragEnter (const SourceDetails& d) override { drop.enter (d.description); }
+    void itemDragExit (const SourceDetails&) override    { drop.exit(); }
+    void itemDropped (const SourceDetails& d) override   { drop.dropped (d.description); }
+
     /** Horizontal channel rows: name, knobs and routing at the left, MONO / SOLO / MUTE at the right,
         the fader sideways in between (it takes all the room that is left, like in the vertical strips). */
     void setHorizontal (bool rows);
@@ -86,10 +93,11 @@ private:
     MeterView meter;
     juce::Label dbLabel;
     struct DbPoll : ParamPoller::Client { InputStripView* v; uint32_t ver = 0; void pollParams() override; } dbPoll;
+    FxDropZone drop { ctx, *this, index };
 };
 
 //==============================================================================
-class BusStripView final : public juce::Component
+class BusStripView final : public juce::Component, public juce::DragAndDropTarget
 {
 public:
     BusStripView (UiContext& c, int index);
@@ -105,6 +113,13 @@ public:
     static int rowControlsWidth();
     /** Lit while the mouse is over this bus's routing button in an input strip. */
     void setHoverLit (bool);
+    void paintOverChildren (juce::Graphics& g) override { drop.paintOver (g, getLocalBounds().toFloat()); }
+    // Effects dragged from the effect browser (FxDropZone): appended to the chain, held still = open the chain.
+    bool isInterestedInDragSource (const SourceDetails& d) override { return drop.interested (d.description); }
+    void itemDragEnter (const SourceDetails& d) override { drop.enter (d.description); }
+    void itemDragExit (const SourceDetails&) override    { drop.exit(); }
+    void itemDropped (const SourceDetails& d) override   { drop.dropped (d.description); }
+
 
 private:
     UiContext& ctx;
@@ -121,6 +136,7 @@ private:
     MeterView meter;
     juce::Label dbLabel;
     struct DbPoll : ParamPoller::Client { BusStripView* v; uint32_t ver = 0; void pollParams() override; } dbPoll;
+    FxDropZone drop { ctx, *this, busSelectIndex (index) };
 };
 
 //==============================================================================

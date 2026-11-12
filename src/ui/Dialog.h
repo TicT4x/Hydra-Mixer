@@ -82,5 +82,10 @@ void confirm (juce::Component* near, Kind, juce::String title, juce::String mess
 
 /** A message with a single OK button (errors, warnings). */
 void message (juce::Component* near, Kind, juce::String title, juce::String text);
+
+/** Asks for a line of text (a name): text field with `initial` selected, okText (primary) and Cancel.
+    onOk gets the trimmed text; it is not called for an empty text or when cancelled. */
+void askText (juce::Component* near, juce::String title, juce::String message, juce::String initial,
+              juce::String okText, std::function<void (juce::String)> onOk);
 } // namespace dialog
 } // namespace hydra

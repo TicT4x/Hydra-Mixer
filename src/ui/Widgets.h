@@ -240,6 +240,8 @@ public:
     void mouseDoubleClick (const juce::MouseEvent&) override {}
 
     juce::String text;
+    /** Set: a two-state label button that is never lit, it shows text while off and onText while on (PRE / POST). */
+    juce::String onText;
     juce::String glyph;   // ui/ChannelIcons.h id: drawn instead of the text (routing buttons of buses with an icon)
     juce::Colour onColour;
     /** -1: on/off parameter. Otherwise one value of a choice parameter: lit while the parameter has this

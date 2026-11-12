@@ -167,27 +167,68 @@ struct StemsFx
 };
 
 //==============================================================================
-struct InputStrip
+/** The effect side of a channel (input or bus): its chain and every built-in effect with all instances.
+    Since 12.11. every channel can have every effect (Fx); which ones it has says its chain. The state of the
+    big ones (denoisers after the first input one, Stems, Transpose) is only created when they are added. */
+struct ChannelFx
 {
-    int index = 0;
-    juce::String name;
-    IoTarget source;
     PluginChain plugins;
-    Meter meter, preMeter;
     SpectrumTap spectrum;
-
-    // parameters
-    Param *active {};   // slot in use (shown as a strip and processed); see Engine::addInput / removeInput
-    Param *gain {}, *trim {}, *pan {}, *mute {}, *solo {}, *mono {};
+    DspTimes dspTimes;
     std::array<ParamEq, kFxInstances> eqs;
     std::array<GateFx, kFxInstances> gates;
     std::array<CompFx, kFxInstances> comps;
     std::array<DenoiserFx, kFxInstances> denoisers;
     std::array<LimiterFx, kFxInstances> limiters;   // off by default, added from the effect menu (9.11.)
     std::array<UtilityFx, kFxInstances> utilities;
-    StemsFx stems;                                  // source separation (once per input)
-    TransposeFx transpose;                          // pitch shift (once per input)
+    StemsFx stems;                                  // source separation (once per channel)
+    TransposeFx transpose;                          // pitch shift (once per channel)
+    Correction correction;                          // room correction (once; made for hardware outputs)
     Param *fxBypass {};
+    Param *fxPost {};   // effect chain after the fader (and pan) instead of before (Inspector: PRE / POST)
+
+    /** Denoiser instance k is in the effect chain, switched on and the chain is not bypassed (any thread). */
+    bool denoiserActive (int k) const noexcept
+    {
+        return denoisers[(size_t) k].on->isOn() && denoisers[(size_t) k].live.load (std::memory_order_acquire) != nullptr
+            && plugins.hasBuiltin (Fx::denoiser, k) && ! fxBypass->isOn();
+    }
+    /** Any denoiser active. */
+    bool denoiserActive() const noexcept
+    {
+        for (int k = 0; k < kFxInstances; ++k) if (denoiserActive (k)) return true;
+        return false;
+    }
+    /** Speech probability of the first active denoiser (Voice Key of the gates), -1 if none. */
+    float voiceProbability() const noexcept
+    {
+        for (int k = 0; k < kFxInstances; ++k)
+            if (denoiserActive (k))
+                if (auto* d = denoisers[(size_t) k].live.load (std::memory_order_acquire); d != nullptr) return d->getVad();
+        return -1.0f;
+    }
+
+    /** Processing latency added inside this channel by its denoisers, in samples. */
+    std::atomic<int> dspLatency { 0 };
+    /** Latency of the Stems effect, in samples (0 while it is off or has no model yet). */
+    std::atomic<int> stemsLatency { 0 };
+    /** Latency of the Transpose effect, in samples (0 while it is off). */
+    std::atomic<int> transposeLatency { 0 };
+    /** True while nothing of this channel can be heard and its effects are skipped (Engine::processStrip / processBus). */
+    std::atomic<bool> fxIdle { false };
+};
+
+//==============================================================================
+struct InputStrip : ChannelFx
+{
+    int index = 0;
+    juce::String name;
+    IoTarget source;
+    Meter meter, preMeter;
+
+    // parameters
+    Param *active {};   // slot in use (shown as a strip and processed); see Engine::addInput / removeInput
+    Param *gain {}, *trim {}, *pan {}, *mute {}, *solo {}, *mono {};
     Param *syncOn {}, *delayMs {};   // Sync Delay: automatic alignment with the input sync group / manual delay
     std::array<Param*, kMaxBuses> route {};
     std::array<Param*, kMaxBuses> send {};   // per-bus fader level (edited while a bus is selected with SEL)
@@ -210,36 +251,6 @@ struct InputStrip
     dsp::GateSettings gateSettings() const { return gates[0].settings (voiceProbability()); }
     dsp::CompSettings compSettings() const { return comps[0].settings(); }
     dsp::DenoiserSettings denoiserSettings() const { return denoisers[0].settings(); }
-    /** Denoiser instance k is in the effect chain, switched on and the chain is not bypassed (any thread). */
-    bool denoiserActive (int k) const noexcept
-    {
-        return denoisers[(size_t) k].on->isOn() && denoisers[(size_t) k].live.load (std::memory_order_acquire) != nullptr
-            && plugins.hasBuiltin (Fx::denoiser, k) && ! fxBypass->isOn();
-    }
-    /** Any denoiser active. */
-    bool denoiserActive() const noexcept
-    {
-        for (int k = 0; k < kFxInstances; ++k) if (denoiserActive (k)) return true;
-        return false;
-    }
-    /** Speech probability of the first active denoiser (Voice Key of the gates), -1 if none. */
-    float voiceProbability() const noexcept
-    {
-        for (int k = 0; k < kFxInstances; ++k)
-            if (denoiserActive (k))
-                if (auto* d = denoisers[(size_t) k].live.load (std::memory_order_acquire); d != nullptr) return d->getVad();
-        return -1.0f;
-    }
-
-    /** Processing latency added inside this strip by its denoisers, in samples. */
-    std::atomic<int> dspLatency { 0 };
-    /** Latency of the Stems effect, in samples (0 while it is off or has no model yet). */
-    std::atomic<int> stemsLatency { 0 };
-    /** Latency of the Transpose effect, in samples (0 while it is off). */
-    std::atomic<int> transposeLatency { 0 };
-    DspTimes dspTimes;
-    /** True while nothing of this channel can be heard and its effects are skipped (Engine::processStrip). */
-    std::atomic<bool> fxIdle { false };
 
     // audio-thread state
     dsp::DelayLine delay;
@@ -248,28 +259,18 @@ struct InputStrip
     std::vector<float> l, r;
 };
 
-struct Bus
+struct Bus : ChannelFx
 {
     int index = 0;
     juce::String name;
     juce::String icon;   // optional symbol (ui/ChannelIcons.h id) shown instead of "H1" / "V1"; empty = the code
     IoTarget output;
-    PluginChain plugins;
     Meter meter;
-    SpectrumTap spectrum;
-    DspTimes dspTimes;
 
     Param *active {};   // slot in use (shown as a strip and processed); see Engine::addBus / removeBus
-    Param *gain {}, *mute {}, *mono {}, *fxBypass {};
+    Param *gain {}, *mute {}, *mono {};
     Param *sel {};   // SEL: input faders edit the sends to this bus (exclusive), optional monitoring
     Param *syncOn {}, *delayMs {};   // Sync Delay (see InputStrip)
-    std::array<ParamEq, kFxInstances> eqs;
-    std::array<LimiterFx, kFxInstances> limiters;
-    std::array<CompFx, kFxInstances> comps;
-    std::array<UtilityFx, kFxInstances> utilities;
-    Correction correction;   // room + speaker / headphone correction (hardware outputs only, once)
-    /** True while the bus is not heard (no output / recorder, or muted) and its effects are skipped. */
-    std::atomic<bool> fxIdle { false };
 
     // The first instances under their old names.
     ParamEq& eq = eqs[0];
@@ -504,8 +505,13 @@ public:
     // Effect chain (message thread). Every channel has one chain of plugins and built-in effects (Fx) in any order.
     // A built-in effect whose on switch is turned on while it is not in the chain (old sessions, import, scenes,
     // undo) is inserted at its usual place (ensureBuiltins, 10 Hz).
-    /** Built-in effects a channel can have (selection index scheme: inputs, then buses), in their usual order. */
+    /** Built-in effects a channel can have (selection index scheme: inputs, then buses), in their usual order.
+        Since 12.11. all of them on every channel. */
     std::vector<Fx> allowedFx (int channel) const;
+    /** The effects made for this kind of channel (the "+" menu of the chain offers only these): inputs everything
+        but the correction, hardware outputs correction, utility, EQ, compressor, limiter; virtual outputs without
+        the correction. */
+    std::vector<Fx> typicalFx (int channel) const;
     /** How many instances of f a channel can have (correction: 1). */
     static int maxInstances (Fx f) noexcept { return f == Fx::correction || f == Fx::stems || f == Fx::transpose ? 1 : kFxInstances; }
     PluginChain& chainFor (int channel) noexcept
@@ -530,18 +536,32 @@ public:
     /** Creates the RNNoise state of a denoiser instance that does not have one yet (message thread). */
     void prepareDenoiser (DenoiserFx&);
     /** Creates / frees the Stems state of an input when the effect enters / leaves its chain (message thread). */
-    void prepareStems (InputStrip&);
+    void prepareStems (ChannelFx&);
     /** Creates the pitch shifter of an input's Transpose effect (message thread, once). */
-    void prepareTranspose (InputStrip&);
-    void releaseStems (InputStrip&);
+    void prepareTranspose (ChannelFx&);
+    void releaseStems (ChannelFx&);
 
     //--------------------------------------------------------------------------
     // Correction (room + speaker / headphone) of a channel, selection index scheme (inputs, then buses).
-    // Only hardware outputs (A buses) have one: nullptr for inputs and virtual outputs.
+    // Every channel has one (since 12.11.); measuring and the Correction window are for hardware outputs only
+    // (isHwOutput), other channels can use a saved correction.
     Correction* correctionFor (int selectIndex) noexcept
     {
+        return juce::isPositiveAndBelow (selectIndex, kMaxInputs + kMaxBuses) ? &fxOf (selectIndex).correction : nullptr;
+    }
+    static bool isHwOutput (int selectIndex) noexcept
+    {
         const int b = selectIndex - kMaxInputs;
-        return juce::isPositiveAndBelow (b, kMaxBuses) && isHwBus (b) ? &buses[(size_t) b].correction : nullptr;
+        return juce::isPositiveAndBelow (b, kMaxBuses) && isHwBus (b);
+    }
+    /** The effect side of a channel (selection index scheme). */
+    ChannelFx& fxOf (int channel) noexcept
+    {
+        return channel < kMaxInputs ? static_cast<ChannelFx&> (inputs[(size_t) channel]) : buses[(size_t) (channel - kMaxInputs)];
+    }
+    const ChannelFx& fxOf (int channel) const noexcept
+    {
+        return channel < kMaxInputs ? static_cast<const ChannelFx&> (inputs[(size_t) channel]) : buses[(size_t) (channel - kMaxInputs)];
     }
     /** Replaces a channel's correction profile (message thread). Ignored for channels without a correction. */
     void setCorrection (int selectIndex, CorrectionProfile profile);
@@ -605,6 +625,12 @@ private:
     void audioDeviceError (const juce::String&) override;
 
     void processChunk (const Graph& g, const float* const* in, int numIn, float* const* out, int numOut, int offset, int n) noexcept;
+    void createFxParams (ChannelFx&, const juce::String& idPrefix, const juce::String& namePrefix);
+    /** Audio thread: a channel's effect chain in place (stereo: the denoiser treats both sides apart). */
+    void runFxChain (ChannelFx&, float* l, float* r, int n, bool timed, bool stereo) noexcept;
+    /** Audio thread: the chain is skipped (channel not heard). */
+    void pauseFx (ChannelFx&) noexcept;
+    bool fxWatched (const ChannelFx&) const noexcept;
     void processStrip (InputStrip& s, const float* srcL, const float* srcR, int n, bool anySolo, bool monoSource, bool timed,
                        const std::array<bool, kMaxBuses>& busOpen) noexcept;
     void processBus (Bus& b, int n, bool timed, bool used) noexcept;

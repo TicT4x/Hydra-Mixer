@@ -1105,10 +1105,10 @@ void MainComponent::openCorrectionWindow (int index, bool measure)
     }
     auto* view = correctionView();
     // Which output: the one asked for, else the one shown, else the selected one, else the first hardware output.
-    int output = ctx.engine.correctionFor (index) != nullptr ? index : view->getOutput();
-    if (output < 0 && ctx.engine.correctionFor (ctx.selected) != nullptr) output = ctx.selected;
+    int output = Engine::isHwOutput (index) ? index : view->getOutput();
+    if (output < 0 && Engine::isHwOutput (ctx.selected)) output = ctx.selected;
     for (int b = 0; output < 0 && b < kMaxBuses; ++b)
-        if (ctx.engine.isBusActive (b) && ctx.engine.correctionFor (kMaxInputs + b) != nullptr) output = kMaxInputs + b;
+        if (ctx.engine.isBusActive (b) && Engine::isHwOutput (kMaxInputs + b)) output = kMaxInputs + b;
     if (! view->isBusy()) view->showOutput (output);
     view->showPage (measure ? CorrectionView::Page::wizard : CorrectionView::Page::correction);
     corrWindow->setVisible (true);
@@ -1163,6 +1163,18 @@ void MainComponent::toggleSceneEditor()
     repaint();
 }
 
+bool MainComponent::browserOpen() const { return ctx.session != nullptr && ctx.session->prefs.fxBrowser; }
+
+void MainComponent::toggleEffectBrowser()
+{
+    if (ctx.session == nullptr) return;
+    ctx.session->prefs.fxBrowser = ! ctx.session->prefs.fxBrowser;
+    ctx.session->prefsVersion.fetch_add (1);
+    if (! browserOpen()) browser.reset();
+    resized();
+    repaint();
+}
+
 void MainComponent::restartAudioEngine()
 {
     // Closing the master releases the graph and with it every stream; secondary drivers close when their last
@@ -1181,9 +1193,18 @@ void MainComponent::showToolsMenu()
     juce::PopupMenu m;
     m.addSectionHeader ("Tools");
     m.addItem ("Scene Editor", true, sceneBar != nullptr, run (&MainComponent::toggleSceneEditor));
+    m.addItem ("Effect Browser   (Ctrl+Alt+B)", true, browserOpen(), run (&MainComponent::toggleEffectBrowser));
     m.addSeparator();
     m.addItem ("MIDI Learn Mode", true, ctx.learnMode, run (&MainComponent::toggleLearnMode));
     m.addItem ("MIDI Map...", run (&MainComponent::openMidiMap));
+    m.addItem ("MIDI faders stop at 0 dB", true, ctx.midi.getFaderTopAt0dB(), [safe]
+    {
+        // The range of every fader mapping ends at 0 dB (off again: back to the full range). Same as in Settings > MIDI.
+        if (safe == nullptr) return;
+        auto& midi = safe->ctx.midi;
+        midi.setFaderTopAt0dB (! midi.getFaderTopAt0dB());
+        safe->showToast (midi.getFaderTopAt0dB() ? "MIDI faders now stop at 0 dB" : "MIDI faders use their full range again", 2.5);
+    });
     m.addSeparator();
     m.addItem ("Latency Finder...", run (&MainComponent::openLatencyFinder));
     m.addItem ("Sync Delay...", run (&MainComponent::openSyncDelay));
@@ -1206,6 +1227,8 @@ void MainComponent::showToolsMenu()
         m.addSubMenu ("Guided tour", help);
         m.addItem ("Setup wizard...", [safe] { if (safe != nullptr) safe->startWelcome(); });
     }
+    m.addSeparator();
+    m.addItem ("Wiki (hydra-mixer.de)", [] { juce::URL ("https://hydra-mixer.de/#docs").launchInDefaultBrowser(); });
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&top.tools).withMinimumWidth (200));
 }
 
@@ -1378,6 +1401,11 @@ bool MainComponent::keyPressed (const juce::KeyPress& k)
     }
     if (handleUndoKey (k))
         return true;
+    if (k.getModifiers().isCtrlDown() && k.getModifiers().isAltDown() && (k.getKeyCode() == 'B' || k.getKeyCode() == 'b'))
+    {
+        toggleEffectBrowser();
+        return true;
+    }
     if (k == juce::KeyPress::escapeKey && ctx.learnMode)
     {
         ctx.learnMode = false;
@@ -1468,13 +1496,14 @@ juce::Point<int> MainComponent::fittingSize() const
         w = total;
     }
     w += sceneBar != nullptr ? sceneBar->getWidth() : 0;
+    w += browserWidth();
     const int h = 54 + 4 + s.y + 236;
     return { (int) std::ceil ((float) w * uiScale), (int) std::ceil ((float) h * uiScale) };
 }
 
 int MainComponent::idealWidth() const
 {
-    const int logical = strips.idealWidth() + (sceneBar != nullptr ? sceneBar->getWidth() : 0);
+    const int logical = strips.idealWidth() + (sceneBar != nullptr ? sceneBar->getWidth() : 0) + browserWidth();
     return (int) std::ceil ((float) logical * uiScale);
 }
 
@@ -1488,6 +1517,27 @@ void MainComponent::resized()
     auto r = juce::Rectangle<int> (0, 0, logicalWidth(), logicalHeight());
     top.setBounds (r.removeFromTop (54));
     r.removeFromTop (4);
+    // Effect browser at the left edge like Ableton's, the full height below the top bar; its tab stays at the
+    // very left in both states (click: fold in / out).
+    if (browserTab.getParentComponent() != this)
+    {
+        browserTab.onClick = [this] { toggleEffectBrowser(); };
+        addAndMakeVisible (browserTab);
+    }
+    browserTab.setTransform (scale);
+    browserTab.setOpen (browserOpen());
+    browserTab.setBounds (r.removeFromLeft (BrowserTab::kWidth + 4).withTrimmedBottom (4).withTrimmedLeft (4));
+    if (browserOpen())
+    {
+        if (browser == nullptr)
+        {
+            browser = std::make_unique<EffectBrowser> (ctx);
+            browser->onMessage = [this] (const juce::String& text) { showToast (text, 2.5); };
+            addAndMakeVisible (*browser);
+        }
+        browser->setTransform (scale);
+        browser->setBounds (r.removeFromLeft (juce::jmin (EffectBrowser::kWidth, r.getWidth() / 2)).withTrimmedBottom (4));
+    }
     if (sceneBar != nullptr)
     {
         sceneBar->setTransform (scale);

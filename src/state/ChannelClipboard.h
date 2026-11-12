@@ -18,6 +18,10 @@ juce::String describe (const juce::XmlElement* clip);
 std::unique_ptr<juce::XmlElement> copyBlock (const Engine&, int channel, int slot);
 std::unique_ptr<juce::XmlElement> copyBuiltin (const Engine&, int channel, Fx, int instance);
 std::unique_ptr<juce::XmlElement> copyChain (const Engine&, int channel);
+/** Several blocks of a chain (slot indices, any order: they keep the chain's order) as a chain clip. */
+std::unique_ptr<juce::XmlElement> copyBlocks (const Engine&, int channel, std::vector<int> slots);
+/** Number of blocks in a chain clip (or the CHAIN of a channel clip). */
+int numBlocks (const juce::XmlElement* clip);
 std::unique_ptr<juce::XmlElement> copyChannel (const Engine&, int channel);
 
 /** Parses text (clipboard, .hydraeq file); nullptr if it is not a Hydra clip. */
@@ -35,6 +39,10 @@ bool canPasteSettings (const Engine&, const juce::XmlElement* clip, int channel,
 bool pasteSettings (Engine&, int channel, int slot, const juce::XmlElement& clip);
 /** Settings onto instance k of a built-in effect (EQ import: also the old "eq" clips). */
 bool pasteBuiltinSettings (Engine&, int channel, Fx, int instance, const juce::XmlElement& clip);
+/** Inserts the blocks of a chain clip (or of an fx clip: its one block) at index (-1 = end), each built-in
+    effect as a new instance with its settings. Blocks the channel cannot have (or has the most of) are left out.
+    Returns the number of blocks inserted. */
+int insertBlocks (Engine&, int channel, const juce::XmlElement& clip, int index);
 /** Replaces the channel's whole chain (chain or channel clip). */
 bool pasteChain (Engine&, int channel, const juce::XmlElement& clip);
 /** Replaces the channel's settings (channel clip of the same kind: input / bus); keeps its name and device. */

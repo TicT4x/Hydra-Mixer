@@ -4,6 +4,7 @@ namespace hydra::dialog
 {
 namespace
 {
+constexpr int kFieldH = 32;
 constexpr int kPad = 24, kIcon = 38, kIconGap = 16, kButtonH = 34, kButtonGap = 8, kMinWidth = 440, kMaxWidth = 600;
 
 juce::Colour kindColour (Kind k)
@@ -23,9 +24,25 @@ using DialogButton = ActionButton;
 class Overlay final : public juce::Component, private juce::ComponentListener
 {
 public:
-    Overlay (juce::Component& h, Kind k, juce::String t, juce::String m, std::vector<Button> b, std::function<void (int)> d)
-        : host (&h), kind (k), title (std::move (t)), text (std::move (m)), done (std::move (d))
+    Overlay (juce::Component& h, Kind k, juce::String t, juce::String m, std::vector<Button> b, std::function<void (int)> d,
+             const juce::String* fieldText = nullptr, std::function<void (juce::String)> onText = nullptr)
+        : host (&h), kind (k), title (std::move (t)), text (std::move (m)), done (std::move (d)), textDone (std::move (onText))
     {
+        if (fieldText != nullptr)
+        {
+            field = std::make_unique<juce::TextEditor>();
+            field->setFont (theme::font (14.0f));
+            field->setText (*fieldText, false);
+            field->setColour (juce::TextEditor::backgroundColourId, theme::bg);
+            field->setColour (juce::TextEditor::textColourId, theme::text);
+            field->setColour (juce::TextEditor::outlineColourId, theme::outline);
+            field->setColour (juce::TextEditor::focusedOutlineColourId, kindColour (k));
+            field->setColour (juce::TextEditor::highlightColourId, kindColour (k).withAlpha (0.35f));
+            field->setIndents (8, 7);
+            field->onReturnKey = [this] { finish (0); };
+            field->onEscapeKey = [this] { finish (-1); };
+            addAndMakeVisible (*field);
+        }
         for (size_t i = 0; i < b.size(); ++i)
         {
             auto btn = std::make_unique<DialogButton> (b[i], kindColour (kind));
@@ -40,7 +57,8 @@ public:
         setBounds (host->getLocalBounds());
         toFront (true);
         enterModalState (true, nullptr, false);
-        grabKeyboardFocus();
+        if (field != nullptr) { field->grabKeyboardFocus(); field->selectAll(); }
+        else grabKeyboardFocus();
         setAlpha (0.0f);
         juce::Desktop::getInstance().getAnimator().animateComponent (this, getBounds(), 1.0f, 110, false, 1.0, 1.0);
     }
@@ -64,8 +82,11 @@ public:
         titleLayout = makeLayout (title, theme::font (17.0f, true), theme::text, (float) textW);
         messageLayout = makeLayout (text, theme::font (13.5f), theme::textDim, (float) textW);
         const int textH = (int) std::ceil (titleLayout.getHeight()) + (text.isNotEmpty() ? 8 + (int) std::ceil (messageLayout.getHeight()) : 0);
-        const int h = kPad + juce::jmax (kIcon, textH) + 26 + kButtonH + kPad - 4;
+        const int fieldH = field != nullptr ? kFieldH + 14 : 0;
+        const int h = kPad + juce::jmax (kIcon, textH) + fieldH + 26 + kButtonH + kPad - 4;
         card = juce::Rectangle<int> (w, juce::jmin (h, getHeight() - 24)).withCentre (getLocalBounds().getCentre());
+        if (field != nullptr)
+            field->setBounds (card.getX() + kPad + kIcon + kIconGap, card.getBottom() - kPad + 4 - kButtonH - 22 - kFieldH, textW, kFieldH);
 
         auto row = juce::Rectangle<int> (card.getX() + kPad, card.getBottom() - kPad + 4 - kButtonH, card.getWidth() - 2 * kPad, kButtonH);
         for (auto it = buttons.rbegin(); it != buttons.rend(); ++it)
@@ -113,7 +134,7 @@ public:
                                                 (float) (card.getRight() - kPad) - (icon.getRight() + kIconGap), (float) card.getHeight());
         titleLayout.draw (g, textArea);
         textArea.removeFromTop (titleLayout.getHeight() + 8.0f);
-        messageLayout.draw (g, textArea.withBottom ((float) (card.getBottom() - kPad - kButtonH - 10)));
+        messageLayout.draw (g, textArea.withBottom ((float) (field != nullptr ? field->getY() - 6 : card.getBottom() - kPad - kButtonH - 10)));
     }
 
     bool keyPressed (const juce::KeyPress& k) override
@@ -160,9 +181,12 @@ private:
         if (host != nullptr) host->removeComponentListener (this);
         setVisible (false);
         auto cb = std::move (done);
+        auto tcb = std::move (textDone);
+        const auto typed = field != nullptr ? field->getText().trim() : juce::String();
         juce::Component::SafePointer<Overlay> safe (this);
         juce::MessageManager::callAsync ([safe] { delete safe.getComponent(); });
         if (cb) cb (result);
+        if (tcb && result == 0 && typed.isNotEmpty()) tcb (typed);
     }
 
     void componentMovedOrResized (juce::Component& c, bool, bool wasResized) override
@@ -183,6 +207,8 @@ private:
     Kind kind;
     juce::String title, text;
     std::function<void (int)> done;
+    std::function<void (juce::String)> textDone;
+    std::unique_ptr<juce::TextEditor> field;
     std::vector<std::unique_ptr<DialogButton>> buttons;
     juce::Rectangle<int> card;
     juce::TextLayout titleLayout, messageLayout;
@@ -219,5 +245,14 @@ void confirm (juce::Component* near, Kind kind, juce::String title, juce::String
 void message (juce::Component* near, Kind kind, juce::String title, juce::String text)
 {
     show (near, kind, std::move (title), std::move (text), { { "OK", Button::Role::primary } }, nullptr);
+}
+void askText (juce::Component* near, juce::String title, juce::String message, juce::String initial,
+              juce::String okText, std::function<void (juce::String)> onOk)
+{
+    auto* host = hostFor (near);
+    if (host == nullptr) return;
+    new Overlay (*host, Kind::question, std::move (title), std::move (message),
+                 { { std::move (okText), Button::Role::primary }, { "Cancel", Button::Role::cancel } }, nullptr,
+                 &initial, std::move (onOk));   // deletes itself
 }
 } // namespace hydra::dialog
