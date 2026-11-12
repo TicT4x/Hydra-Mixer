@@ -67,6 +67,7 @@ public:
         bool vacAutoName = true;
         bool renameNoPrompt = true;    // rename via the task set up once, without a UAC prompt each time (DeviceNamer::useTask)       // name cables after their channel: "Hydra In 2", "Hydra Out 1" (DeviceNamer)
         bool expertDeviceModes = false; // device picker: all three Windows modes (else only Low Latency shared, the sensible one)
+        bool eqShowInput = false;      // EQ window: grey spectrum of the signal before the EQ behind the coloured one
         bool pickerShowAll = false;    // device picker: every device, also those that do not fit the channel (Hydra's own cables, hardware on B buses ...)
         bool autoReconnect = true;     // reopen devices that went offline as soon as they are back (Engine::autoReconnect)
         bool adaptiveStrips = true;    // with room to spare the strips grow (up to StripArea::kMaxGrow), groups stay compact and centred
@@ -85,6 +86,11 @@ public:
         bool remoteEnabled = false;    // Hydra Remote: phones / tablets control Hydra in the browser (remote/RemoteControl.h)
         int remotePort = 6981;         // TCP port of the web app (remote::kDefaultPort)
         juce::String remoteCode;       // access code (in the file only encrypted for this Windows user, DPAPI); empty = new one when switched on
+        bool updateCheck = true;       // look for new releases on GitHub (state/Updater.h) at start and every 6 h
+        bool updateBeta = false;       // beta versions (GitHub pre-releases) count as updates too
+        juce::String updateSkip;       // version the user chose to skip ("Skip this version")
+        bool setupDone = true;         // first start: false until the welcome wizard is finished (ui/Welcome.h)
+        juce::String tour;             // guided tour (ui/Tour.h): "" never started, "<kind>:<step>" paused there, "done"
         bool operator== (const AppPrefs&) const = default;
     };
 

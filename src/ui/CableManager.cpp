@@ -241,6 +241,8 @@ public:
             h.add ("period " + juce::String (cable.eventAvgUs / 1000.0, 2) + " ms (max " + juce::String (cable.eventMaxUs / 1000.0, 1) + ")",
                    jittery ? theme::warn : theme::textFaint);
         }
+        if (cable.minRtBufferRender > 1 || cable.minRtBufferCapture > 1)   // VAC 4.71 (API 7)
+            h.add ("app buffer min. " + juce::String (juce::jmax (cable.minRtBufferRender, cable.minRtBufferCapture)) + " periods", theme::textFaint);
         h.draw (g, col.health);
     }
 

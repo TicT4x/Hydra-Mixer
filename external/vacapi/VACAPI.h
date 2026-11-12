@@ -64,7 +64,7 @@ Determine driver config from trial/free flags
 
 // API version
 
-#define ApiVersion 6
+#define ApiVersion 7
 
 
 
@@ -156,23 +156,20 @@ __if_not_exists (NumChannelsMax) {
 
 #define ValName_ReportInstanceCountToAudioDg L"Report instance count to AudioDG"
 
+#define ValName_MinWaveRtRenderBufferDurationFactor L"Minimum RT Audio render buffer duration factor"
+#define ValName_MinWaveRtCaptureBufferDurationFactor L"Minimum RT Audio capture buffer duration factor"
 
 
-#if 0
 
-// Not fully supported yet
+#define ValName_WaveRenderDeviceFriendlyName L"Wave render filter friendly name"
+#define ValName_WaveCaptureDeviceFriendlyName L"Wave capture filter friendly name"
+#define ValName_LineOutLineName L"Line output line name"
+#define ValName_MicInLineName L"Mic input line name"
+#define ValName_LineInLineName L"Line input line name"
+#define ValName_SpdifInLineName L"S/PDIF input line name"
 
-#define ValName_CaptureDeviceFriendlyName L"Capture device friendly name"
-#define ValName_RenderDeviceFriendlyName L"Render device friendly name"
-#define ValName_MicInLineName L"Mic in line name"
-#define ValName_LineInLineName L"Line in line name"
-#define ValName_SpdifInLineName L"S/PDIF in line name"
-#define ValName_LineOutLineName L"Line out line name"
-
-#define ValName_HideCaptureDevice L"Hide capture device"
-#define ValName_HideRenderDevice L"Hide render device"
-
-#endif
+#define ValName_HideRenderDevice L"Hide render filter"
+#define ValName_HideCaptureDevice L"Hide capture filter"
 
 
 
@@ -221,6 +218,8 @@ enum IoCtlFuncs : UINT {
   IOCF_SetDriverDataRange,
   IOCF_SetConnectedDestLinesMask,
   IOCF_SetPacketModePolicy,
+  IOCF_GetFilterInterfacePath,
+  IOCF_SetMinRtBufFact,
 
 };
 
@@ -263,6 +262,8 @@ enum IoCtlFuncs : UINT {
   DefineLocalIoctlCode (SetDriverDataRange, FILE_WRITE_DATA);
   DefineLocalIoctlCode (SetConnectedDestLinesMask, FILE_WRITE_DATA);
   DefineLocalIoctlCode (SetPacketModePolicy, FILE_WRITE_DATA);
+  DefineLocalIoctlCode (GetFilterInterfacePath, FILE_READ_DATA);
+  DefineLocalIoctlCode (SetMinRtBufFact, FILE_WRITE_DATA);
 
   #undef DefineLocalIoctlCode
 
@@ -525,8 +526,9 @@ namespace DriverFlags {
   static UINT const PositionRegisterSupported = 0x1000000; // Position register (RT Audio)
   static UINT const NotificationEventsSupported  = 0x2000000; // Notification events (RT Audio)
   static UINT const PacketModeSupported = 0x4000000; // Packet mode (RT Audio)
+  static UINT const RtBufferAdjustmentSupported = 0x8000000; // Buffer size adjustment (RT Audio)
 
-  static UINT const All = 0x7FFFFFF; // All flag bits
+  static UINT const All = 0x0FFF007F; // All flag bits
 
 }
 
@@ -719,7 +721,10 @@ enum Types : UINT {
   WavePci,                      // Use IPortWavePci
   WaveCyclic,                   // Use IPortWaveCyclic
 
-  NumVals,                      // Number of type values
+  Last = WaveCyclic,
+
+  NumVals,                      // Total number of type values
+  NumExplVals = NumVals - 1,    // Number of explicit values
 
 };
 
@@ -816,6 +821,8 @@ struct CableInfo {
   KdfAttrPolicies::Policies KdfAttributePolicyCapture; // KSDATAFORMAT attribute support policy (actual value for capture miniport)
   KdfAttrPolicies::Policies KdfAttributePolicyRender; // KSDATAFORMAT attribute support policy (actual value for render miniport)
 
+  UINT MinRtBufFacts [2];      // Minimum WaveRT render/capture buffer duration factors, in event periods (0 - no limit)
+
 };
 
 } // WAVEFORMATPCMEX
@@ -835,8 +842,10 @@ namespace CableFlags {
   static UINT const CapturePacketModeEnabled = 0x40; // Packet mode enabled on capture
   static UINT const RenderPacketModeEnabled = 0x80; // Packet mode enabled on render
   static UINT const ReportInstanceCountToAudioDg = 0x100; // Report act inst to AudioDG enabled
+  static UINT const CaptureFilterIsHidden = 0x200; // Capture filter is hidden
+  static UINT const RenderFilterIsHidden = 0x400; // Render filter is hidden
 
-  static UINT const All = 0x1FF;       // All flag bits
+  static UINT const All = 0x7FF;       // All flag bits
 
 }
 
@@ -945,6 +954,25 @@ Basic cable request descriptor (header)
 struct CableReq : public DriverReq {
 
   UINT CableNum;                // Cable number (0..N-1)
+
+};
+
+
+
+
+
+/*
+Get KS filter interface path request descriptor
+================================================================================================
+
+Interface path is returned in the output buffer, as a wide char (Unicode) null-terminated string.
+*/
+
+struct CableGetFilterInterfacePathReq : public CableReq {
+
+  GUID Category;                // Interface category/class
+  bool Capture;                 // Capture/render side selector
+  bool Topology;                // Topology/wave filter selector
 
 };
 
@@ -1205,6 +1233,21 @@ struct CableSetPacketModePolicyReq : public CableReq {
   bool Capture;                 // Capture/render side selector
   bool Enabled;                 // Policy to be set
 
+};
+
+
+
+
+
+/*
+Set minimum RT Audio buffer duration factor
+================================================================================================
+*/
+
+struct CableSetMinRtBufFactReq : public CableReq {
+
+  UINT Periods;                 // Number of event periods, 0 - no limit, 1 - invalid value
+  bool Capture;                 // false - render, true - capture
 };
 
 

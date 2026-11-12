@@ -682,6 +682,16 @@ void Toggle::drawIcon (juce::Graphics& g, Icon icon, bool on, juce::Rectangle<fl
             g.fillPath (heads);
             break;
         }
+        case Icon::phase:
+        {
+            // Polarity symbol: a circle crossed by a diagonal line.
+            const float stroke = juce::jmax (1.4f, s * 0.085f);
+            auto r = juce::Rectangle<float> (s * 0.56f, s * 0.56f).withCentre (c);
+            g.drawEllipse (r, stroke);
+            const float d = s * 0.38f;
+            g.drawLine (c.x - d, c.y + d, c.x + d, c.y - d, stroke);
+            break;
+        }
         case Icon::none:
         default:
             break;

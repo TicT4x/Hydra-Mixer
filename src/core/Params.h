@@ -66,6 +66,11 @@ public:
         if (unit == " dB" && v <= range.start + 0.001f && range.start <= -60.0f)
             return "-inf dB";
 
+        if (unit == " st")   // semitones: whole steps with a sign
+            return (v > 0.0f ? "+" : "") + juce::String (juce::roundToInt (v)) + " st";
+        if (unit == " ct")   // cents (fine tuning)
+            return (v > 0.0f ? "+" : "") + juce::String (v, 1) + " ct";
+
         const int decimals = std::abs (v) >= 100.0f ? 0 : 1;
         if (unit == " Hz" && v >= 1000.0f)
             return juce::String (v / 1000.0f, 2) + " kHz";

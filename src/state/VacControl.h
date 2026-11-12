@@ -3,7 +3,7 @@
 #include <vector>
 
 /** Virtual Audio Cable (VAC 4.70+, Eugene Muzychenko) driver control through its documented API
-    (external/vacapi/VACAPI.h, API version 6): how many cables exist, and setting that number.
+    (external/vacapi/VACAPI.h, API version 7; VAC 4.70 answers 6): how many cables exist, and setting that number.
 
     VAC creates N cables "Line 1" .. "Line N" (each a playback and a recording endpoint
     "Line k (Virtual Audio Cable)"). Cables are not added one by one: the number is set and the driver
@@ -62,6 +62,8 @@ struct Cable
     int overflows = 0, underflows = 0;      // the cable's own buffer ran over / empty (since reset)
     int eventMinUs = 0, eventMaxUs = 0, eventAvgUs = 0;   // measured period of its timer events
     int actualRate = 0;        // measured sample rate
+    /** Minimum WaveRT buffer of apps on this cable, in timer periods (0 = no limit; -1 = driver too old to say). */
+    int minRtBufferRender = -1, minRtBufferCapture = -1;
 };
 /** All cables; empty if VAC is not available. */
 std::vector<Cable> cables();
@@ -70,6 +72,12 @@ std::vector<Cable> cables();
 bool setMsPerInt (int cable, int ms);
 bool setFormatRange (int cable, const FormatRange&);
 bool resetCounters (int cable);
+
+/** VAC 4.71 (API 7): minimum WaveRT buffer that apps (through Windows) get on a cable side, in timer periods
+    ("ms per interrupt"); 0 or 1 = no limit. Larger = fewer dropouts of apps with tiny buffers, more latency
+    on their side only (Hydra's Kernel Streaming pins choose their own buffer). Applies to streams opened later. */
+bool supportsMinRtBuffer();
+bool setMinRtBuffer (int cable, bool capture, int periods);
 
 /** Cable clock speed relative to its nominal rate (1.0 = exact; VAC's "clock correction", precision 1e-9).
     Takes effect immediately, also while streams run. Cheap after the first call (the control path is kept). */

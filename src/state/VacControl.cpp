@@ -89,15 +89,15 @@ struct Driver
         return DeviceIoControl (handle, code, &req, reqSize, out, outSize, &got, nullptr) != FALSE;
     }
 
-    /** VACAPI.h is API 6 (VAC 4.70); VAC 4.71 only answers API 7 with the same structures (checked for
-        DriverInfo and CableInfo, the driver rejects any size mismatch). The first version that answers is kept. */
+    /** VACAPI.h is API 7 (VAC 4.71); VAC 4.70 answers API 6 (same DriverInfo). The driver rejects any size
+        mismatch. The first version that answers is kept. */
     bool driverInfo (V::DriverInfo& di) const
     {
         V::DriverInfoReq r {};
         di = {};
         if (ioctl (V::IoCtl_Local_GetDriverInfo, r, sizeof (r), &di, sizeof (di))) return true;
         const UINT tried = apiVersion.load();
-        for (UINT v : { (UINT) ApiVersion, (UINT) ApiVersion + 1 })   // ApiVersion: a macro in VACAPI.h
+        for (UINT v : { (UINT) ApiVersion, (UINT) ApiVersion - 1 })   // ApiVersion: a macro in VACAPI.h (7)
         {
             if (v == tried) continue;
             apiVersion = v;
@@ -108,6 +108,26 @@ struct Driver
     }
 
     static inline std::atomic<UINT> apiVersion { ApiVersion };
+
+    /** CableInfo of API 7 ends with MinRtBufFacts; VAC 4.70 and older 4.71 builds know only the shorter
+        structure (and reject the longer one). Asks with the full size first, the size that worked is kept. */
+    bool cableInfo (UINT cable, V::CableInfo& ci) const
+    {
+        V::CableReq r {};
+        r.CableNum = cable;
+        ci = {};
+        const DWORD size = cableInfoSize.load();
+        if (ioctl (V::IoCtl_Local_GetCableInfo, r, sizeof (r), &ci, size)) return true;
+        const DWORD other = size == kFullCableInfo ? kShortCableInfo : kFullCableInfo;
+        ci = {};
+        if (! ioctl (V::IoCtl_Local_GetCableInfo, r, sizeof (r), &ci, other)) return false;
+        cableInfoSize = other;
+        return true;
+    }
+
+    static constexpr DWORD kFullCableInfo = (DWORD) sizeof (V::CableInfo);
+    static constexpr DWORD kShortCableInfo = (DWORD) offsetof (V::CableInfo, MinRtBufFacts);
+    static inline std::atomic<DWORD> cableInfoSize { kFullCableInfo };
 
     /** Reloads the driver (DIF_PROPERTYCHANGE). Needs administrator rights. */
     Result restart()
@@ -139,7 +159,7 @@ Info query()
     V::DriverInfo di;
     if (! d.driverInfo (di))
     {
-        info.error = "the driver did not answer (Hydra speaks API 6 and 7, VAC 4.70 / 4.71; error " + juce::String ((int) GetLastError()) + ")";
+        info.error = "the driver did not answer (Hydra speaks API 7 and 6, VAC 4.71 / 4.70; error " + juce::String ((int) GetLastError()) + ")";
         return info;
     }
     info.installed = true;
@@ -202,10 +222,8 @@ std::vector<int> streamsPerCable()
     if (! d.open() || ! d.driverInfo (di)) return streams;
     for (UINT k = 0; k < di.NumCables; ++k)
     {
-        V::CableReq r {};
-        r.CableNum = k;
         V::CableInfo ci {};
-        if (! d.ioctl (V::IoCtl_Local_GetCableInfo, r, sizeof (r), &ci, sizeof (ci))) return {};
+        if (! d.cableInfo (k, ci)) return {};
         streams.push_back ((int) (ci.InStreams + ci.OutStreams));
     }
     return streams;
@@ -219,10 +237,8 @@ std::vector<Cable> cables()
     if (! d.open() || ! d.driverInfo (di)) return list;
     for (UINT k = 0; k < di.NumCables; ++k)
     {
-        V::CableReq r {};
-        r.CableNum = k;
         V::CableInfo ci {};
-        if (! d.ioctl (V::IoCtl_Local_GetCableInfo, r, sizeof (r), &ci, sizeof (ci))) return {};
+        if (! d.cableInfo (k, ci)) return {};
         Cable c;
         c.number = (int) k + 1;
         c.msPerInt = (int) ci.MsPerInt;
@@ -240,6 +256,13 @@ std::vector<Cable> cables()
         c.eventMaxUs = (int) ci.EventPeriodMcsMax;
         c.eventAvgUs = (int) ci.EventPeriodMcsAvg;
         c.actualRate = (int) ci.ActualSR;
+        if (Driver::cableInfoSize.load() == Driver::kFullCableInfo)
+        {
+            c.minRtBufferRender = (int) ci.MinRtBufFacts[0];
+            c.minRtBufferCapture = (int) ci.MinRtBufFacts[1];
+        }
+        else
+            c.minRtBufferRender = c.minRtBufferCapture = -1;
         list.push_back (c);
     }
     return list;
@@ -275,6 +298,21 @@ bool resetCounters (int cable)
 {
     V::CableReq r {};
     return cableRequest (V::IoCtl_Local_ResetCableCounters, r, cable);
+}
+
+bool supportsMinRtBuffer()
+{
+    Driver d;
+    V::DriverInfo di;
+    return d.open() && d.driverInfo (di) && (di.Flags & V::DriverFlags::RtBufferAdjustmentSupported) != 0;
+}
+
+bool setMinRtBuffer (int cable, bool capture, int periods)
+{
+    V::CableSetMinRtBufFactReq r {};
+    r.Periods = periods <= 1 ? 0u : (UINT) juce::jmin (periods, 64);   // 1 is invalid, 0 = no limit
+    r.Capture = capture;
+    return cableRequest (V::IoCtl_Local_SetMinRtBufFact, r, cable);
 }
 
 namespace
@@ -328,7 +366,15 @@ double getClockCorrection (int cable)
     V::CableReq r {};
     r.CableNum = (UINT) juce::jmax (0, cable - 1);
     V::CableInfo ci {};
-    if (cable < 1 || ! quickRequest (V::IoCtl_Local_GetCableInfo, r, &ci, sizeof (ci))) return 1.0;
+    if (cable < 1) return 1.0;
+    if (! quickRequest (V::IoCtl_Local_GetCableInfo, r, &ci, Driver::cableInfoSize.load()))
+    {
+        // the other CableInfo size (see Driver::cableInfo)
+        const DWORD other = Driver::cableInfoSize.load() == Driver::kFullCableInfo ? Driver::kShortCableInfo : Driver::kFullCableInfo;
+        ci = {};
+        if (! quickRequest (V::IoCtl_Local_GetCableInfo, r, &ci, other)) return 1.0;
+        Driver::cableInfoSize = other;
+    }
     return ci.ClockCorrection > 0 ? ci.ClockCorrection / (double) V::ClockCorrDenom : 1.0;
 }
 

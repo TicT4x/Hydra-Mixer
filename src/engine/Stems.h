@@ -36,6 +36,9 @@ struct ModelInfo
     int samples;             // fixed window at 44.1 kHz
     bool guitar;             // separates guitar
     const char* license;     // shown
+    /** Folded models (foldModel, loads faster): the patched, unfolded file. Downloads pass through it; one left by an
+        older Hydra is folded once when the model loads next. nullptr: the model is used as patched. */
+    const char* unfolded = nullptr;
 };
 const ModelInfo& modelInfo (Model);
 
@@ -211,6 +214,11 @@ public:
     double loadOf (int mode, const Tuning& = {}) const;
     /** Share of the GPU one channel's running stream needs (0 while it does not run). */
     double loadOf (const Instance&) const;
+    /** State::unavailable message on PCs without a dedicated graphics card (Stems is not loaded there). */
+    static constexpr const char* kNoGpuMessage = "No dedicated graphics card found. Stem separation needs one (NVIDIA, AMD or Intel Arc) and is not loaded";
+    /** Message thread: no dedicated graphics card, nothing will load (set by the check at construction). */
+    void markNoGpu();
+
     /** Seconds a model stays loaded after the last channel stopped using it. */
     static constexpr double kUnloadSeconds = 15.0;
     /** True while the model is loaded and separates (audio thread reads this every block). */
@@ -218,6 +226,8 @@ public:
     /** Time per window measured when the model was loaded (0 = not loaded yet). Any thread. */
     static double referenceMs (Model m) noexcept { return refMs[(size_t) m].load (std::memory_order_relaxed); }
 
+    /** The model file that is there (the folded one, else an unfolded one from an older Hydra); the folded name if
+        none is there yet. */
     static juce::File modelFile (Model);
     /** Downloads, checks and prepares a model (its worker thread); then loads it if a channel uses it. */
     void startDownload (Model);
@@ -261,4 +271,10 @@ private:
 struct TensorData { const char* name; std::vector<int64_t> shape; std::vector<float> data; };
 bool runOnnxForTests (const juce::File& model, bool cpu, const std::vector<TensorData>& inputs, std::vector<TensorData>& outputs,
                       juce::String& error);
+
+/** Writes `in` with its constant parts computed once (ONNX Runtime's basic, provider-independent graph optimizations:
+    constant folding, shape arithmetic, redundant nodes) to `out`. The model computes exactly the same; it only has far
+    fewer nodes, so creating a session is faster (HT-Demucs: ~25 000 -> ~1 500 nodes, 7 s -> 2 s). The weights are
+    stored as float32 afterwards (the file doubles). Worker thread (CPU, a few seconds). */
+bool foldModel (const juce::File& in, const juce::File& out, juce::String& error);
 } // namespace hydra::stems

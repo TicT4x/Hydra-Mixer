@@ -7,8 +7,10 @@ namespace
 /** Below this a switched-off stage counts as measuring noise (added to the rest instead of shown). */
 constexpr double kNoise = 0.02;
 
-const std::array<juce::String, DspView::numColumns> kColumnNames { "Denoiser", "EQ", "Gate", "Comp", "Plugins", "Limiter", "Rest" };
+const std::array<juce::String, DspView::numColumns> kColumnNames { "Denoiser", "EQ", "Gate", "Comp", "Utility", "Transpose", "Stems",
+                                                                   "Correction", "Plugins", "Limiter", "Rest" };
 const std::array<juce::Colour, DspView::numColumns> kColumnColours { theme::good, theme::accentIn, theme::solo, theme::accentHw,
+                                                                     theme::fxUtility, theme::fxTranspose, theme::fxStems, theme::fxCorrection,
                                                                      theme::warn, theme::accentVirt, theme::textDim };
 
 juce::String percent (double v) { return juce::String (v, v < 10.0 ? 2 : 1) + " %"; }
@@ -25,11 +27,12 @@ class DspView::Table final : public juce::Component, public juce::SettableToolti
 public:
     explicit Table (UiContext& c) : ctx (c) {}
     std::vector<Row> rows;
+    std::vector<int> cols;   // columns shown (some channel has that stage), in order
     double maxCell = 0.0, maxTotal = 0.0;
 
     static constexpr int kPad = 6, kNameW = 210, kTotalW = 180, kHeadH = 26, kRowH = 34, kMinColW = 74;
 
-    int neededWidth() const { return 2 * kPad + kNameW + kTotalW + numColumns * kMinColW; }
+    int neededWidth() const { return 2 * kPad + kNameW + kTotalW + (int) cols.size() * kMinColW; }
     int neededHeight() const { return 2 * kPad + kHeadH + (int) rows.size() * kRowH; }
 
     void paint (juce::Graphics& g) override
@@ -40,9 +43,10 @@ public:
         g.setColour (theme::textDim);
         g.drawText ("CHANNEL", juce::Rectangle<int> (kPad + 10, kPad, kNameW, kHeadH), juce::Justification::centredLeft);
         g.drawText ("TOTAL", juce::Rectangle<int> (kPad + kNameW, kPad, kTotalW, kHeadH), juce::Justification::centredLeft);
-        for (int c = 0; c < numColumns; ++c)
+        for (size_t ci = 0; ci < cols.size(); ++ci)
         {
-            auto r = juce::Rectangle<int> (kPad + kNameW + kTotalW + c * colW, kPad, colW, kHeadH);
+            const int c = cols[ci];
+            auto r = juce::Rectangle<int> (kPad + kNameW + kTotalW + (int) ci * colW, kPad, colW, kHeadH);
             g.setColour (kColumnColours[(size_t) c]);
             g.fillRoundedRectangle (r.removeFromLeft (3).reduced (0, 7).toFloat(), 1.5f);
             g.setColour (theme::textDim);
@@ -98,7 +102,7 @@ public:
                 g.drawFittedText (row.engineText, r.reduced (8, 0), juce::Justification::centredLeft, 1, 0.8f);
                 continue;
             }
-            for (int c = 0; c < numColumns; ++c)
+            for (int c : cols)
                 drawCell (g, row, c, r.removeFromLeft (colW));
         }
     }
@@ -132,7 +136,7 @@ public:
     }
 
 private:
-    int columnWidth() const { return juce::jmax (kMinColW, (getWidth() - 2 * kPad - kNameW - kTotalW) / numColumns); }
+    int columnWidth() const { return juce::jmax (kMinColW, (getWidth() - 2 * kPad - kNameW - kTotalW) / juce::jmax (1, (int) cols.size())); }
     juce::Rectangle<int> rowRect (int i) const { return { kPad, kPad + kHeadH + i * kRowH, getWidth() - 2 * kPad, kRowH - 3 }; }
     int rowAt (juce::Point<int> p) const
     {
@@ -142,7 +146,8 @@ private:
     int columnAt (int x) const
     {
         const int x0 = kPad + kNameW + kTotalW;
-        return x < x0 ? -1 : juce::jmin ((int) numColumns - 1, (x - x0) / columnWidth());
+        if (x < x0 || cols.empty()) return -1;
+        return cols[(size_t) juce::jmin ((int) cols.size() - 1, (x - x0) / columnWidth())];
     }
 
     void drawCell (juce::Graphics& g, const Row& row, int c, juce::Rectangle<int> r) const
@@ -276,6 +281,15 @@ void DspView::measure()
         r.pluginInfo = lines.isEmpty() ? juce::String() : r.title + "  ·  plugins\n" + lines.joinIntoString ("\n");
         return juce::jmax (0.0, stageTotal - inPlugins);   // copies around the plugins
     };
+    // Any instance of the effect in the chain and switched on.
+    auto used = [&e] (int ch, Fx f)
+    {
+        const auto& chain = e.chainFor (ch);
+        for (int k = 0; k < Engine::maxInstances (f); ++k)
+            if (chain.hasBuiltin (f, k))
+                if (auto* on = e.fxOnParam (ch, f, k); on != nullptr && on->isOn()) return true;
+        return false;
+    };
     // A stage that is off still shows its time if it is above measuring noise.
     auto stage = [] (Row& r, Column c, bool on, double v, double& other)
     {
@@ -294,15 +308,16 @@ void DspView::measure()
         r.colour = theme::accentIn;
         r.selectIndex = i;
         double other = st (DspTimes::other);
-        const auto& fx = s.plugins;
-        stage (r, denoiser, s.dnOn->isOn() && fx.hasBuiltin (Fx::denoiser), st (DspTimes::denoiser), other);
-        stage (r, eq, s.eq.on->isOn() && fx.hasBuiltin (Fx::eq), st (DspTimes::eq), other);
-        stage (r, gate, s.gateOn->isOn() && fx.hasBuiltin (Fx::gate), st (DspTimes::gate), other);
-        stage (r, comp, s.compOn->isOn() && fx.hasBuiltin (Fx::comp), st (DspTimes::comp), other);
+        const int ch = i;
+        stage (r, denoiser, used (ch, Fx::denoiser), st (DspTimes::denoiser), other);
+        stage (r, eq, used (ch, Fx::eq), st (DspTimes::eq), other);
+        stage (r, gate, used (ch, Fx::gate), st (DspTimes::gate), other);
+        stage (r, comp, used (ch, Fx::comp), st (DspTimes::comp), other);
+        stage (r, utility, used (ch, Fx::utility), st (DspTimes::utility), other);
+        stage (r, transpose, used (ch, Fx::transpose), st (DspTimes::transpose), other);
+        stage (r, stems, used (ch, Fx::stems), st (DspTimes::stems), other);
         other += pluginsOf (r, s.plugins, st (DspTimes::plugins), *s.fxBypass);
-        bool lim = false;
-        for (int k = 0; k < kFxInstances; ++k) lim = lim || (s.limiters[(size_t) k].on->isOn() && fx.hasBuiltin (Fx::limiter, k));
-        stage (r, limiter, lim, st (DspTimes::limiter), other);
+        stage (r, limiter, used (ch, Fx::limiter), st (DspTimes::limiter), other);
         r.present[rest] = true;
         r.target[rest] = other;
         if (s.source.kind == IoTarget::Kind::None) r.note = "no source";
@@ -320,11 +335,13 @@ void DspView::measure()
         r.colour = theme::busColour (b);
         r.selectIndex = busSelectIndex (b);
         double other = st (DspTimes::other);
-        stage (r, eq, (bus.eq.on->isOn() && bus.plugins.hasBuiltin (Fx::eq)) || bus.plugins.hasBuiltin (Fx::correction),
-               st (DspTimes::eq), other);
-        stage (r, comp, bus.comps[0].on->isOn() && bus.plugins.hasBuiltin (Fx::comp), st (DspTimes::comp), other);
+        const int ch = busSelectIndex (b);
+        stage (r, correction, used (ch, Fx::correction), st (DspTimes::correction), other);
+        stage (r, utility, used (ch, Fx::utility), st (DspTimes::utility), other);
+        stage (r, eq, used (ch, Fx::eq), st (DspTimes::eq), other);
+        stage (r, comp, used (ch, Fx::comp), st (DspTimes::comp), other);
         other += pluginsOf (r, bus.plugins, st (DspTimes::plugins), *bus.fxBypass);
-        stage (r, limiter, bus.limOn->isOn() && bus.plugins.hasBuiltin (Fx::limiter), st (DspTimes::limiter), other);
+        stage (r, limiter, used (ch, Fx::limiter), st (DspTimes::limiter), other);
         r.present[rest] = true;
         r.target[rest] = other;
         if (bus.output.kind == IoTarget::Kind::None) r.note = "no output";
@@ -400,9 +417,17 @@ void DspView::measure()
         else
             summary = e.getMasterDevice() == nullptr ? "Audio engine stopped - open Settings > Audio Engine." : "Measuring...";
     }
-    const bool newLayout = rows.size() != table->rows.size();
+    std::vector<int> cols;
+    for (int c = 0; c < numColumns; ++c)
+    {
+        bool any = c == rest;
+        for (auto& r : rows) any = any || (! r.engine && r.present[(size_t) c]);
+        if (any) cols.push_back (c);
+    }
+    const bool newLayout = rows.size() != table->rows.size() || cols != table->cols;
     table->rows = std::move (rows);
-    if ((int) table->rows.size() * Table::kRowH + 2 * Table::kPad + Table::kHeadH != table->getHeight()) resized();
+    table->cols = std::move (cols);
+    if (newLayout || (int) table->rows.size() * Table::kRowH + 2 * Table::kPad + Table::kHeadH != table->getHeight()) resized();
     if (writeText || newLayout)
     {
         table->repaint();

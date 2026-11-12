@@ -4,6 +4,8 @@
 #include "state/VacCables.h"
 #include "state/ChannelClipboard.h"
 #include "state/Session.h"
+#include "state/Updater.h"
+#include "state/Install.h"
 
 namespace hydra
 {
@@ -192,12 +194,25 @@ DspMeter::DspMeter()
     setLoad (0.0f, 0.0f);
 }
 
-void DspMeter::setLoad (float l, float peak)
+void DspMeter::setLoad (float l, float peak, int overloadsNow, uint64_t overloadsTotal)
 {
-    setTooltip ("DSP load\nAverage share of real time the audio engine needs (like a DAW's CPU meter). Slowest single block: "
-                + juce::String (juce::roundToInt (peak * 100.0f)) + " %. Click: what uses it, per channel and plugin");
-    if (std::abs (l - load) <= 0.002f) return;
+    juce::String tip ("DSP load\nBar and number: average share of real time the audio engine needs (like a DAW's CPU meter).\n"
+                      "Mark: slowest single block of the last second, now " + juce::String (juce::roundToInt (peak * 100.0f)) + " %. "
+                      "Above 100 % a block was not ready in time: that clicks on all devices at once (red).");
+    if (overloadsTotal > 0) tip << "\nBlocks over 100 % since the start: " << juce::String ((juce::int64) overloadsTotal) << " (also in hydra.log)";
+    tip << "\nClick: what uses it, per channel and plugin";
+    setTooltip (tip);
+    if (overloadsNow > 0) alarm = 1.0f;   // shown for ~3 s (fades in tick)
+    if (std::abs (l - load) <= 0.002f && std::abs (peak - peakLoad) <= 0.01f && overloadsNow == 0) return;
     load = l;
+    peakLoad = peak;
+    repaint();
+}
+
+void DspMeter::tick()
+{
+    if (alarm <= 0.0f) return;
+    alarm = juce::jmax (0.0f, alarm - 1.0f / 12.0f);   // called 4x per second: ~3 s
     repaint();
 }
 
@@ -214,11 +229,18 @@ void DspMeter::paint (juce::Graphics& g)
     g.setFont (theme::font (12.0f));
     g.drawText ("DSP", r.removeFromLeft (30), juce::Justification::centredLeft);
     auto bar = r.removeFromLeft (70).withSizeKeepingCentre (70, 6).toFloat();
-    g.setColour (theme::bg);
+    g.setColour (alarm > 0.0f ? theme::bg.interpolatedWith (theme::mute, 0.55f * alarm) : theme::bg);
     g.fillRoundedRectangle (bar, 3.0f);
     g.setColour (load < 0.5f ? theme::good : load < 0.8f ? theme::solo : theme::mute);
     g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * juce::jlimit (0.0f, 1.0f, load)), 3.0f);
-    g.setColour (theme::text);
+    // Peak mark: the slowest block of the last second (an average of 20 % can hide single blocks at 120 %).
+    if (peakLoad > load + 0.01f)
+    {
+        const float x = bar.getX() + bar.getWidth() * juce::jlimit (0.0f, 1.0f, peakLoad) - 1.0f;
+        g.setColour (peakLoad < 0.5f ? theme::good : peakLoad < 0.8f ? theme::solo : theme::mute);
+        g.fillRect (juce::Rectangle<float> (juce::jmax (bar.getX(), x), bar.getY() - 2.0f, 2.0f, bar.getHeight() + 4.0f));
+    }
+    g.setColour (alarm > 0.0f ? theme::text.interpolatedWith (theme::mute, alarm) : theme::text);
     g.drawText (juce::String (load * 100.0f, 1) + "%", r, juce::Justification::centredRight);
 }
 
@@ -265,6 +287,12 @@ TopBar::TopBar (UiContext& c) : ctx (c), recorder (c)
     addAndMakeVisible (statusLink);
     for (auto* b : { &tools, &settings, &power, &minimiseBtn, &maximiseBtn, &closeBtn })
         addAndMakeVisible (b);
+    addChildComponent (updateBadge);
+    // Ids for the guided tour (ui/Tour.cpp).
+    tools.setComponentID ("top.tools");
+    settings.setComponentID ("top.settings");
+    statusLink.setComponentID ("top.status");
+    dsp.setComponentID ("top.dsp");
     // Normally Windows handles these clicks (native caption buttons); this covers the few pixels
     // at the window edge that are reported as client area for resizing.
     auto window = [this] { return findParentComponentOfClass<juce::DocumentWindow>(); };
@@ -314,15 +342,41 @@ void TopBar::update()
     if (ctx.learnMode)
         s = "MIDI LEARN MODE - click a control, then move / press a MIDI control.   Esc = exit";
     if (demoMode) s = demoStatus;
+
+    // Update available / downloading (Updater): a badge left of the tools.
+    if (ctx.updater != nullptr)
+    {
+        const auto st = ctx.updater->getStatus();
+        const bool skipped = ctx.session != nullptr && st.release.version == ctx.session->prefs.updateSkip;
+        juce::String badge;
+        float progress = -1.0f;
+        using S = Updater::State;
+        if (st.state == S::available && ! skipped) badge = "Update " + st.release.version;
+        else if (st.state == S::downloading) { badge = "Downloading " + juce::String (juce::roundToInt (st.progress * 100.0f)) + " %"; progress = st.progress; }
+        else if (st.state == S::ready) { badge = "Installing..."; progress = 1.0f; }
+        if (badge.isNotEmpty() != updateBadge.isVisible())
+        {
+            updateBadge.setVisible (badge.isNotEmpty());
+            resized();
+        }
+        updateBadge.set (badge, progress);
+        updateBadge.setTooltip (st.state == S::available
+            ? "Hydra Mixer " + st.release.version + (st.release.prerelease ? " (beta)" : "") + " is available. Click to see what is new and update."
+            : "Downloading the update. Hydra restarts by itself when it is done (audio stops for a few seconds).");
+    }
     statusLink.setStatus (s, demoMode || e.getMasterDevice() != nullptr, ctx.learnMode);
 
     // DSP load: average over the last ~0.25 s (like a DAW's CPU meter), refreshed 4x per second.
     // The peak (single slowest callback) goes into the tooltip.
-    peakSmooth = juce::jmax (e.getPeakLoad(), peakSmooth * 0.97f);
     if (++cpuTick >= 8)
     {
         cpuTick = 0;
-        dsp.setLoad (demoMode ? demoDspLoad : cpuMeter.update (e), demoMode ? demoDspLoad : peakSmooth);
+        const auto ov = e.getOverloads();
+        const int fresh = (int) juce::jmin ((uint64_t) 1000, ov - juce::jmin (ov, overloadsSeen));
+        overloadsSeen = ov;
+        dsp.setLoad (demoMode ? demoDspLoad : cpuMeter.update (e), demoMode ? demoDspLoad * 1.4f : e.getRecentPeak(),
+                     demoMode ? 0 : fresh, demoMode ? 0 : ov);
+        dsp.tick();
     }
 
     const auto act = ctx.midi.activity.load();
@@ -390,7 +444,8 @@ void TopBar::resized()
 {
     // What is left next to the buttons is shared by the logo, the recorder and the status. Narrow windows give
     // up the full recorder first (cassette button instead), then the logo text, then the status text.
-    const int avail = juce::jmax (0, getWidth() - (46 * 3 + 6) - 2 * 12 - (36 * 3 + 6 + 6 + 12));
+    const int avail = juce::jmax (0, getWidth() - (46 * 3 + 6) - 2 * 12 - (36 * 3 + 6 + 6 + 12)
+                                     - (updateBadge.isVisible() ? updateBadge.idealWidth() + 10 : 0));
     const int statusWanted = kBarDspW + kBarMidiW + kBarTextMin;
     const bool fullRecorder = avail >= kBarLogoFull + 12 + kBarRecFull + 12 + statusWanted;
     const bool fullLogo = avail >= kBarLogoFull + 12 + (fullRecorder ? kBarRecFull : kBarRecIcon) + 12 + statusWanted;
@@ -437,6 +492,11 @@ void TopBar::layoutBar()
     r.removeFromRight (6);
     tools.setBounds (r.removeFromRight (36));
     r.removeFromRight (12);
+    if (updateBadge.isVisible())
+    {
+        updateBadge.setBounds (r.removeFromRight (juce::jmin (r.getWidth(), updateBadge.idealWidth())).reduced (0, 3));
+        r.removeFromRight (10);
+    }
 
     // While they change size (see resized) the slot shrinks and clips, the recorder fades into the cassette:
     // one out in the first half of the way, the other in during the second.
@@ -499,6 +559,9 @@ MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys
     addAndMakeVisible (strips);
     shownLayout = engine.getLayoutVersion();
     addAndMakeVisible (inspector);
+    strips.setComponentID ("strips");      // ids for the guided tour
+    inspector.setComponentID ("inspector");
+    top.updateBadge.onClick = [this] { showUpdateDialog(); };
     ctx.openPanel = [this] (std::unique_ptr<juce::Component> content, juce::String title) { openPanelWindow (std::move (content), title); };
     ctx.addChannel = [this] (int group) { addChannel (group); };
     ctx.changeOrder = [this] { beginReorder(); };
@@ -584,6 +647,10 @@ MainComponent::~MainComponent()
 {
     if (appComponent == this) appComponent = nullptr;
     stopTimer();
+    tour.reset();
+    welcome.reset();
+    tourResume.reset();
+    pluginScan.reset();   // cancels a scan still running
     if (hotkeyTarget != nullptr) { ctx.hotkeys.setMouseCapture (nullptr); ctx.hotkeys.setSuspended (false); }
     ctx.engine.removeChangeListener (this);
     ctx.midi.onLearned = nullptr;
@@ -1127,6 +1194,18 @@ void MainComponent::showToolsMenu()
     m.addItem ("Recorder", [safe] { if (safe != nullptr) safe->select (kRecorderSelect); });
     m.addSeparator();
     m.addItem ("Restart Audio Engine", run (&MainComponent::restartAudioEngine));
+    m.addSeparator();
+    {
+        juce::PopupMenu help;
+        Tour::Kind kind;
+        int step = 0;
+        if (ctx.session != nullptr && Tour::parseState (ctx.session->prefs.tour, kind, step))
+            help.addItem ("Continue the tour (step " + juce::String (step + 1) + ")", [safe, kind, step] { if (safe != nullptr) safe->startTour (kind, step); });
+        help.addItem ("Full tour (2 min)", [safe] { if (safe != nullptr) safe->startTour (Tour::Kind::full, 0); });
+        help.addItem ("Coming from Voicemeeter (1 min)", [safe] { if (safe != nullptr) safe->startTour (Tour::Kind::voicemeeter, 0); });
+        m.addSubMenu ("Guided tour", help);
+        m.addItem ("Setup wizard...", [safe] { if (safe != nullptr) safe->startWelcome(); });
+    }
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&top.tools).withMinimumWidth (200));
 }
 
@@ -1277,6 +1356,11 @@ ToolWindow& MainComponent::makeToolWindow (std::unique_ptr<ToolWindow>& slot, co
 
 bool MainComponent::keyPressed (const juce::KeyPress& k)
 {
+    if (tour != nullptr && tour->isVisible() && k == juce::KeyPress::escapeKey)
+    {
+        tour->pause();
+        return true;
+    }
     if (hotkeyTarget != nullptr)
     {
         if (k == juce::KeyPress::escapeKey)
@@ -1320,6 +1404,13 @@ void MainComponent::timerCallback()
         rebuildStrips();
     inspector.updateMeters();
     top.update();
+    tickUpdates();
+    if (pluginScan != nullptr && ! pluginScan->isThreadRunning())
+    {
+        pluginScan.reset();
+        showToast ("Plugin scan done: " + juce::String (ctx.engine.pluginHost.known.getNumTypes()) + " plugins found", 3.0);
+        inspector.reload();
+    }
 
     // SEL: exclusive, and the input faders switch to the sends of the selected bus.
     ctx.engine.enforceExclusiveSelect();
@@ -1422,5 +1513,252 @@ void MainComponent::resized()
         r.removeFromRight (8);
     }
     strips.setBounds (r);
+    if (tourResume != nullptr)
+        tourResume->setTopLeftPosition (getWidth() - TourResumeCard::kWidth - 16, getHeight() - TourResumeCard::kHeight - 16);
+}
+
+//==============================================================================
+void UpdateBadge::set (const juce::String& t, float p)
+{
+    if (t == text && std::abs (p - progress) < 0.002f) return;
+    text = t;
+    progress = p;
+    repaint();
+}
+
+int UpdateBadge::idealWidth() const
+{
+    return juce::jmax (120, juce::GlyphArrangement::getStringWidthInt (theme::font (12.5f, true), "Downloading 100 %") + 44);
+}
+
+void UpdateBadge::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat().reduced (0.5f);
+    const float rad = r.getHeight() / 2.0f;
+    juce::ColourGradient grad (theme::accentIn, r.getX(), 0, theme::accentHw, r.getRight(), 0, false);
+    if (progress < 0.0f)
+    {
+        g.setGradientFill (grad);
+        g.setOpacity (hover ? 1.0f : 0.88f);
+        g.fillRoundedRectangle (r, rad);
+        g.setOpacity (1.0f);
+    }
+    else
+    {
+        g.setColour (theme::raised);
+        g.fillRoundedRectangle (r, rad);
+        juce::Graphics::ScopedSaveState s (g);
+        juce::Path clip;
+        clip.addRoundedRectangle (r, rad);
+        g.reduceClipRegion (clip);
+        g.setGradientFill (grad);
+        g.setOpacity (0.55f);
+        g.fillRect (r.withWidth (r.getWidth() * juce::jlimit (0.0f, 1.0f, progress)));
+    }
+    // Arrow down into a tray.
+    const auto icon = juce::Rectangle<float> (r.getX() + 12.0f, r.getCentreY() - 7.0f, 14.0f, 14.0f);
+    g.setColour (progress < 0.0f ? theme::bg : theme::text);
+    juce::Path a;
+    a.startNewSubPath (icon.getCentreX(), icon.getY());
+    a.lineTo (icon.getCentreX(), icon.getBottom() - 4.0f);
+    a.startNewSubPath (icon.getX() + 3.0f, icon.getBottom() - 8.0f);
+    a.lineTo (icon.getCentreX(), icon.getBottom() - 4.0f);
+    a.lineTo (icon.getRight() - 3.0f, icon.getBottom() - 8.0f);
+    a.startNewSubPath (icon.getX(), icon.getBottom() - 2.0f);
+    a.lineTo (icon.getX(), icon.getBottom());
+    a.lineTo (icon.getRight(), icon.getBottom());
+    a.lineTo (icon.getRight(), icon.getBottom() - 2.0f);
+    g.strokePath (a, juce::PathStrokeType (1.7f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.setFont (theme::font (12.5f, true));
+    g.drawText (text, r.withTrimmedLeft (34.0f).withTrimmedRight (10.0f), juce::Justification::centredLeft, true);
+}
+
+//==============================================================================
+void MainComponent::setUpdater (Updater* u, std::function<void()> install, std::function<void()> check)
+{
+    ctx.updater = u;
+    ctx.installUpdate = std::move (install);
+    ctx.checkForUpdates = std::move (check);
+}
+
+void MainComponent::tickUpdates()
+{
+    if (ctx.updater == nullptr || ctx.updater->version.load() == shownUpdate) return;
+    shownUpdate = ctx.updater->version.load();
+    const auto st = ctx.updater->getStatus();
+    if (st.state == Updater::State::ready && installWhenReady)
+    {
+        installWhenReady = false;
+        if (ctx.installUpdate) ctx.installUpdate();
+    }
+    else if (st.state == Updater::State::failed && installWhenReady)
+    {
+        installWhenReady = false;
+        dialog::message (this, dialog::Kind::warning, "Update failed", st.error + "\n\nHydra keeps running as it is. Try again later "
+                         "(the update badge stays) or download it from the website.");
+    }
+}
+
+void MainComponent::showUpdateDialog()
+{
+    if (ctx.updater == nullptr) return;
+    const auto st = ctx.updater->getStatus();
+    juce::Component::SafePointer<MainComponent> safe (this);
+    if (st.state == Updater::State::downloading)
+    {
+        dialog::confirm (this, dialog::Kind::question, "Cancel the update?", "The download stops. You can start it again with the badge.",
+                         "Cancel download", [safe]
+                         {
+                             if (safe == nullptr || safe->ctx.updater == nullptr) return;
+                             safe->installWhenReady = false;
+                             safe->ctx.updater->cancelDownload();
+                         });
+        return;
+    }
+    if (st.state != Updater::State::available && st.state != Updater::State::failed) return;
+    // Release notes, shortened and without Markdown marks.
+    juce::StringArray lines;
+    for (auto line : juce::StringArray::fromLines (st.release.notes))
+    {
+        line = line.trim();
+        while (line.startsWithChar ('#')) line = line.substring (1).trim();
+        if (line.startsWith ("- ") || line.startsWith ("* ")) line = juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xa2 ")) + line.substring (2);
+        line = line.replace ("**", "").replace ("`", "");
+        if (line.isNotEmpty()) lines.add (line);
+        if (lines.size() >= 12) { lines.add ("..."); break; }
+    }
+    auto text = lines.joinIntoString ("\n");
+    if (text.length() > 1100) text = text.substring (0, 1100) + "...";
+    const auto v = st.release.version;
+    dialog::show (this, dialog::Kind::info, "Hydra Mixer " + v + (st.release.prerelease ? " (beta)" : "") + " is available",
+                  (text.isNotEmpty() ? text + "\n\n" : juce::String()) + "You are using " + install::currentVersion()
+                      + ". Updating downloads it, saves your settings and restarts Hydra (audio stops for a few seconds).",
+                  { { "Update now", dialog::Button::Role::primary }, { "Later", dialog::Button::Role::cancel }, { "Skip this version" } },
+                  [safe, v] (int choice)
+                  {
+                      if (safe == nullptr || safe->ctx.updater == nullptr) return;
+                      if (choice == 0)
+                      {
+                          safe->installWhenReady = true;
+                          safe->ctx.updater->download();
+                      }
+                      else if (choice == 2 && safe->ctx.session != nullptr)
+                      {
+                          safe->ctx.session->prefs.updateSkip = v;
+                          safe->ctx.session->prefsVersion.fetch_add (1);
+                      }
+                  });
+}
+
+//==============================================================================
+void MainComponent::startWelcome()
+{
+    if (welcome != nullptr) return;
+    tour.reset();
+    tourResume.reset();
+    welcome = std::make_unique<WelcomeWizard> (ctx, *this);
+    welcome->onChanged = [this]
+    {
+        undo.clear();
+        refreshAll();
+        closePanelWindow();
+        inspector.reload();
+        if (onChannelsChanged) onChannelsChanged();
+    };
+    welcome->onScanPlugins = [this]
+    {
+        if (pluginScan != nullptr) return;
+        pluginScan = std::make_unique<PluginScanJob> (ctx.engine);
+        pluginScan->startThread (juce::Thread::Priority::low);
+        showToast ("Looking for VST3 plugins in the background...", 3.0);
+    };
+    welcome->onDone = [this] (WelcomeWizard::Tour t)
+    {
+        if (ctx.session != nullptr)
+        {
+            ctx.session->prefs.setupDone = true;
+            ctx.session->prefsVersion.fetch_add (1);
+        }
+        // Later: this is called from inside the wizard.
+        juce::Component::SafePointer<MainComponent> safe (this);
+        juce::MessageManager::callAsync ([safe, t]
+        {
+            if (safe == nullptr) return;
+            safe->welcome.reset();
+            safe->grabKeyboardFocus();
+            if (t == WelcomeWizard::Tour::full) safe->startTour (Tour::Kind::full, 0);
+            else if (t == WelcomeWizard::Tour::voicemeeter) safe->startTour (Tour::Kind::voicemeeter, 0);
+        });
+    };
+}
+
+void MainComponent::startTour (Tour::Kind kind, int step)
+{
+    tour.reset();
+    tourResume.reset();
+    Tour::Host host;
+    host.reveal = [this] (int sel) { scrollToChannel (sel); };
+    host.windowOpen = [this] (const juce::String& w)
+    {
+        auto* win = w == "device" ? deviceWindow.get() : w == "settings" ? settingsWindow.get() : nullptr;
+        return win != nullptr && win->isVisible();
+    };
+    host.moveDeviceWindowAside = [this] (juce::Rectangle<int> keepFree)
+    {
+        if (deviceWindow == nullptr || ! deviceWindow->isVisible()) return;
+        const auto* d = juce::Desktop::getInstance().getDisplays().getDisplayForRect (deviceWindow->getScreenBounds());
+        if (d == nullptr) return;
+        const auto area = d->userBounds.getSmallestIntegerContainer();
+        auto b = deviceWindow->getBounds();
+        if (! b.intersects (keepFree)) return;
+        // Right of the card if there is room, else left of it, else below.
+        if (keepFree.getRight() + 16 + b.getWidth() <= area.getRight()) b.setPosition (keepFree.getRight() + 16, juce::jlimit (area.getY(), area.getBottom() - b.getHeight(), keepFree.getY()));
+        else if (keepFree.getX() - 16 - b.getWidth() >= area.getX()) b.setPosition (keepFree.getX() - 16 - b.getWidth(), juce::jlimit (area.getY(), area.getBottom() - b.getHeight(), keepFree.getY()));
+        else b.setY (juce::jmin (area.getBottom() - b.getHeight(), keepFree.getBottom() + 16));
+        deviceWindow->setBounds (b);
+    };
+    tour = std::make_unique<Tour> (ctx, *this, std::move (host), kind, step);
+    tour->onClose = [this, kind] (bool finished, int at)
+    {
+        if (ctx.session != nullptr)
+        {
+            ctx.session->prefs.tour = finished ? juce::String ("done") : Tour::kindId (kind) + ":" + juce::String (at);
+            ctx.session->prefsVersion.fetch_add (1);
+        }
+        juce::Component::SafePointer<MainComponent> safe (this);
+        juce::MessageManager::callAsync ([safe, finished]
+        {
+            if (safe == nullptr) return;
+            safe->tour.reset();
+            safe->grabKeyboardFocus();
+            if (finished) safe->showToast ("Tour finished. Watch it again any time: Tools > Guided tour", 3.5);
+            else safe->showTourResume();
+        });
+    };
+}
+
+void MainComponent::showTourResume()
+{
+    Tour::Kind kind;
+    int step = 0;
+    if (ctx.session == nullptr || ! Tour::parseState (ctx.session->prefs.tour, kind, step) || tour != nullptr || welcome != nullptr) return;
+    tourResume = std::make_unique<TourResumeCard> ("Tour paused at step " + juce::String (step + 1)
+                                                   + (kind == Tour::Kind::voicemeeter ? " (Voicemeeter)" : ""));
+    tourResume->onChoice = [this, kind, step] (int choice)
+    {
+        juce::Component::SafePointer<MainComponent> safe (this);
+        juce::MessageManager::callAsync ([safe, choice, kind, step]
+        {
+            if (safe == nullptr) return;
+            safe->tourResume.reset();
+            if (choice == 0) safe->startTour (kind, step);
+            else if (choice == 1) safe->startTour (kind, 0);
+            else safe->showToast ("Continue the tour any time: Tools > Guided tour", 3.0);
+        });
+    };
+    addAndMakeVisible (*tourResume);
+    tourResume->setAlwaysOnTop (true);
+    resized();
 }
 } // namespace hydra
+

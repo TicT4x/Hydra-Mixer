@@ -4,8 +4,10 @@
 #include "core/ParamEq.h"
 #include "core/Denoiser.h"
 #include "core/Correction.h"
+#include "core/Utility.h"
 #include "IoStreams.h"
 #include "Stems.h"
+#include "Transpose.h"
 #include "PluginChain.h"
 #include "Recorder.h"
 #include "RoomMeasure.h"
@@ -48,6 +50,15 @@ struct SpectrumTap
         const float* src[2] = { l, r };
         ring.write (src, 2, n);
     }
+    /** The signal entering that EQ, for the grey "before" spectrum of the EQ window (only while it is shown). */
+    std::atomic<int> preUsers { 0 };
+    SpscAudioRing preRing;
+    void pushPre (const float* l, const float* r, int n) noexcept
+    {
+        if (preUsers.load (std::memory_order_relaxed) <= 0 || users.load (std::memory_order_relaxed) <= 0) return;
+        const float* src[2] = { l, r };
+        preRing.write (src, 2, n);
+    }
 };
 
 /** CPU time spent in each processing stage of a channel, for the DSP view. The audio thread only measures
@@ -55,7 +66,7 @@ struct SpectrumTap
     never reset: the view takes differences between two readings. Single writer (audio thread). */
 struct DspTimes
 {
-    enum Stage { denoiser, eq, gate, comp, plugins, limiter, other, numStages };
+    enum Stage { denoiser, eq, gate, comp, plugins, limiter, utility, transpose, stems, correction, other, numStages };
     std::array<std::atomic<uint64_t>, numStages> ticks {};
     void add (Stage s, int64_t t) noexcept
     {
@@ -81,7 +92,17 @@ struct CompFx
     Param *on {}, *input {}, *thr {}, *ratio {}, *knee {}, *attack {}, *release {}, *makeup {}, *autoGain {};
     dsp::Compressor dsp;
     std::atomic<float> gr { 0 };   // gain reduction shown in the UI
+    /** Level entering the compressor (block peak, linear, before its input gain), for the live point on the curve.
+        Measured only while views > 0 (the settings window is open). */
+    std::atomic<float> inPeak { 0 };
+    std::atomic<int> views { 0 };
     dsp::CompSettings settings() const;
+    /** Audio thread, before process(). */
+    void tapInput (const float* l, const float* r, int n) noexcept
+    {
+        if (views.load (std::memory_order_relaxed) > 0)
+            inPeak.store (juce::jmax (dsp::peak (l, n), dsp::peak (r, n)), std::memory_order_relaxed);
+    }
 };
 
 struct DenoiserFx
@@ -97,6 +118,30 @@ struct LimiterFx
 {
     Param *on {}, *ceiling {};
     dsp::Limiter dsp;
+};
+
+/** Utility (core/Utility.h, like Ableton's): polarity, channel mode, width / mono, bass mono, balance, gain.
+    Replaces the former phase block: legacyPhase is that block's switch ("in1.phase" / "in1.phase2" ...), still
+    read from old sessions, scenes and MIDI; Engine::ensureBuiltins turns it into this Utility with the phase
+    inverted. */
+struct UtilityFx
+{
+    Param *on {}, *phase {}, *channel {}, *width {}, *mono {}, *bass {}, *bassFreq {}, *balance {}, *gain {}, *dc {};
+    Param *legacyPhase {};
+    dsp::Utility dsp;
+    dsp::UtilitySettings settings() const noexcept
+    {
+        dsp::UtilitySettings st;
+        st.invertL = st.invertR = phase->isOn();   // one switch flips both channels
+        st.channel = juce::roundToInt (channel->get());
+        st.width = width->get() * 0.01f;
+        st.mono = mono->isOn();
+        st.bassMono = bass->isOn(); st.bassHz = bassFreq->get();
+        st.balance = balance->get() * 0.01f;
+        st.gainDb = gain->get();
+        st.dcFilter = dc->isOn();
+        return st;
+    }
 };
 
 /** Stems (engine/Stems.h): one per input. Its state exists only while the effect is in the chain. */
@@ -139,8 +184,9 @@ struct InputStrip
     std::array<CompFx, kFxInstances> comps;
     std::array<DenoiserFx, kFxInstances> denoisers;
     std::array<LimiterFx, kFxInstances> limiters;   // off by default, added from the effect menu (9.11.)
-    std::array<Param*, kFxInstances> phases {};   // phase invert blocks
+    std::array<UtilityFx, kFxInstances> utilities;
     StemsFx stems;                                  // source separation (once per input)
+    TransposeFx transpose;                          // pitch shift (once per input)
     Param *fxBypass {};
     Param *syncOn {}, *delayMs {};   // Sync Delay: automatic alignment with the input sync group / manual delay
     std::array<Param*, kMaxBuses> route {};
@@ -148,7 +194,6 @@ struct InputStrip
 
     // The first instance of each effect under the names it had before there were several.
     ParamEq& eq = eqs[0];
-    Param*& phase = phases[0];
     Param*& gateOn = gates[0].on;   Param*& gateThr = gates[0].thr;   Param*& gateRange = gates[0].range;
     Param*& gateAttack = gates[0].attack;   Param*& gateHold = gates[0].hold;   Param*& gateRelease = gates[0].release;
     Param*& gateScOn = gates[0].scOn;   Param*& gateScFreq = gates[0].scFreq;   Param*& gateVoice = gates[0].voice;
@@ -190,7 +235,11 @@ struct InputStrip
     std::atomic<int> dspLatency { 0 };
     /** Latency of the Stems effect, in samples (0 while it is off or has no model yet). */
     std::atomic<int> stemsLatency { 0 };
+    /** Latency of the Transpose effect, in samples (0 while it is off). */
+    std::atomic<int> transposeLatency { 0 };
     DspTimes dspTimes;
+    /** True while nothing of this channel can be heard and its effects are skipped (Engine::processStrip). */
+    std::atomic<bool> fxIdle { false };
 
     // audio-thread state
     dsp::DelayLine delay;
@@ -217,8 +266,10 @@ struct Bus
     std::array<ParamEq, kFxInstances> eqs;
     std::array<LimiterFx, kFxInstances> limiters;
     std::array<CompFx, kFxInstances> comps;
-    std::array<Param*, kFxInstances> phases {};   // phase invert blocks
+    std::array<UtilityFx, kFxInstances> utilities;
     Correction correction;   // room + speaker / headphone correction (hardware outputs only, once)
+    /** True while the bus is not heard (no output / recorder, or muted) and its effects are skipped. */
+    std::atomic<bool> fxIdle { false };
 
     // The first instances under their old names.
     ParamEq& eq = eqs[0];
@@ -332,6 +383,13 @@ public:
     // Status
     /** Recent peak: highest single-callback load, decaying over ~20 callbacks. */
     float getPeakLoad() const noexcept { return cpuLoad.load(); }
+    /** Highest single-callback load of the last 0.5-1 s (1 = the block took as long as it plays: overload). */
+    float getRecentPeak() const noexcept
+    {
+        return juce::jmax (peakLast.load (std::memory_order_relaxed), peakWindow.load (std::memory_order_relaxed));
+    }
+    /** Callbacks so far that took longer than real time (each one is usually an audible click). Readers diff it. */
+    uint64_t getOverloads() const noexcept { return overloads.load (std::memory_order_relaxed); }
 
     /** Average DSP load (callback time / real time) like a DAW's CPU meter. Each reader owns one and
         calls update() regularly; the value covers the time since the previous reading (min. ~0.25 s). */
@@ -449,15 +507,15 @@ public:
     /** Built-in effects a channel can have (selection index scheme: inputs, then buses), in their usual order. */
     std::vector<Fx> allowedFx (int channel) const;
     /** How many instances of f a channel can have (correction: 1). */
-    static int maxInstances (Fx f) noexcept { return f == Fx::correction || f == Fx::stems ? 1 : kFxInstances; }
+    static int maxInstances (Fx f) noexcept { return f == Fx::correction || f == Fx::stems || f == Fx::transpose ? 1 : kFxInstances; }
     PluginChain& chainFor (int channel) noexcept
     {
         return channel < kMaxInputs ? inputs[(size_t) channel].plugins : buses[(size_t) (channel - kMaxInputs)].plugins;
     }
     /** The on switch of instance k of a built-in effect of a channel (nullptr if the channel cannot have it). */
     Param* fxOnParam (int channel, Fx, int k = 0) const;
-    /** Id part of instance k's parameters ("eq" / "eq2", "gate" ..., "phase" / "phase2"): ids are
-        <channel prefix><part>.<name> (phase: <channel prefix><part>). */
+    /** Id part of instance k's parameters ("eq" / "eq2", "gate" ..., "util" / "util2", "tp"): ids are
+        <channel prefix><part>.<name>. */
     static juce::String fxPart (Fx, int k);
     /** Every parameter of instance k of a built-in effect of a channel (its on switch included). */
     std::vector<Param*> fxParams (int channel, Fx, int k = 0) const;
@@ -473,6 +531,8 @@ public:
     void prepareDenoiser (DenoiserFx&);
     /** Creates / frees the Stems state of an input when the effect enters / leaves its chain (message thread). */
     void prepareStems (InputStrip&);
+    /** Creates the pitch shifter of an input's Transpose effect (message thread, once). */
+    void prepareTranspose (InputStrip&);
     void releaseStems (InputStrip&);
 
     //--------------------------------------------------------------------------
@@ -545,9 +605,11 @@ private:
     void audioDeviceError (const juce::String&) override;
 
     void processChunk (const Graph& g, const float* const* in, int numIn, float* const* out, int numOut, int offset, int n) noexcept;
-    void processStrip (InputStrip& s, const float* srcL, const float* srcR, int n, bool anySolo, bool monoSource, bool timed) noexcept;
-    void processBus (Bus& b, int n, bool timed) noexcept;
+    void processStrip (InputStrip& s, const float* srcL, const float* srcR, int n, bool anySolo, bool monoSource, bool timed,
+                       const std::array<bool, kMaxBuses>& busOpen) noexcept;
+    void processBus (Bus& b, int n, bool timed, bool used) noexcept;
     void updateDropoutLogs();
+    void updateOverloadLog();
     void updateSyncDelays();
     void renderMeasurement (Bus& b, MeasureRun& run, int start, int count, int n) noexcept;   // audio thread
     int delaySamples (int channel) const noexcept;   // audio thread
@@ -600,6 +662,11 @@ private:
     std::atomic<float> micTapPeak { 0.0f };
 
     std::atomic<float> cpuLoad { 0 };
+    std::atomic<float> peakWindow { 0 }, peakLast { 0 }, overloadPeak { 0 };   // audio thread writes (see getRecentPeak)
+    std::atomic<uint64_t> overloads { 0 };
+    int peakFrames = 0;                                                        // audio thread
+    uint64_t overloadsLogged = 0;                                              // message thread
+    double overloadLogTime = -1.0e9;
     std::atomic<uint64_t> busyTicks { 0 }, busyFrames { 0 };   // always counted (see LoadMeter), audio thread writes
     double ticksToSeconds = 1.0;
     std::vector<float> silence;

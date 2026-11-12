@@ -39,6 +39,8 @@ public:
     static constexpr int kSpectrumStep = 2;
     static constexpr float kSpecTopDb = 0.0f, kSpecBottomDb = -96.0f;
     void setSpectrum (const std::vector<float>& dbColumns);
+    /** Grey spectrum of the signal before the EQ, drawn behind the coloured one (empty = none). */
+    void setInputSpectrum (const std::vector<float>& dbColumns);
     juce::Rectangle<float> getPlotArea() const noexcept { return plot; }
     float freqToX (float f) const;
     float xToFreq (float x) const;
@@ -59,7 +61,8 @@ private:
     juce::Colour colour;
     bool large;
     juce::Rectangle<float> plot;
-    juce::Path curve, spectrum;
+    juce::Path curve, spectrum, inputSpectrum;
+    juce::Path spectrumPath (const std::vector<float>& cols) const;
     std::array<juce::Path, ParamEq::kBands> bandCurves;
     uint64_t seen = 0;
     int selected = 0, hovered = -1, justAdded = -1;
@@ -91,6 +94,14 @@ private:
     /** Places the columns of the bands in use (rows as needed); called when a band is added or removed. */
     void layoutBands();
     void analyse (double timestamp);   // spectrum analyzer, once per display frame (max ~60 Hz)
+    /** One analyzer: reads a ring into its history, FFT, one smoothed dB value per graph column. */
+    struct Analyzer
+    {
+        std::vector<float> history, smoothed, columns, raw;
+        int historyPos = 0;
+    };
+    bool runAnalyzer (Analyzer&, SpscAudioRing&, float dt);
+    void setShowInput (bool);
 
     static constexpr int kFftOrder = 12, kFftSize = 1 << kFftOrder;
 
@@ -107,9 +118,11 @@ private:
 
     SpectrumTap& tap;
     std::unique_ptr<juce::dsp::FFT> fft;
-    std::vector<float> history, window, fftData, smoothed, columns, raw;
+    std::vector<float> window, fftData;
+    Analyzer after, before;   // after the EQ (coloured) / before it (grey, optional)
+    juce::ToggleButton showInput { "Show input" };
+    bool inputShown = false;
     juce::AudioBuffer<float> readBuf { 2, 2048 };
-    int historyPos = 0;
     double lastFrame = 0.0;
     juce::VBlankAttachment vblank { this, [this] (double t) { analyse (t); } };
     LayoutAnimator animator { *this, 0.07 };   // the bands rearrange smoothly when the window size changes
@@ -117,6 +130,10 @@ private:
 
 /** The window of an input's Stems effect (Inspector uses it; the screenshot tool renders it offscreen). */
 std::unique_ptr<juce::Component> makeStemsPanel (UiContext&, InputStrip&);
+/** The Utility / Transpose windows (HydraShots). */
+std::unique_ptr<juce::Component> makeUtilityPanel (UiContext&, UtilityFx&);
+std::unique_ptr<juce::Component> makeTransposePanel (UiContext&, InputStrip&);
+std::unique_ptr<juce::Component> makeCompPanel (UiContext&, CompFx&);
 
 //==============================================================================
 /** Bottom panel showing the details of the selected input, bus or the recorder. */
@@ -138,10 +155,12 @@ private:
     juce::String shownName() const;
     void layoutHeader();   // bypass switch right after the channel name
     int codeWidth() const; // width of the channel's code ("IN 3") with the gap to its name
+    bool channelIdle() const; // the engine skips the shown chain (channel not heard)
 
     UiContext& ctx;
     int current = -1;
     std::unique_ptr<juce::Component> content;
     std::unique_ptr<Toggle> bypass;
+    bool idleShown = false;
 };
 } // namespace hydra

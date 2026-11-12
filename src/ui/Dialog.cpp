@@ -18,54 +18,7 @@ juce::Colour kindColour (Kind k)
     }
 }
 
-class DialogButton final : public juce::Component
-{
-public:
-    DialogButton (Button b, juce::Colour accent) : spec (std::move (b)), accent (accent)
-    {
-        setMouseCursor (juce::MouseCursor::PointingHandCursor);
-    }
-    std::function<void()> onClick;
-    const Button spec;
-
-    int idealWidth() const
-    {
-        return juce::jmax (96, juce::GlyphArrangement::getStringWidthInt (theme::font (13.5f, true), spec.text) + 36);
-    }
-
-    void paint (juce::Graphics& g) override
-    {
-        auto r = getLocalBounds().toFloat().reduced (0.5f);
-        using Role = Button::Role;
-        const bool filled = spec.role == Role::primary || spec.role == Role::destructive;
-        auto fill = spec.role == Role::destructive ? theme::mute : spec.role == Role::primary ? accent : theme::raised;
-        if (down)       fill = fill.brighter (0.18f);
-        else if (hover) fill = fill.brighter (0.09f);
-        g.setColour (fill);
-        g.fillRoundedRectangle (r, 8.0f);
-        if (! filled)
-        {
-            g.setColour (hover ? theme::textFaint : theme::outline);
-            g.drawRoundedRectangle (r, 8.0f, 1.0f);
-        }
-        g.setColour (filled ? (spec.role == Role::destructive ? juce::Colours::white : theme::bg) : theme::text);
-        g.setFont (theme::font (13.5f, true));
-        g.drawText (spec.text, getLocalBounds(), juce::Justification::centred, true);
-    }
-    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
-    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
-    void mouseDown (const juce::MouseEvent&) override  { down = true; repaint(); }
-    void mouseUp (const juce::MouseEvent& e) override
-    {
-        down = false;
-        repaint();
-        if (e.mouseWasClicked() && contains (e.getPosition()) && onClick) onClick();
-    }
-
-private:
-    juce::Colour accent;
-    bool hover = false, down = false;
-};
+using DialogButton = ActionButton;
 
 class Overlay final : public juce::Component, private juce::ComponentListener
 {

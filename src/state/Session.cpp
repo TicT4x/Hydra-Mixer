@@ -95,6 +95,7 @@ bool Session::save (const juce::File& f) const
     app->setAttribute ("autoReconnect", prefs.autoReconnect);
     app->setAttribute ("expertDeviceModes", prefs.expertDeviceModes);
     app->setAttribute ("pickerShowAll", prefs.pickerShowAll);
+    app->setAttribute ("eqShowInput", prefs.eqShowInput);
     app->setAttribute ("adaptiveStrips", prefs.adaptiveStrips);
     app->setAttribute ("sidePanel", prefs.sidePanel);
     app->setAttribute ("horizontalStrips", prefs.horizontalStrips);
@@ -109,6 +110,11 @@ bool Session::save (const juce::File& f) const
     app->setAttribute ("remoteEnabled", prefs.remoteEnabled);
     if (prefs.remotePort != remote::kDefaultPort) app->setAttribute ("remotePort", prefs.remotePort);
     if (prefs.remoteCode.isNotEmpty()) app->setAttribute ("remoteKey", protectedRemoteCode (prefs.remoteCode));
+    app->setAttribute ("updateCheck", prefs.updateCheck);
+    app->setAttribute ("updateBeta", prefs.updateBeta);
+    if (prefs.updateSkip.isNotEmpty()) app->setAttribute ("updateSkip", prefs.updateSkip);
+    if (! prefs.setupDone) app->setAttribute ("setupDone", false);
+    if (prefs.tour.isNotEmpty()) app->setAttribute ("tour", prefs.tour);
 
     if (prefs.netDeviceId.isNotEmpty()) app->setAttribute ("netDeviceId", prefs.netDeviceId);
     if (! prefs.netTrusted.isEmpty())
@@ -199,6 +205,7 @@ bool Session::load (const juce::File& f)
         prefs.autoReconnect = app->getBoolAttribute ("autoReconnect", true);
         prefs.expertDeviceModes = app->getBoolAttribute ("expertDeviceModes", false);
         prefs.pickerShowAll = app->getBoolAttribute ("pickerShowAll", false);
+        prefs.eqShowInput = app->getBoolAttribute ("eqShowInput", false);
         prefs.adaptiveStrips = app->getBoolAttribute ("adaptiveStrips", true);
         prefs.sidePanel = app->getBoolAttribute ("sidePanel", false);
         prefs.horizontalStrips = app->getBoolAttribute ("horizontalStrips", false);
@@ -217,6 +224,11 @@ bool Session::load (const juce::File& f)
         prefs.remotePort = juce::jlimit (1, 65535, app->getIntAttribute ("remotePort", remote::kDefaultPort));
         // Encrypted for this Windows user: on another PC / account it is empty and a new code is made.
         prefs.remoteCode = net::unprotectForUser (app->getStringAttribute ("remoteKey"));
+        prefs.updateCheck = app->getBoolAttribute ("updateCheck", true);
+        prefs.updateBeta = app->getBoolAttribute ("updateBeta", false);
+        prefs.updateSkip = app->getStringAttribute ("updateSkip");
+        prefs.setupDone = app->getBoolAttribute ("setupDone", true);   // sessions from before the wizard: set up
+        prefs.tour = app->getStringAttribute ("tour");
     }
     // Renamed devices belong to this PC, not to the file: an imported session adds its entries but never
     // drops the ones we know (their original names would be lost).

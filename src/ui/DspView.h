@@ -9,7 +9,8 @@ namespace hydra
     One calm table instead of moving charts:
     - top: total load of the audio engine as a bar (with the recent peak) and the three biggest consumers,
     - below: one row per channel in mixer order (inputs, then outputs) and a row for the engine's own work.
-      Columns are the processing stages (Denoiser, EQ, Gate, Comp, Plugins, Limiter, Rest); every cell shows
+      Columns are the processing stages (Denoiser ... Limiter, Rest; a column only while some channel has that
+      effect in its chain, all instances of it together); every cell shows
       its share of the audio period and is tinted by how expensive it is. Stages that are switched off show "-".
 
     The order never changes. Measured 10x per second as the mean of the last second; bars and tints glide
@@ -23,7 +24,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    enum Column { denoiser, eq, gate, comp, plugins, limiter, rest, numColumns };
+    enum Column { denoiser, eq, gate, comp, utility, transpose, stems, correction, plugins, limiter, rest, numColumns };
 
     struct Row
     {

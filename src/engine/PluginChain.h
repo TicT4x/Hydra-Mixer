@@ -33,11 +33,12 @@ private:
 
 /** Built-in effects that sit in a channel's effect chain next to the plugins. A channel can have each of them
     up to kFxInstances times (correction once); every instance has its own parameters (Engine).
-    Inputs offer stems, denoiser, EQ, gate, compressor, phase; buses EQ, limiter and (hardware outputs) correction.
-    builtinMask holds kFxInstances bits per effect: 8 effects fill its 32 bits. */
-enum class Fx : int { plugin = -1, denoiser = 0, eq, gate, comp, correction, limiter, phase, stems, numBuiltins };
+    Inputs offer stems, transpose, utility, denoiser, EQ, gate, compressor, limiter; buses utility, EQ, compressor,
+    limiter and (hardware outputs) correction. builtinMask holds kFxInstances bits per effect (64 bits).
+    utility took the place (and value) of the former phase block: session files with builtin="phase" load as utility. */
+enum class Fx : int { plugin = -1, denoiser = 0, eq, gate, comp, correction, limiter, utility, stems, transpose, numBuiltins };
 constexpr int kFxInstances = 4;
-static_assert ((int) Fx::numBuiltins * kFxInstances <= 32, "PluginChain::builtinMask has 32 bits");
+static_assert ((int) Fx::numBuiltins * kFxInstances <= 64, "PluginChain::builtinMask has 64 bits");
 
 /** Id in session files ("eq", "gate", ...) and display name ("Equalizer", ...). */
 juce::String fxId (Fx);
@@ -87,8 +88,8 @@ public:
     /** Inserts instance k of a built-in effect at index (-1 = at the end); nothing if the chain already has it. */
     void addBuiltin (Fx, int k, int index = -1);
     /** Any instance of f in the chain (any thread). */
-    bool hasBuiltin (Fx f) const noexcept { return (builtinMask.load (std::memory_order_relaxed) >> ((int) f * kFxInstances)) & 0xfu; }
-    bool hasBuiltin (Fx f, int k) const noexcept { return (builtinMask.load (std::memory_order_relaxed) >> ((int) f * kFxInstances + k)) & 1u; }
+    bool hasBuiltin (Fx f) const noexcept { return ((builtinMask.load (std::memory_order_relaxed) >> ((int) f * kFxInstances)) & 0xfu) != 0; }
+    bool hasBuiltin (Fx f, int k) const noexcept { return ((builtinMask.load (std::memory_order_relaxed) >> ((int) f * kFxInstances + k)) & 1u) != 0; }
     int indexOf (Fx, int k) const noexcept;
     int numPlugins() const noexcept;
     void remove (int index);
@@ -118,7 +119,8 @@ private:
     void changed() noexcept;   // under the lock: updates builtinMask, bumps version
 
     juce::SpinLock lock;
-    std::atomic<uint32_t> builtinMask { 0 }, version { 0 };
+    std::atomic<uint64_t> builtinMask { 0 };
+    std::atomic<uint32_t> version { 0 };
     std::vector<std::unique_ptr<PluginSlot>> slots;
     juce::AudioBuffer<float> work;
     juce::MidiBuffer midi;

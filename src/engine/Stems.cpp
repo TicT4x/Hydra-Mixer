@@ -5,9 +5,11 @@
 #include <bcrypt.h>
 #if HYDRA_STEMS
  #include <dxgi1_6.h>
+ #include <d3d12.h>
  #include <dml_provider_factory.h>
  #pragma comment (lib, "dxgi.lib")
 #endif
+#include <mutex>
 
 namespace hydra::stems
 {
@@ -24,10 +26,12 @@ const ModelInfo& modelInfo (Model m)
           "https://huggingface.co/elicwhite/bs-roformer-sw-6stem-onnx/resolve/main/bs_roformer_sw_6stem_fp16.onnx",
           "d3d2bac77a7023282cb5f35a5807179e34076b60589867b572275f1a8ec36444", 352778874, 176400, true,
           "The model weights have no stated license (community model): for personal use." },
-        { "HT-Demucs, 4 stems (no guitar)", "HTDemucs-4stem.hydra.onnx",
+        // Folded (12.11.): the export computes its shapes at run time (~25 000 nodes); folded once, a session is
+        // ready in ~2 s instead of ~7 s, with bit-identical output. BS-RoFormer gained only ~1 s for +350 MB on disk.
+        { "HT-Demucs, 4 stems (no guitar)", "HTDemucs-4stem.folded.onnx",
           "https://huggingface.co/StemSplitio/htdemucs-onnx/resolve/main/htdemucs_fp16weights.onnx",
           "d05c269d0178d2a72ad484b10b11dd370193fc923201c3b27a99f848745db70a", 165612636, 343980, false,
-          "MIT license (Meta's HT-Demucs)." } };
+          "MIT license (Meta's HT-Demucs).", "HTDemucs-4stem.hydra.onnx" } };
     return models[juce::jlimit (0, kNumModels - 1, (int) m)];
 }
 
@@ -228,6 +232,51 @@ juce::String gpuName()
     return name;
 }
 
+/** Name of the first dedicated (discrete) graphics card, empty if there is none. Integrated graphics share the
+    system memory and the CPU's power budget: Stems would slow down the audio engine there and still not keep up
+    (wish of the user 11.11.: do not load it at all, say why). A card is dedicated if Direct3D 12 says it has no
+    unified memory (UMA); without Direct3D 12, if it has at least 1 GB of its own memory. Software adapters
+    (Microsoft Basic Render) never count. Checked once (~0.1 s), any thread. */
+juce::String dedicatedGpuName()
+{
+    static std::once_flag once;
+    static juce::String found;
+    std::call_once (once, []
+    {
+        using CreateDevice = HRESULT (WINAPI*) (IUnknown*, D3D_FEATURE_LEVEL, REFIID, void**);
+        HMODULE d3d = LoadLibraryExW (L"d3d12.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        auto create = d3d != nullptr ? (CreateDevice) (void*) GetProcAddress (d3d, "D3D12CreateDevice") : nullptr;
+        IDXGIFactory6* factory = nullptr;
+        if (FAILED (CreateDXGIFactory1 (__uuidof (IDXGIFactory6), (void**) &factory))) return;
+        IDXGIAdapter1* adapter = nullptr;
+        for (UINT i = 0; found.isEmpty()
+                         && SUCCEEDED (factory->EnumAdapterByGpuPreference (i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, __uuidof (IDXGIAdapter1), (void**) &adapter));
+             ++i)
+        {
+            DXGI_ADAPTER_DESC1 d {};
+            const bool hardware = SUCCEEDED (adapter->GetDesc1 (&d)) && (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0 && d.VendorId != 0x1414;
+            bool dedicated = false;
+            if (hardware)
+            {
+                ID3D12Device* dev = nullptr;
+                if (create != nullptr && SUCCEEDED (create (adapter, D3D_FEATURE_LEVEL_11_0, __uuidof (ID3D12Device), (void**) &dev)) && dev != nullptr)
+                {
+                    D3D12_FEATURE_DATA_ARCHITECTURE arch {};
+                    dedicated = SUCCEEDED (dev->CheckFeatureSupport (D3D12_FEATURE_ARCHITECTURE, &arch, sizeof (arch))) && ! arch.UMA;
+                    dev->Release();
+                }
+                else
+                    dedicated = d.DedicatedVideoMemory >= ((SIZE_T) 1 << 30);
+            }
+            if (dedicated) found = juce::String (d.Description);
+            adapter->Release();
+            adapter = nullptr;
+        }
+        factory->Release();
+    });
+    return found;
+}
+
 /** An ONNX Runtime session (DirectML on the high-performance GPU, or CPU) running float tensors. */
 class OrtSessionRunner
 {
@@ -248,7 +297,15 @@ public:
         OrtSessionOptions* opts = nullptr;
         bool good = check (api->CreateEnv (ORT_LOGGING_LEVEL_ERROR, "hydra-stems", &env))
                  && check (api->CreateSessionOptions (&opts))
-                 && check (api->SetSessionGraphOptimizationLevel (opts, ORT_ENABLE_ALL));
+                 && check (api->SetSessionGraphOptimizationLevel (opts, ORT_ENABLE_ALL))
+                 // ONNX Runtime starts one CPU thread per core that busy-waits between runs (spinning), at Hydra's
+                 // high process priority. With DirectML the GPU does the work; spinning threads only take CPU time
+                 // from the audio engine and the stream threads (clicks under load). A quarter of the cores (2-4)
+                 // for the few operators that stay on the CPU, no spinning.
+                 && check (api->SetIntraOpNumThreads (opts, cpu ? 0 : juce::jlimit (2, 4, juce::SystemStats::getNumCpus() / 4)))
+                 && check (api->SetInterOpNumThreads (opts, 1))
+                 && check (api->AddSessionConfigEntry (opts, "session.intra_op.allow_spinning", "0"))
+                 && check (api->AddSessionConfigEntry (opts, "session.inter_op.allow_spinning", "0"));
         if (good && ! cpu)
         {
             const OrtDmlApi* dml = nullptr;
@@ -394,6 +451,46 @@ bool runOnnxForTests (const juce::File& model, bool cpu, const std::vector<Tenso
     return r.run (ins, outs, error);
 #else
     juce::ignoreUnused (model, cpu, inputs, outputs);
+    error = "built without ONNX Runtime";
+    return false;
+#endif
+}
+
+bool foldModel (const juce::File& in, const juce::File& out, juce::String& error)
+{
+#if HYDRA_STEMS
+    const OrtApi* api = ortApi (error);
+    if (api == nullptr) return false;
+    auto ok = [&] (OrtStatus* s)
+    {
+        if (s == nullptr) return true;
+        error = api->GetErrorMessage (s);
+        api->ReleaseStatus (s);
+        return false;
+    };
+    const auto tmp = out.getSiblingFile (out.getFileName() + ".tmp");
+    tmp.deleteFile();
+    OrtEnv* env = nullptr;
+    OrtSessionOptions* opts = nullptr;
+    OrtSession* session = nullptr;
+    // A CPU session with the basic level: ONNX Runtime documents these as provider independent (applied before the
+    // graph is split between providers), so the saved model is plain ONNX and runs the same on DirectML.
+    bool good = ok (api->CreateEnv (ORT_LOGGING_LEVEL_ERROR, "hydra-fold", &env))
+             && ok (api->CreateSessionOptions (&opts))
+             && ok (api->SetSessionGraphOptimizationLevel (opts, ORT_ENABLE_BASIC))
+             && ok (api->SetIntraOpNumThreads (opts, 1))
+             && ok (api->AddSessionConfigEntry (opts, "session.intra_op.allow_spinning", "0"))
+             && ok (api->SetOptimizedModelFilePath (opts, tmp.getFullPathName().toWideCharPointer()))
+             && ok (api->CreateSession (env, in.getFullPathName().toWideCharPointer(), opts, &session));
+    if (session != nullptr) api->ReleaseSession (session);
+    if (opts != nullptr) api->ReleaseSessionOptions (opts);
+    if (env != nullptr) api->ReleaseEnv (env);
+    if (good && tmp.getSize() < in.getSize() / 2) { good = false; error = "the folded model was not written"; }
+    if (good && ! tmp.moveFileTo (out)) { good = false; error = "cannot write " + out.getFullPathName(); }
+    if (! good) tmp.deleteFile();
+    return good;
+#else
+    juce::ignoreUnused (in, out);
     error = "built without ONNX Runtime";
     return false;
 #endif
@@ -560,6 +657,7 @@ struct Service::Slot
     Status status;                                       // under Service::statusLock
     std::atomic<double> avgMs { 0.0 };
     int loadFailures = 0;
+    bool foldFailed = false;   // folding failed once: load the unfolded file (slower) until the next start
     std::atomic<bool> wantDownload { false }, cancel { false }, wantUnload { false };
     double idleSince = -1.0;   // ms: loaded but not in use since then (-1: in use)
     // The last model runs (end time, duration in ms) for the measured GPU load.
@@ -621,6 +719,27 @@ Service::Service()
 #endif
         slots[(size_t) m] = std::move (sl);
     }
+#if HYDRA_STEMS
+    // Without a dedicated graphics card Stems is not offered (checked off the message thread, ~0.1 s).
+    juce::Thread::launch ([]
+    {
+        if (dedicatedGpuName().isNotEmpty()) return;
+        juce::MessageManager::callAsync ([]
+        {
+            if (auto& sv = serviceHolder(); sv != nullptr) sv->markNoGpu();
+            logLine ("stems: no dedicated graphics card found, stem separation is not loaded");
+        });
+    });
+#endif
+}
+
+void Service::markNoGpu()
+{
+    for (auto& sl : slots)
+    {
+        sl->loadFailures = 1;   // never loads (ensureModel)
+        setState (*sl, State::unavailable, kNoGpuMessage);
+    }
 }
 
 Service::~Service()
@@ -631,7 +750,12 @@ Service::~Service()
 
 juce::File Service::modelFile (Model m)
 {
-    return appDataDir().getChildFile ("Models").getChildFile (modelInfo (m).file);
+    const auto& info = modelInfo (m);
+    const auto dir = appDataDir().getChildFile ("Models");
+    const auto file = dir.getChildFile (info.file);
+    if (info.unfolded != nullptr && ! file.existsAsFile())
+        if (const auto old = dir.getChildFile (info.unfolded); old.existsAsFile()) return old;
+    return file;
 }
 
 Service::Status Service::getStatus (Model m) const
@@ -745,8 +869,11 @@ void Service::removeModel (Model m)
         sl.worker->notify();
         for (int i = 0; i < 200 && sl.wantUnload.load(); ++i) juce::Thread::sleep (10);
     }
-    modelFile (m).deleteFile();
-    modelFile (m).getSiblingFile (juce::String (modelInfo (m).file) + ".part").deleteFile();
+    const auto& info = modelInfo (m);
+    const auto dir = modelFile (m).getParentDirectory();
+    for (auto* name : { info.file, info.unfolded })
+        if (name != nullptr)
+            for (auto* ext : { "", ".part", ".tmp" }) dir.getChildFile (juce::String (name) + ext).deleteFile();
     setState (sl, State::noModel);
 }
 
@@ -794,10 +921,42 @@ void Service::setSeparatorForTests (Model m, std::unique_ptr<Separator> s)
 void Service::setModelFileForTests (Model m, const juce::File& f) { slots[(size_t) m]->testModel = f; slots[(size_t) m]->loadFailures = 0; }
 
 //==============================================================================
+namespace
+{
+/** Folds a model's unfolded file into its folded one (ModelInfo::unfolded) and deletes the unfolded file. On failure
+    the unfolded file stays and is used (it works, only loads slower). Worker thread. */
+bool foldUnfolded (Model m)
+{
+    const auto& info = modelInfo (m);
+    const auto dir = appDataDir().getChildFile ("Models");
+    const auto from = dir.getChildFile (info.unfolded), to = dir.getChildFile (info.file);
+    const double t0 = juce::Time::getMillisecondCounterHiRes();
+    juce::String error;
+    const bool ok = foldModel (from, to, error);
+    if (ok) from.deleteFile();
+    const juce::String name = info.name;
+    const double s = (juce::Time::getMillisecondCounterHiRes() - t0) / 1000.0;
+    juce::MessageManager::callAsync ([=]
+    {
+        logLine (ok ? "stems: " + name + " prepared for faster loading (" + juce::String (s, 1) + " s)"
+                    : "stems: " + name + " could not be prepared for faster loading (" + error + "), loading it as it is");
+    });
+    return ok;
+}
+} // namespace
+
 void Service::ensureModel (Slot& sl)
 {
     auto& ready = readyFlags[(size_t) sl.id];
     if (ready.load() || sl.loadFailures > 0 || ! inUse (sl.id)) return;
+#if HYDRA_STEMS
+    if (sl.testSeparator == nullptr && sl.testModel == juce::File() && dedicatedGpuName().isEmpty())
+    {
+        sl.loadFailures = 1;
+        setState (sl, State::unavailable, kNoGpuMessage);
+        return;
+    }
+#endif
     if (sl.testSeparator != nullptr)
     {
         sl.avgMs.store (0.0);
@@ -806,11 +965,19 @@ void Service::ensureModel (Slot& sl)
         return;
     }
 #if HYDRA_STEMS
-    const auto file = sl.testModel != juce::File() ? sl.testModel : modelFile (sl.id);
+    auto file = sl.testModel != juce::File() ? sl.testModel : modelFile (sl.id);
     if (! file.existsAsFile())
     {
         if (const auto st = getStatus (sl.id).state; st != State::noModel && st != State::failed) setState (sl, State::noModel);
         return;
+    }
+    // Downloaded by an older Hydra: fold it once (a few seconds), every later load is faster.
+    if (const auto* unfolded = modelInfo (sl.id).unfolded;
+        sl.testModel == juce::File() && unfolded != nullptr && file.getFileName() == unfolded && ! sl.foldFailed)
+    {
+        setState (sl, State::preparing, "Preparing the model for faster loading (once)", 0.5f);
+        if (foldUnfolded (sl.id)) file = modelFile (sl.id);
+        else sl.foldFailed = true;
     }
     setState (sl, State::loading, "Loading the model onto the GPU");
     std::unique_ptr<Separator> sep;
@@ -858,8 +1025,16 @@ void Service::ensureModel (Slot& sl)
 
 void Service::doDownload (Slot& sl)
 {
+#if HYDRA_STEMS
+    if (sl.testModel == juce::File() && dedicatedGpuName().isEmpty())   // the model could never run here
+    {
+        setState (sl, State::unavailable, kNoGpuMessage);
+        return;
+    }
+#endif
     const auto& info = modelInfo (sl.id);
-    const auto target = modelFile (sl.id);
+    // The patched model; folded models are folded from it afterwards (foldUnfolded).
+    const auto target = appDataDir().getChildFile ("Models").getChildFile (info.unfolded != nullptr ? info.unfolded : info.file);
     target.getParentDirectory().createDirectory();
     const auto part = target.getSiblingFile (juce::String (info.file) + ".part");
     setState (sl, State::downloading, "Connecting", 0.0f);
@@ -909,6 +1084,12 @@ void Service::doDownload (Slot& sl)
             const auto tmp = target.getSiblingFile (juce::String (info.file) + ".tmp");
             if (! tmp.replaceWithData (fixed.getData(), fixed.getSize()) || ! tmp.moveFileTo (target)) error = "Cannot write the model";
         }
+    }
+    if (error.isEmpty() && info.unfolded != nullptr)
+    {
+        setState (sl, State::preparing, "Preparing the model for faster loading", 0.8f);
+        appDataDir().getChildFile ("Models").getChildFile (info.file).deleteFile();   // an older folded file
+        sl.foldFailed = ! foldUnfolded (sl.id);   // failed: the unfolded file is used
     }
     part.deleteFile();
     const juce::String name = info.name;

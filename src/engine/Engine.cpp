@@ -109,6 +109,7 @@ Engine::Engine()
         prepareDenoiser (inputs[(size_t) i].denoisers[0]);   // the first one always exists (UI shows its state)
         inputs[(size_t) i].name = "Input " + juce::String (i + 1);
         inputs[(size_t) i].spectrum.ring.allocate (2, 16384);
+        inputs[(size_t) i].spectrum.preRing.allocate (2, 16384);
         inputs[(size_t) i].l.assign (kMaxBlock, 0.0f);
         inputs[(size_t) i].r.assign (kMaxBlock, 0.0f);
     }
@@ -117,6 +118,7 @@ Engine::Engine()
         buses[(size_t) b].index = b;
         buses[(size_t) b].name = busLabel (b);
         buses[(size_t) b].spectrum.ring.allocate (2, 16384);
+        buses[(size_t) b].spectrum.preRing.allocate (2, 16384);
         buses[(size_t) b].l.assign (kMaxBlock, 0.0f);
         buses[(size_t) b].r.assign (kMaxBlock, 0.0f);
     }
@@ -150,6 +152,20 @@ static void createCompParams (ParamRegistry& params, CompFx& c, const juce::Stri
     c.autoGain = &params.addToggle (idPrefix + "auto", namePrefix + "Auto Makeup");
 }
 
+static void createUtilityParams (ParamRegistry& params, UtilityFx& u, const juce::String& idPrefix, const juce::String& namePrefix)
+{
+    u.on       = &params.addToggle (idPrefix + "on", namePrefix + "On");
+    u.phase    = &params.addToggle (idPrefix + "phase", namePrefix + "Phase Invert");
+    u.channel  = &params.addChoice (idPrefix + "channel", namePrefix + "Channel", { "Left", "Stereo", "Right", "Swap" }, dsp::UtilitySettings::stereo);
+    u.width    = &params.add (idPrefix + "width", namePrefix + "Width", ParamType::Continuous, linRange (0, 400, 1.0f), 100.0f, " %");
+    u.mono     = &params.addToggle (idPrefix + "mono", namePrefix + "Mono");
+    u.bass     = &params.addToggle (idPrefix + "bass", namePrefix + "Bass Mono");
+    u.bassFreq = &params.add (idPrefix + "bass.freq", namePrefix + "Bass Mono Freq", ParamType::Continuous, logRange (50.0f, 500.0f), 120.0f, " Hz");
+    u.balance  = &params.add (idPrefix + "balance", namePrefix + "Balance", ParamType::Continuous, linRange (-100, 100, 1.0f), 0.0f, " %");
+    u.gain     = &params.add (idPrefix + "gain", namePrefix + "Gain", ParamType::Continuous, linRange (-36, 36, 0.1f), 0.0f, " dB");
+    u.dc       = &params.addToggle (idPrefix + "dc", namePrefix + "DC Filter");
+}
+
 void Engine::createParams()
 {
     for (int i = 0; i < kMaxInputs; ++i)
@@ -170,7 +186,9 @@ void Engine::createParams()
             // Instance k: ids "in1.gate.*" (first), "in1.gate2.*" ...; names "In 1 Gate ...", "In 1 Gate 2 ...".
             const auto num = k == 0 ? juce::String() : juce::String (k + 1);
             const auto lbl = [&] (const char* what) { return n + what + (k == 0 ? juce::String() : " " + num) + " "; };
-            s.phases[(size_t) k] = &params.addToggle (p + fxPart (Fx::phase, k), lbl ("Phase").trimEnd() + " Invert");
+            createUtilityParams (params, s.utilities[(size_t) k], p + fxPart (Fx::utility, k) + ".", lbl ("Utility"));
+            // The former phase block (old sessions / scenes / MIDI maps): becomes a Utility in ensureBuiltins.
+            s.utilities[(size_t) k].legacyPhase = &params.addToggle (p + "phase" + num, lbl ("Phase").trimEnd() + " Invert (old)");
             s.eqs[(size_t) k].create (params, p, n, fxPart (Fx::eq, k), "EQ" + (k == 0 ? juce::String() : " " + num));
             auto& g = s.gates[(size_t) k];
             const auto gp = p + fxPart (Fx::gate, k) + ".";
@@ -210,6 +228,32 @@ void Engine::createParams()
                 st.solo[(size_t) k] = &params.addToggle (sp + name.toLowerCase() + ".solo", n + "Stem Separator " + name + " Solo");
             }
         }
+        {
+            auto& t = s.transpose;
+            const auto tp = p + fxPart (Fx::transpose, 0) + ".";
+            t.on       = &params.addToggle (tp + "on", n + "Transpose On");
+            t.semi     = &params.add (tp + "semi", n + "Transpose Semitones", ParamType::Continuous, linRange (-24, 24, 1.0f), 0.0f, " st");
+            t.fine     = &params.add (tp + "fine", n + "Transpose Fine", ParamType::Continuous, linRange (-50, 50, 0.1f), 0.0f, " ct");
+            t.quality  = &params.addChoice (tp + "quality", n + "Transpose Quality", dsp::PitchShifter::qualityNames(), dsp::PitchShifter::normal);
+            t.timbre   = &params.addToggle (tp + "timbre", n + "Transpose Keep Timbre");
+            t.autoTune = &params.addToggle (tp + "auto", n + "Transpose Auto Tune");
+            t.findKey  = &params.addToggle (tp + "findkey", n + "Transpose Find Key");
+            t.addPart  = &params.addToggle (tp + "addpart", n + "Transpose Add Part");
+            t.autoTune->persistent = false;
+            t.findKey->persistent = false;
+            t.addPart->persistent = false;
+            juce::StringArray keys { "-" };
+            for (int key = 0; key < 24; ++key) keys.add (dsp::keyName (key));
+            t.key      = &params.addChoice (tp + "key", n + "Transpose Found Key", keys, 0);
+            t.key2     = &params.addChoice (tp + "key2", n + "Transpose Second Key", keys, 0);
+            t.prob     = &params.add (tp + "prob", n + "Transpose Key Probability", ParamType::Continuous, linRange (0, 1, 0.001f), 0.0f);
+            t.prob2    = &params.add (tp + "prob2", n + "Transpose Second Key Probability", ParamType::Continuous, linRange (0, 1, 0.001f), 0.0f);
+            t.parts    = &params.add (tp + "parts", n + "Transpose Parts Heard", ParamType::Continuous, linRange (0, 100, 1.0f), 0.0f);
+            t.cents    = &params.add (tp + "cents", n + "Transpose Found Offset", ParamType::Continuous, linRange (-50, 50, 0.1f), 0.0f, " ct");
+            for (int pc = 0; pc < 12; ++pc)
+                t.heard[(size_t) pc] = &params.add (tp + "pc" + juce::String (pc), n + "Transpose Heard " + dsp::keyName (pc).upToFirstOccurrenceOf (" ", false, false),
+                                                    ParamType::Continuous, linRange (0, 1, 0.01f), 0.0f);
+        }
         s.fxBypass   = &params.addToggle (p + "fx.bypass", n + "FX Bypass");
         s.syncOn     = &params.addToggle (p + "sync", n + "Sync Delay Auto");
         s.delayMs    = &params.add (p + "delay", n + "Sync Delay", ParamType::Continuous,
@@ -242,7 +286,8 @@ void Engine::createParams()
             l.on      = &params.addToggle (p + fxPart (Fx::limiter, k) + ".on", n + "Limiter" + num + " On", false);
             l.ceiling = &params.add (p + fxPart (Fx::limiter, k) + ".ceiling", n + "Limiter" + num + " Ceiling", ParamType::Continuous,
                                      linRange (-30, 0, 0.1f), 0.0f, " dB");
-            bus.phases[(size_t) k] = &params.addToggle (p + fxPart (Fx::phase, k), n + "Phase" + num + " Invert");
+            createUtilityParams (params, bus.utilities[(size_t) k], p + fxPart (Fx::utility, k) + ".", n + "Utility" + num + " ");
+            bus.utilities[(size_t) k].legacyPhase = &params.addToggle (p + "phase" + num.trim(), n + "Phase" + num + " Invert (old)");
             createCompParams (params, bus.comps[(size_t) k], p + fxPart (Fx::comp, k) + ".", n + "Comp" + num + " ");
         }
         bus.fxBypass = &params.addToggle (p + "fx.bypass", n + "FX Bypass");
@@ -749,6 +794,22 @@ int Engine::delaySamples (int ch) const noexcept
     return juce::roundToInt (getChannelDelayMs (ch) * sampleRate / 1000.0);
 }
 
+void Engine::updateOverloadLog()
+{
+    // Blocks over 100 % in hydra.log: at most one line per 10 s with how many and the worst. They explain clicks /
+    // dropouts that happen on all devices at the same moment (the master callback was late, not one device).
+    const auto n = overloads.load (std::memory_order_relaxed);
+    if (n == overloadsLogged) return;
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (now - overloadLogTime < 10000.0) return;
+    const float worst = overloadPeak.exchange (0.0f, std::memory_order_relaxed);
+    logLine ("dsp: " + juce::String ((juce::int64) (n - overloadsLogged)) + " block(s) over 100 % (slowest "
+             + juce::String (juce::roundToInt (worst * 100.0f)) + " % of " + juce::String (blockSize) + " samples), total "
+             + juce::String ((juce::int64) n));
+    overloadsLogged = n;
+    overloadLogTime = now;
+}
+
 void Engine::updateSyncDelays()
 {
     // 1. Latency of every channel without its own delay, smoothed (~1 s): the fill level of the drift buffers
@@ -766,7 +827,7 @@ void Engine::updateSyncDelays()
             if (s.active->isOn() && s.source.kind != IoTarget::Kind::None)
                 if (const double dev = getIoLatencyMs (s.source, true); dev >= 0.0)
                     ms = dev + (s.denoiserActive() ? 1000.0 * s.dspLatency.load() / juce::jmax (1.0, sampleRate) : 0.0)
-                       + 1000.0 * s.stemsLatency.load() / juce::jmax (1.0, sampleRate)
+                       + 1000.0 * (s.stemsLatency.load() + s.transposeLatency.load()) / juce::jmax (1.0, sampleRate)
                        + pluginLatencyMs (s.plugins, *s.fxBypass);
         }
         else
@@ -907,15 +968,16 @@ void Engine::prepareChains()
 std::vector<Fx> Engine::allowedFx (int ch) const
 {
     // In their usual order (where ensureBuiltins inserts them).
-    if (ch < kMaxInputs) return { Fx::stems, Fx::phase, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::limiter };
-    if (isHwBus (ch - kMaxInputs)) return { Fx::correction, Fx::phase, Fx::eq, Fx::comp, Fx::limiter };
-    return { Fx::phase, Fx::eq, Fx::comp, Fx::limiter };
+    if (ch < kMaxInputs) return { Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::limiter };
+    if (isHwBus (ch - kMaxInputs)) return { Fx::correction, Fx::utility, Fx::eq, Fx::comp, Fx::limiter };
+    return { Fx::utility, Fx::eq, Fx::comp, Fx::limiter };
 }
 
 juce::String Engine::fxPart (Fx f, int k)
 {
     const juce::String base = f == Fx::denoiser ? "dn" : f == Fx::eq ? "eq" : f == Fx::gate ? "gate" : f == Fx::comp ? "comp"
-                            : f == Fx::limiter ? "lim" : f == Fx::phase ? "phase" : f == Fx::stems ? "stems" : "corr";
+                            : f == Fx::limiter ? "lim" : f == Fx::utility ? "util" : f == Fx::stems ? "stems"
+                            : f == Fx::transpose ? "tp" : "corr";
     return k == 0 ? base : base + juce::String (k + 1);
 }
 
@@ -932,9 +994,10 @@ Param* Engine::fxOnParam (int ch, Fx f, int k) const
             case Fx::eq:       return s.eqs[i].on;
             case Fx::gate:     return s.gates[i].on;
             case Fx::comp:     return s.comps[i].on;
-            case Fx::phase:    return s.phases[i];
+            case Fx::utility:  return s.utilities[i].on;
             case Fx::limiter:  return s.limiters[i].on;
             case Fx::stems:    return s.stems.on;
+            case Fx::transpose: return s.transpose.on;
             default:           return nullptr;
         }
     }
@@ -944,7 +1007,7 @@ Param* Engine::fxOnParam (int ch, Fx f, int k) const
         case Fx::eq:         return b.eqs[i].on;
         case Fx::limiter:    return b.limiters[i].on;
         case Fx::comp:       return b.comps[i].on;
-        case Fx::phase:      return b.phases[i];
+        case Fx::utility:    return b.utilities[i].on;
         case Fx::correction: return b.correction.on;
         default:             return nullptr;
     }
@@ -955,7 +1018,6 @@ std::vector<Param*> Engine::fxParams (int ch, Fx f, int k) const
     std::vector<Param*> out;
     auto* on = fxOnParam (ch, f, k);
     if (on == nullptr) return out;
-    if (f == Fx::phase) return { on };
     const auto prefix = (ch < kMaxInputs ? "in" + juce::String (ch + 1) + "." : "bus." + busCode (ch - kMaxInputs) + ".") + fxPart (f, k) + ".";
     for (auto& p : params.all())
         if (p->id.startsWith (prefix)) out.push_back (p.get());
@@ -993,6 +1055,7 @@ int Engine::addBuiltin (int ch, Fx f, int index)
         if (f == Fx::denoiser) prepareDenoiser (inputs[(size_t) ch].denoisers[(size_t) k]);
         for (auto* p : fxParams (ch, f, k)) p->reset();   // a fresh instance
         if (f == Fx::stems) prepareStems (inputs[(size_t) ch]);
+        if (f == Fx::transpose) prepareTranspose (inputs[(size_t) ch]);
         chain.addBuiltin (f, k, index >= 0 ? index : usualIndex (chain, f, allowedFx (ch)));
         on->set (1.0f);
         return k;
@@ -1032,6 +1095,16 @@ void Engine::releaseStems (InputStrip& s)
     stemsGraveyard.emplace_back (std::move (st.inst), callbackCount.load() + 2);
 }
 
+void Engine::prepareTranspose (InputStrip& s)
+{
+    auto& t = s.transpose;
+    if (t.dsp != nullptr) return;
+    auto ps = std::make_unique<dsp::PitchShifter>();
+    ps->prepare (sampleRate);
+    t.dsp = std::move (ps);
+    t.live.store (t.dsp.get(), std::memory_order_release);
+}
+
 void Engine::prepareDenoiser (DenoiserFx& d)
 {
     // Further denoisers are created when they are first used (RNNoise state is large); never on the audio thread.
@@ -1049,6 +1122,15 @@ void Engine::ensureBuiltins()
         if (ch < kMaxInputs ? ! isInputActive (ch) : ! isBusActive (ch - kMaxInputs)) continue;
         auto& chain = chainFor (ch);
         const auto allowed = allowedFx (ch);
+        // The former phase block (old session, scene, MIDI): Utility k with its phase inverted.
+        for (int k = 0; k < kFxInstances; ++k)
+        {
+            auto& u = ch < kMaxInputs ? inputs[(size_t) ch].utilities[(size_t) k] : buses[(size_t) (ch - kMaxInputs)].utilities[(size_t) k];
+            if (! u.legacyPhase->isOn()) continue;
+            u.legacyPhase->set (0.0f);
+            u.phase->set (1.0f);
+            u.on->set (1.0f);
+        }
         for (int i = chain.size(); --i >= 0;)   // e.g. a gate pasted onto a bus
             if (auto* s = chain.getSlot (i); s != nullptr && ! s->isPlugin()
                 && (std::find (allowed.begin(), allowed.end(), s->builtin) == allowed.end() || s->fxInstance >= maxInstances (s->builtin)))
@@ -1058,6 +1140,7 @@ void Engine::ensureBuiltins()
                 if (auto* on = fxOnParam (ch, f, k); on != nullptr && on->isOn() && ! chain.hasBuiltin (f, k))
                 {
                     if (f == Fx::denoiser) prepareDenoiser (inputs[(size_t) ch].denoisers[(size_t) k]);
+                    if (f == Fx::transpose) prepareTranspose (inputs[(size_t) ch]);
                     chain.addBuiltin (f, k, usualIndex (chain, f, allowed));
                 }
         if (ch < kMaxInputs)   // denoisers / stems loaded from a session (or a chain pasted / removed)
@@ -1067,6 +1150,7 @@ void Engine::ensureBuiltins()
                 if (chain.hasBuiltin (Fx::denoiser, k)) prepareDenoiser (s.denoisers[(size_t) k]);
             if (chain.hasBuiltin (Fx::stems)) prepareStems (s);
             else                              releaseStems (s);
+            if (chain.hasBuiltin (Fx::transpose)) prepareTranspose (s);
         }
     }
     for (int i = 0; i < kMaxInputs; ++i)   // a removed input slot keeps no stems state
@@ -1400,7 +1484,9 @@ void Engine::timerCallback()
 {
     enforceExclusiveSelect();
     ensureBuiltins();
+    for (auto& s : inputs) s.transpose.tick (callbackCount.load(), running, sampleRate);
     updateDropoutLogs();
+    updateOverloadLog();
     updateSyncDelays();
 
     const auto now = callbackCount.load();
@@ -1504,7 +1590,10 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
             auto& d = s.denoisers[(size_t) k];
             if (d.dsp != nullptr) d.dsp->prepare (sampleRate);
             d.wasOn = false;
+            s.utilities[(size_t) k].dsp.prepare (sampleRate);
         }
+        if (s.transpose.dsp != nullptr) s.transpose.dsp->prepare (sampleRate);
+        s.transpose.wasOn = false;
         if (s.stems.inst != nullptr) s.stems.inst->prepare (sampleRate);
         s.stems.wasOn = false;
         s.delay.prepare (sampleRate);
@@ -1518,6 +1607,7 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
         for (auto& eq : b.eqs) eq.prepare();
         for (auto& l : b.limiters) l.dsp.prepare (sampleRate);
         for (auto& c : b.comps) c.dsp.prepare (sampleRate);
+        for (auto& u : b.utilities) u.dsp.prepare (sampleRate);
         b.correction.reset();
         b.delay.prepare (sampleRate);
         b.lastGain = 0;
@@ -1569,6 +1659,20 @@ void Engine::audioDeviceIOCallbackWithContext (const float* const* in, int numIn
     const float load = (float) (secs * sampleRate / juce::jmax (1, n));
     const float prev = cpuLoad.load (std::memory_order_relaxed);
     cpuLoad.store (load > prev ? load : prev + 0.05f * (load - prev), std::memory_order_relaxed);
+    // Peak of the last 0.5-1 s (two windows of 0.5 s) and blocks that took longer than real time (an overload:
+    // the device's next block was not ready, usually an audible click on every device at once).
+    if (load > peakWindow.load (std::memory_order_relaxed)) peakWindow.store (load, std::memory_order_relaxed);
+    if ((peakFrames += n) >= (int) (0.5 * sampleRate))
+    {
+        peakLast.store (peakWindow.load (std::memory_order_relaxed), std::memory_order_relaxed);
+        peakWindow.store (0.0f, std::memory_order_relaxed);
+        peakFrames = 0;
+    }
+    if (load >= 1.0f)
+    {
+        overloads.store (overloads.load (std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+        if (load > overloadPeak.load (std::memory_order_relaxed)) overloadPeak.store (load, std::memory_order_relaxed);
+    }
     busyTicks.store (busyTicks.load (std::memory_order_relaxed) + (uint64_t) juce::jmax ((juce::int64) 0, elapsed), std::memory_order_relaxed);
     busyFrames.store (busyFrames.load (std::memory_order_relaxed) + (uint64_t) n, std::memory_order_relaxed);
     if (profile.users.load (std::memory_order_relaxed) > 0)
@@ -1618,6 +1722,29 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
     bool anySolo = false;
     for (auto& s : inputs) anySolo |= s.solo->isOn() && s.active->isOn();
 
+    // Monitoring: the selected bus is processed first and replaces the monitor bus's own mix (step 4).
+    const int selBus = getSelectedBus();
+    int monBusIndex = -1; // derived from the same SEL snapshot (SEL may change concurrently)
+    if (selBus >= 0 && monOn->isOn())
+        if (const int m = juce::jlimit (0, kMaxHwBuses - 1, juce::roundToInt (monBus->get()));
+            m != selBus && buses[(size_t) m].active->isOn())
+            monBusIndex = m;
+
+    // Which buses can be heard at all: something takes their signal (an output, the recorder, monitoring,
+    // a measurement) and they are not muted (after their fade-out). Channels whose signal reaches no such bus
+    // skip their effects (processStrip; wish of the user 11.11.: free DSP for what is not used).
+    const int recBus = recorder.wantsRecord() ? recorder.getRecordSourceBus() : -1;
+    std::array<bool, kMaxBuses> busUsed {}, busOpen {};
+    for (int b = 0; b < kMaxBuses; ++b)
+    {
+        const auto& bus = buses[(size_t) b];
+        const auto& m = g.out[(size_t) b];
+        busUsed[(size_t) b] = bus.active->isOn()
+                              && (m.kind == IoTarget::Kind::Master || m.s != nullptr || b == recBus
+                                  || (monBusIndex >= 0 && b == selBus) || (run != nullptr && b == run->bus));
+        busOpen[(size_t) b] = busUsed[(size_t) b] && ! (bus.mute->isOn() && bus.lastGain == 0.0f);
+    }
+
     // 2. Input strips -> bus sums.
     const int micTap = micTapInput.load (std::memory_order_relaxed);
     for (int i = 0; i < kMaxInputs; ++i)
@@ -1662,7 +1789,7 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
             s.lastRoute.fill (0.0f);
             continue;
         }
-        processStrip (s, L, R, n, anySolo, L == R, timed);
+        processStrip (s, L, R, n, anySolo, L == R, timed, busOpen);
     }
 
     // 3. Recorder playback into the chosen buses.
@@ -1686,13 +1813,7 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
 
     // 4. Bus processing. Monitoring: the selected bus is processed first and replaces the
     //    monitor bus's own mix, so only the monitored signal is heard there (through its EQ / fader).
-    const int selBus = getSelectedBus();
-    int monBusIndex = -1; // derived from the same SEL snapshot (SEL may change concurrently)
-    if (selBus >= 0 && monOn->isOn())
-        if (const int m = juce::jlimit (0, kMaxHwBuses - 1, juce::roundToInt (monBus->get()));
-            m != selBus && buses[(size_t) m].active->isOn())
-            monBusIndex = m;
-    if (monBusIndex >= 0) processBus (buses[(size_t) selBus], n, timed);
+    if (monBusIndex >= 0) processBus (buses[(size_t) selBus], n, timed, true);
     for (int b = 0; b < kMaxBuses; ++b)
     {
         auto& bus = buses[(size_t) b];
@@ -1708,7 +1829,7 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
             std::memcpy (bus.l.data(), buses[(size_t) selBus].l.data(), (size_t) n * sizeof (float));
             std::memcpy (bus.r.data(), buses[(size_t) selBus].r.data(), (size_t) n * sizeof (float));
         }
-        processBus (bus, n, timed);
+        processBus (bus, n, timed, busUsed[(size_t) b]);
         if (run != nullptr && run->muteOthers)
         {
             // Silent while measuring: fades out in the first chunk, the fader fades back in afterwards.
@@ -1781,7 +1902,8 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
         run->pos.store (run->stop.load (std::memory_order_relaxed) ? run->length : runStart + runCount, std::memory_order_release);
 }
 
-void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, int n, bool anySolo, bool monoSource, bool timed) noexcept
+void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, int n, bool anySolo, bool monoSource, bool timed,
+                           const std::array<bool, kMaxBuses>& busOpen) noexcept
 {
     // Profiling (DSP view open): each lap adds the time since the previous lap to a stage.
     auto mark = timed ? juce::Time::getHighResolutionTicks() : 0;
@@ -1803,6 +1925,56 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
     s.lastTrim = trim;
     s.preMeter.push (dsp::peak (l, n), dsp::peak (r, n));
 
+    // Nothing of this channel can be heard (muted / another channel soloed, fader at -inf, not routed to a bus
+    // that is heard) and it has faded out: skip its effects, Sync Delay and routing. Its meter shows the level
+    // before the effects. Resuming starts from silence (fader and sends fade in, denoiser, Stems and Transpose
+    // restart, the delay line holds silence), like switching the channel on. Open views that show the effects'
+    // output (EQ spectrum, Stems levels, compressor window) and Find Key keep it running.
+    {
+        const bool silentNow = anySolo ? ! s.solo->isOn() : s.mute->isOn();
+        const bool faderOpen = ! silentNow && dbToGain (s.gain->get()) > 0.0f;
+        const bool fadingOut = s.lastL != 0.0f || s.lastR != 0.0f;
+        bool heard = false;
+        for (int b = 0; b < kMaxBuses && ! heard; ++b)
+        {
+            if (! busOpen[(size_t) b]) continue;
+            if (fadingOut && s.lastRoute[(size_t) b] != 0.0f) heard = true;
+            else if (faderOpen && s.route[(size_t) b]->isOn() && dbToGain (s.send[(size_t) b]->get()) > 0.0f) heard = true;
+        }
+        bool watched = s.spectrum.users.load (std::memory_order_relaxed) > 0
+                       || s.stems.meterUsers.load (std::memory_order_relaxed) > 0
+                       || s.transpose.isListening();
+        for (const auto& c : s.comps) watched |= c.views.load (std::memory_order_relaxed) > 0;
+        if (! heard && ! watched)
+        {
+            s.fxIdle.store (true, std::memory_order_relaxed);
+            const float fader = dbToGain (s.gain->get());
+            const float pan = s.pan->get();
+            const float panL = pan > 0.0f ? 1.0f - pan : 1.0f;
+            const float panR = pan < 0.0f ? 1.0f + pan : 1.0f;
+            s.meter.push (dsp::peak (l, n) * fader * panL, dsp::peak (r, n) * fader * panR);
+            s.meter.muted.store (silentNow, std::memory_order_relaxed);
+            s.lastL = s.lastR = 0.0f;
+            s.lastRoute.fill (0.0f);
+            s.stems.wasOn = false;
+            s.transpose.wasOn = false;
+            for (int k = 0; k < kFxInstances; ++k)
+            {
+                s.denoisers[(size_t) k].wasOn = false;
+                s.gates[(size_t) k].dsp.shownGain.store (1.0f, std::memory_order_relaxed);
+                s.comps[(size_t) k].gr.store (0.0f, std::memory_order_relaxed);
+                s.comps[(size_t) k].inPeak.store (0.0f, std::memory_order_relaxed);
+            }
+            // The delay line keeps running on silence, so resuming does not play what it held from before.
+            std::memset (l, 0, (size_t) n * sizeof (float));
+            std::memset (r, 0, (size_t) n * sizeof (float));
+            s.delay.process (l, r, n, delaySamples (s.index));
+            lap (DspTimes::other);
+            return;
+        }
+        s.fxIdle.store (false, std::memory_order_relaxed);
+    }
+
     lap (DspTimes::other);
 
     // Effect chain: plugins and built-in effects in the order the user set (pre-fader).
@@ -1810,8 +1982,8 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
     int latency = 0;
     bool tapped = false;
     const int tapEq = s.spectrum.eqInstance.load (std::memory_order_relaxed);
-    bool chainRan = false, stemsRan = false;
-    int stemsLatency = 0;
+    bool chainRan = false, stemsRan = false, transposeRan = false;
+    int stemsLatency = 0, transposeLatency = 0;
     if (! s.fxBypass->isOn())
         chainRan = s.plugins.process (l, r, n, timed, [&] (Fx f, int k)
         {
@@ -1832,6 +2004,7 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
                     break;
                 }
                 case Fx::eq:
+                    if (k == tapEq) s.spectrum.pushPre (l, r, n);
                     s.eqs[i].process (l, r, n, sampleRate);
                     if (k == tapEq) { s.spectrum.push (l, r, n); tapped = true; }
                     lap (DspTimes::eq);
@@ -1844,6 +2017,7 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
                     break;
                 case Fx::comp:
                     if (! s.comps[i].on->isOn()) break;
+                    s.comps[i].tapInput (l, r, n);
                     s.comps[i].dsp.process (l, r, n, s.comps[i].settings());
                     s.comps[i].gr.store (s.comps[i].dsp.lastGr, std::memory_order_relaxed);
                     ran |= 1u << (16 + k);
@@ -1853,13 +2027,26 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
                     if (s.limiters[i].on->isOn()) s.limiters[i].dsp.process (l, r, n, s.limiters[i].ceiling->get());
                     lap (DspTimes::limiter);
                     break;
-                case Fx::phase:
-                    if (s.phases[i]->isOn())
-                    {
-                        juce::FloatVectorOperations::negate (l, l, n);
-                        juce::FloatVectorOperations::negate (r, r, n);
-                    }
+                case Fx::utility:
+                {
+                    auto& u = s.utilities[i];
+                    u.dsp.process (l, r, n, u.settings(), u.on->isOn());
+                    lap (DspTimes::utility);
                     break;
+                }
+                case Fx::transpose:
+                {
+                    auto& t = s.transpose;
+                    t.feed (l, r, n);   // Auto Tune / Find Key listen here (before the shift), only while they run
+                    auto* ps = t.live.load (std::memory_order_acquire);
+                    if (! t.on->isOn() || ps == nullptr) break;
+                    if (! t.wasOn) ps->reset();
+                    ps->process (l, r, n, t.ratio(), juce::roundToInt (t.quality->get()), t.timbre->isOn());
+                    transposeLatency = ps->getLatencySamples();
+                    transposeRan = true;
+                    lap (DspTimes::transpose);
+                    break;
+                }
                 case Fx::stems:
                 {
                     auto& st = s.stems;
@@ -1872,7 +2059,7 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
                                    st.meterUsers.load (std::memory_order_relaxed) > 0 ? st.peaks.data() : nullptr, StemsFx::numReaders);
                     stemsLatency = inst->getLatencySamples();
                     stemsRan = true;
-                    lap (DspTimes::other);
+                    lap (DspTimes::stems);
                     break;
                 }
                 default: break;
@@ -1882,6 +2069,8 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
     {
         s.stems.wasOn = stemsRan;
         s.stemsLatency.store (stemsRan ? stemsLatency : 0, std::memory_order_relaxed);
+        s.transpose.wasOn = transposeRan;
+        s.transposeLatency.store (transposeRan ? transposeLatency : 0, std::memory_order_relaxed);
     }
     lap (DspTimes::plugins);
     for (int k = 0; k < kFxInstances; ++k)
@@ -1889,7 +2078,7 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
         const auto i = (size_t) k;
         s.denoisers[i].wasOn = (ran >> k) & 1u;
         if (! ((ran >> (8 + k)) & 1u)) s.gates[i].dsp.shownGain.store (1.0f, std::memory_order_relaxed);
-        if (! ((ran >> (16 + k)) & 1u)) s.comps[i].gr.store (0.0f, std::memory_order_relaxed);
+        if (! ((ran >> (16 + k)) & 1u)) { s.comps[i].gr.store (0.0f, std::memory_order_relaxed); s.comps[i].inPeak.store (0.0f, std::memory_order_relaxed); }
     }
     s.dspLatency.store (latency, std::memory_order_relaxed);
     if (! tapped) s.spectrum.push (l, r, n);   // the shown EQ is not in the chain: the analyzer shows the chain's output
@@ -1945,7 +2134,7 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
     lap (DspTimes::other);
 }
 
-void Engine::processBus (Bus& b, int n, bool timed) noexcept
+void Engine::processBus (Bus& b, int n, bool timed, bool used) noexcept
 {
     auto mark = timed ? juce::Time::getHighResolutionTicks() : 0;
     auto lap = [&] (DspTimes::Stage stage)
@@ -1958,7 +2147,31 @@ void Engine::processBus (Bus& b, int n, bool timed) noexcept
     float* l = b.l.data();
     float* r = b.r.data();
 
-    // Effect chain (pre-fader), in the order the user set: correction, phase, EQ, compressor, limiter and plugins.
+    // Not heard (nothing takes its signal, or muted and faded out) and no spectrum open: skip its effects.
+    // The meter shows the level before the effects; resuming fades in from silence (see processStrip).
+    bool watched = b.spectrum.users.load (std::memory_order_relaxed) > 0;
+    for (const auto& c : b.comps) watched |= c.views.load (std::memory_order_relaxed) > 0;
+    if ((! used || (b.mute->isOn() && b.lastGain == 0.0f)) && ! watched)
+    {
+        b.fxIdle.store (true, std::memory_order_relaxed);
+        const float fader = dbToGain (b.gain->get());
+        b.meter.push (dsp::peak (l, n) * fader, dsp::peak (r, n) * fader);
+        b.meter.muted.store (b.mute->isOn(), std::memory_order_relaxed);
+        std::memset (l, 0, (size_t) n * sizeof (float));
+        std::memset (r, 0, (size_t) n * sizeof (float));
+        b.lastGain = 0.0f;
+        for (int k = 0; k < kFxInstances; ++k)
+        {
+            b.comps[(size_t) k].gr.store (0.0f, std::memory_order_relaxed);
+            b.comps[(size_t) k].inPeak.store (0.0f, std::memory_order_relaxed);
+        }
+        b.delay.process (l, r, n, delaySamples (busChannel (b.index)));
+        lap (DspTimes::other);
+        return;
+    }
+    b.fxIdle.store (false, std::memory_order_relaxed);
+
+    // Effect chain (pre-fader), in the order the user set: correction, utility, EQ, compressor, limiter and plugins.
     bool tapped = false;
     uint32_t compsRan = 0;
     const int tapEq = b.spectrum.eqInstance.load (std::memory_order_relaxed);
@@ -1971,9 +2184,10 @@ void Engine::processBus (Bus& b, int n, bool timed) noexcept
             {
                 case Fx::correction:
                     b.correction.process (l, r, n, sampleRate);
-                    lap (DspTimes::eq);
+                    lap (DspTimes::correction);
                     break;
                 case Fx::eq:
+                    if (k == tapEq) b.spectrum.pushPre (l, r, n);
                     b.eqs[i].process (l, r, n, sampleRate);
                     if (k == tapEq) { b.spectrum.push (l, r, n); tapped = true; }
                     lap (DspTimes::eq);
@@ -1984,24 +2198,25 @@ void Engine::processBus (Bus& b, int n, bool timed) noexcept
                     break;
                 case Fx::comp:
                     if (! b.comps[i].on->isOn()) break;
+                    b.comps[i].tapInput (l, r, n);
                     b.comps[i].dsp.process (l, r, n, b.comps[i].settings());
                     b.comps[i].gr.store (b.comps[i].dsp.lastGr, std::memory_order_relaxed);
                     compsRan |= 1u << k;
                     lap (DspTimes::comp);
                     break;
-                case Fx::phase:
-                    if (b.phases[i]->isOn())
-                    {
-                        juce::FloatVectorOperations::negate (l, l, n);
-                        juce::FloatVectorOperations::negate (r, r, n);
-                    }
+                case Fx::utility:
+                {
+                    auto& u = b.utilities[i];
+                    u.dsp.process (l, r, n, u.settings(), u.on->isOn());
+                    lap (DspTimes::utility);
                     break;
+                }
                 default: break;
             }
         });
     lap (DspTimes::plugins);
     for (int k = 0; k < kFxInstances; ++k)
-        if (! ((compsRan >> k) & 1u)) b.comps[(size_t) k].gr.store (0.0f, std::memory_order_relaxed);
+        if (! ((compsRan >> k) & 1u)) { b.comps[(size_t) k].gr.store (0.0f, std::memory_order_relaxed); b.comps[(size_t) k].inPeak.store (0.0f, std::memory_order_relaxed); }
     if (! tapped) b.spectrum.push (l, r, n);
 
     if (b.mono->isOn())

@@ -8,6 +8,8 @@
 #include "remote/RemoteControl.h"
 #include "ui/Dialog.h"
 #include "ui/UiWatch.h"
+#include "state/Install.h"
+#include "state/Updater.h"
 #include <random>
 
 #include <windows.h>
@@ -224,8 +226,16 @@ class App final : public juce::JUCEApplication, private juce::Timer
 public:
     const juce::String getApplicationName() override    { return "Hydra Mixer"; }
     const juce::String getApplicationVersion() override { return JUCE_APPLICATION_VERSION_STRING; }
-    // The elevated helper that renames devices runs next to the mixer.
-    bool moreThanOneInstanceAllowed() override          { const auto c = getCommandLineParameters(); return isDeviceNameJob (c) || isVacJob (c); }
+    // The elevated helpers (device names, cables, firewall) and the installer run next to the mixer.
+    // After an update the new exe first waits until the old one has quit (it holds the single-instance lock).
+    bool moreThanOneInstanceAllowed() override
+    {
+        const auto c = getCommandLineParameters();
+        if (isDeviceNameJob (c) || isVacJob (c) || isFirewallJob (c) || c.contains (install::kUninstallArgument)) return true;
+        if (install::shouldOfferInstall (c)) return true;
+        install::waitForPreviousInstance (c);
+        return false;
+    }
 
     void initialise (const juce::String& commandLine) override
     {
@@ -245,8 +255,44 @@ public:
             return;
         }
 
+        if (isFirewallJob (commandLine))
+        {
+            // Started elevated by install::requestFirewall: add / remove the rule and quit.
+            setApplicationReturnValue (install::runFirewallJob (commandLine));
+            quit();
+            return;
+        }
+        if (commandLine.contains (install::kUninstallArgument) || install::shouldOfferInstall (commandLine))
+        {
+            // Windows "Apps" > Uninstall, or a downloaded release: only the installer window, no mixer.
+            juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
+            theme::apply (theme::Style::deep);
+            lnf.refreshColours();
+            const bool uninstalling = commandLine.contains (install::kUninstallArgument);
+            auto* panel = new InstallerPanel (uninstalling ? InstallerPanel::Mode::uninstall : InstallerPanel::Mode::install);
+            installer = std::make_unique<ToolWindow> (uninstalling ? "Hydra Mixer" : "Hydra Mixer Setup", panel, panel->getWidth(), panel->getHeight() + 32);
+            installer->setResizable (false, false);
+            installer->onClose = [this] { quit(); };
+            panel->onFinished = [this, commandLine] (bool quitNow)
+            {
+                juce::MessageManager::callAsync ([this, commandLine, quitNow]
+                {
+                    installer.reset();
+                    if (quitNow) quit();
+                    else startMixer (commandLine);   // "Run without installing"
+                });
+            };
+            return;
+        }
+        startMixer (commandLine);
+    }
+
+    void startMixer (const juce::String& commandLine)
+    {
         tuneProcessForAudio();
         juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
+        install::cleanUpAfterUpdate();   // the exe of the previous version, the download
+        install::quitRequested();        // creates the event the installer uses to close this mixer
 
         poller = std::make_unique<ParamPoller>();
         engine = std::make_unique<Engine>();
@@ -257,6 +303,7 @@ public:
         session = std::make_unique<Session> (*engine, *midi);
         session->hotkeys = hotkeys.get();
         const bool loaded = session->loadDefault();
+        if (! loaded) session->prefs.setupDone = false;   // first start: the welcome wizard
         deviceNamer = std::make_unique<DeviceNamer> (*engine, session->deviceRenames);
         session->deviceNamer = deviceNamer.get();
         vacCables = std::make_unique<VacCables> (*engine, session->deviceRenames);
@@ -310,6 +357,7 @@ public:
         };
         if (auto* mc = window->getMain())
         {
+            mc->setUpdater (&updater, [this] { installUpdate(); }, [this] { checkForUpdates (true); });
             mc->onPrefsChanged = [this] { applyPrefs(); };
             mc->onShutdown = [this] { systemRequestedQuit(); };
             mc->onChannelsChanged = [this] { fitWindowLater(); };   // a channel added / removed
@@ -325,6 +373,14 @@ public:
         logLine ("started" + juce::String (startedWithWindows ? " with Windows" : "") + ", session "
                  + juce::String (loaded ? "loaded" : "not found / defaults"));
         checkMasterAfterStart();
+        if (auto* mc = window->getMain())
+        {
+            if (! session->prefs.setupDone) mc->startWelcome();
+            else mc->showTourResume();
+            if (commandLine.contains (install::kUpdatedArgument))
+                mc->notify ("Hydra Mixer " + install::currentVersion() + " is installed", 4.0);
+        }
+        if (commandLine.contains (install::kUpdatedArgument)) logLine ("running " + install::currentVersion() + " after an update / installation");
         startTimer (1000);
         uiWatch = std::make_unique<UiWatch>();
         // Keeps the autostart entry pointing at this exe (rebuilt / moved); off the critical startup path.
@@ -335,6 +391,7 @@ public:
     void shutdown() override
     {
         stopTimer();
+        installer.reset();
         uiWatch.reset();
         if (engine == nullptr) return;   // device name helper
         save();
@@ -363,6 +420,43 @@ public:
 private:
     static bool isDeviceNameJob (const juce::String& commandLine) { return commandLine.contains (DeviceNamer::kJobArgument); }
     static bool isVacJob (const juce::String& commandLine) { return commandLine.contains (vac::kJobArgument); }
+    static bool isFirewallJob (const juce::String& commandLine) { return commandLine.contains (install::kFirewallArgument); }
+
+    /** Updates: at start (after 20 s) and every 6 h, if wanted. manual = Settings > Check now (also when switched off). */
+    void checkForUpdates (bool manual)
+    {
+        if (session == nullptr || (! manual && ! session->prefs.updateCheck)) return;
+        updater.check (session->prefs.updateBeta);
+        lastUpdateCheck = juce::Time::getMillisecondCounterHiRes();
+    }
+
+    /** The update is downloaded: save, put the new exe in place, start it (it waits for us) and quit. */
+    void installUpdate()
+    {
+        const auto st = updater.getStatus();
+        if (st.state != Updater::State::ready || ! st.file.existsAsFile()) return;
+        save();
+        install::Options o;
+        o.startMenu = true;
+        o.firewall = (session->prefs.netEnabled || session->prefs.remoteEnabled) && ! install::firewallAllows (install::installedExe());
+        const auto err = install::installFrom (st.file, st.release.version, o);
+        if (err.isNotEmpty())
+        {
+            logLine ("update " + st.release.version + " not installed: " + err);
+            if (window != nullptr)
+                dialog::message (window->getMain(), dialog::Kind::warning, "Update not installed", err);
+            return;
+        }
+        if (! install::launchInstalled (true))
+        {
+            if (window != nullptr)
+                dialog::message (window->getMain(), dialog::Kind::warning, "Update installed",
+                                 "The new version is installed but did not start. Start Hydra Mixer again from the Start menu.");
+            return;
+        }
+        logLine ("update " + st.release.version + " installed, restarting");
+        quit();
+    }
 
     void showWindow()
     {
@@ -661,6 +755,20 @@ private:
 
     void timerCallback() override
     {
+        if (install::quitRequested())   // the installer replaces this exe
+        {
+            logLine ("quitting: the installer asked");
+            systemRequestedQuit();
+            return;
+        }
+        {
+            const double now = juce::Time::getMillisecondCounterHiRes();
+            if (lastUpdateCheck == 0.0 ? now - startedAt > 20000.0 : now - lastUpdateCheck > 6.0 * 3600.0 * 1000.0)
+            {
+                lastUpdateCheck = now;   // also when switched off: look again in 6 h
+                checkForUpdates (false);
+            }
+        }
         { UiActivity a ("app timer: master retry"); retryMaster(); }
         { UiActivity a ("app timer: pairing"); tickPairing(); }
         deviceNamer->useTask = session->prefs.renameNoPrompt;
@@ -701,6 +809,9 @@ private:
     std::unique_ptr<MainWindow> window;
     std::unique_ptr<TrayIcon> tray;
     std::unique_ptr<UiWatch> uiWatch;
+    std::unique_ptr<ToolWindow> installer;   // installer / uninstaller mode (no mixer)
+    Updater updater;
+    double lastUpdateCheck = 0.0, startedAt = juce::Time::getMillisecondCounterHiRes();
     juce::String shownLayoutKey;
     ChangeCounter changeCounter;
     juce::String lastState, pendingState;

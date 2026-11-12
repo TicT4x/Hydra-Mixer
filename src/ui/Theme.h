@@ -39,7 +39,8 @@ inline const juce::Colour fxGate       { 0xffffc23f };
 inline const juce::Colour fxComp       { 0xffff8f4d };
 inline const juce::Colour fxLimiter    { 0xffff6a7d };
 inline const juce::Colour fxCorrection { 0xffa78bfa };
-inline const juce::Colour fxPhase      { 0xffff6ac1 };
+inline const juce::Colour fxUtility    { 0xffff6ac1 };   // was the phase block's colour
+inline const juce::Colour fxTranspose  { 0xffc77dff };
 inline const juce::Colour fxStems      { 0xff56e0c8 };
 /** Colour of each stem of the Stems effect (vocals, drums, bass, guitar, rest). */
 inline juce::Colour stemColour (int s)

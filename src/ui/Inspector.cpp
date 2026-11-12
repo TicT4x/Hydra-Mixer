@@ -1,5 +1,6 @@
 #include "Inspector.h"
 #include "state/ChannelClipboard.h"
+#include "state/Session.h"
 #include <juce_dsp/juce_dsp.h>
 #include <deque>
 
@@ -747,11 +748,18 @@ private:
 };
 
 //==============================================================================
-/** Static compressor curve with the live gain reduction. */
+/** Static compressor curve with the live gain reduction and a point where the signal is now (wish of the user
+    11.11.): x = level entering the compressor, y = level leaving it (with the gain reduction it applies right
+    now, so attack / release show as the point lagging below / above the curve). A short trail follows it. */
 class CompCurve final : public juce::Component
 {
 public:
-    explicit CompCurve (CompFx& c) : fx (c) { setInterceptsMouseClicks (false, false); }
+    explicit CompCurve (CompFx& c) : fx (c)
+    {
+        setInterceptsMouseClicks (false, false);
+        fx.views.fetch_add (1);
+    }
+    ~CompCurve() override { fx.views.fetch_sub (1); }
 
     void update()
     {
@@ -762,11 +770,22 @@ public:
         for (auto* p : { fx.input, fx.thr, fx.ratio, fx.knee, fx.makeup, fx.autoGain })
             key += p->getVersion();
         ++ticks;
-        if ((std::abs (smoothGr - shownGr) > 0.1f && ticks >= 5) || key != shownKey)
+        bool dirty = key != shownKey;
+        if (std::abs (smoothGr - shownGr) > 0.1f && ticks >= 5) dirty = true;
+
+        // The live point: peaks rise at once, fall over ~0.3 s (like a meter), so it can be followed by eye.
+        const bool on = fx.on->isOn() && gr >= 0.0f;
+        const float inDb = juce::Decibels::gainToDecibels (fx.inPeak.load(), -100.0f);
+        levelDb = inDb > levelDb ? inDb : juce::jmax (inDb, levelDb - 3.0f);
+        const bool visible = on && levelDb > -60.0f;
+        trail[(size_t) (trailAt++ % trail.size())] = visible ? juce::Point<float> (levelDb, gr) : juce::Point<float> (-200.0f, 0.0f);
+        if (visible || pointShown) dirty = true;
+        pointShown = visible;
+
+        if (dirty)
         {
-            shownGr = smoothGr;
+            if (std::abs (smoothGr - shownGr) > 0.1f && ticks >= 5) { shownGr = smoothGr; ticks = 0; }
             shownKey = key;
-            ticks = 0;
             repaint();
         }
     }
@@ -796,6 +815,28 @@ public:
         const auto t = map (s.thresholdDb, s.thresholdDb);
         g.setColour (theme::textFaint);
         g.fillRect (t.x, r.getY(), 1.0f, r.getHeight());
+
+        // Live point and its trail (oldest faintest). Output = input + input gain - live reduction + makeup.
+        auto outOf = [&s] (juce::Point<float> v) { return v.x + s.inputDb - v.y + s.totalMakeupDb(); };
+        const int count = (int) trail.size();
+        for (int k = count - 1; k >= 0; --k)   // k = age in ticks
+        {
+            const auto v = trail[(size_t) ((trailAt - 1 - k + 4 * count) % count)];
+            if (v.x < -60.0f) continue;
+            const auto pt = map (juce::jmin (0.0f, v.x), outOf (v));
+            const float fade = 1.0f - (float) k / (float) count;
+            const float rad = k == 0 ? 4.5f : 1.5f + 2.0f * fade;
+            if (k == 0)
+            {
+                g.setColour (theme::fxComp.withAlpha (0.25f));
+                g.fillEllipse (pt.x - 9.0f, pt.y - 9.0f, 18.0f, 18.0f);
+                g.setColour (juce::Colours::white);
+            }
+            else
+                g.setColour (theme::fxComp.withAlpha (0.12f + 0.4f * fade));
+            g.fillEllipse (pt.x - rad, pt.y - rad, 2.0f * rad, 2.0f * rad);
+        }
+
         g.setColour (theme::text);
         g.setFont (theme::font (11.0f, true));
         g.drawText ("GR " + juce::String (juce::jmax (0.0f, shownGr), 1) + " dB", r.reduced (8.0f, 6.0f), juce::Justification::topLeft);
@@ -803,9 +844,12 @@ public:
 
 private:
     CompFx& fx;
-    float shownGr = -1.0f, smoothGr = 0.0f;
+    float shownGr = -1.0f, smoothGr = 0.0f, levelDb = -100.0f;
     int ticks = 0;
     uint64_t shownKey = 0;
+    std::array<juce::Point<float>, 8> trail { [] { std::array<juce::Point<float>, 8> a; a.fill ({ -200.0f, 0.0f }); return a; }() };
+    int trailAt = 0;
+    bool pointShown = false;
 };
 
 class CompPanel final : public AdvancedPanel
@@ -816,10 +860,11 @@ public:
           ratio (c, *s.ratio, "RATIO", theme::fxComp), knee (c, *s.knee, "KNEE", theme::fxComp),
           attack (c, *s.attack, "ATTACK", theme::fxComp), release (c, *s.release, "RELEASE", theme::fxComp),
           makeup (c, *s.makeup, "MAKEUP", theme::fxComp), autoMakeup (c, *s.autoGain, "AUTO GAIN", theme::fxComp),
-          on (c, *s.on, "ON", theme::fxComp), curve (s)
+          on (c, *s.on, "ON", theme::fxComp), curve (s),
+          gr ([&s] { return s.gr.load() / 24.0f; }, theme::fxComp, "GR")
     {
         showValues ({ &input, &thr, &ratio, &knee, &attack, &release, &makeup });
-        for (juce::Component* k : std::initializer_list<juce::Component*> { &input, &thr, &ratio, &knee, &attack, &release, &makeup, &autoMakeup, &on, &curve })
+        for (juce::Component* k : std::initializer_list<juce::Component*> { &input, &thr, &ratio, &knee, &attack, &release, &makeup, &autoMakeup, &on, &curve, &gr })
             addAndMakeVisible (k);
         on.setTooltip ("Switch the compressor on or off");
         autoMakeup.setTooltip ("Makes up for the reduction at 0 dBFS automatically");
@@ -830,7 +875,12 @@ public:
     {
         cards.clear();
         auto r = getLocalBounds().reduced (kPad);
-        curve.setBounds (card (r.removeFromRight (210), "Curve"));
+        {
+            auto c = card (r.removeFromRight (210), "Curve");
+            gr.setBounds (c.removeFromBottom (12));
+            c.removeFromBottom (6);
+            curve.setBounds (c);
+        }
         r.removeFromRight (kGap);
 
         const auto top = r.removeFromTop (kCardHeight);
@@ -849,6 +899,7 @@ private:
     Knob input, thr, ratio, knee, attack, release, makeup;
     Toggle autoMakeup, on;
     CompCurve curve;
+    LiveBar gr;
 };
 
 //==============================================================================
@@ -1040,7 +1091,7 @@ juce::String stemsProblem (const stems::Service::Status& st, stems::Model m)
     using S = stems::Service::State;
     switch (st.state)
     {
-        case S::unavailable: return "Not available in this build";
+        case S::unavailable: return st.message.isNotEmpty() ? st.message : juce::String ("Not available in this build");
         case S::noModel:     return stems::Service::modelFile (m).existsAsFile() ? "Starting..." : "Model not downloaded yet: click here";
         case S::downloading: return "Downloading " + juce::String (juce::roundToInt (st.progress * 100.0f)) + " %";
         case S::preparing:   return "Preparing the model";
@@ -1449,7 +1500,7 @@ StemsCover stemsCover (const InputStrip& s)
     c.spin = true;
     switch (st.state)
     {
-        case S::unavailable: c.spin = false; c.line = "Not available in this build"; break;
+        case S::unavailable: c.spin = false; c.line = st.message.isNotEmpty() ? st.message : juce::String ("Not available in this build"); break;
         case S::failed:      c.spin = false; c.line = "Error: see the model below"; break;
         case S::downloading: c.line = "Downloading " + name + "  " + juce::String (juce::roundToInt (st.progress * 100.0f)) + " %"; break;
         case S::preparing:   c.line = "Preparing " + name; break;
@@ -1915,43 +1966,500 @@ public:
     Knob ceiling;
 };
 
-/** Polarity inversion of a channel as its own block (not in the chain unless added). */
-class PhaseUnit final : public juce::Component, private ParamPoller::Client
+constexpr const char* kPhaseTip = "Phase: flips the polarity of the channel (both sides together)";
+
+/** All Utility settings (like Ableton's Utility). The on switch (top right) is for the whole effect. */
+class UtilityPanel final : public AdvancedPanel
 {
 public:
-    PhaseUnit (UiContext& c, Param& p, const juce::String& title)
-        : param (p), section (title, theme::fxPhase), on (c, p, "ON", theme::fxPhase)
+    UtilityPanel (UiContext& c, UtilityFx& u)
+        : phase (c, *u.phase, {}, theme::fxUtility, Toggle::Icon::phase),
+          channel (c, *u.channel, theme::fxUtility),
+          width (c, *u.width, "WIDTH", theme::fxUtility), mono (c, *u.mono, "MONO", theme::fxUtility),
+          bassFreq (c, *u.bassFreq, "FREQUENCY", theme::fxUtility), bass (c, *u.bass, "ON", theme::fxUtility),
+          balance (c, *u.balance, "BALANCE", theme::fxUtility), gain (c, *u.gain, "GAIN", theme::fxUtility),
+          dc (c, *u.dc, "DC", theme::fxUtility), on (c, *u.on, "ON", theme::fxUtility)
+    {
+        showValues ({ &width, &bassFreq, &balance, &gain });
+        for (juce::Component* k : std::initializer_list<juce::Component*> { &phase, &channel, &width, &mono, &bassFreq, &bass,
+                                                                           &balance, &gain, &dc, &on, &info })
+            addAndMakeVisible (k);
+        phase.setTooltip (kPhaseTip);
+        channel.setTooltip ("Left / Right: only that channel, on both sides. Swap: left and right change places");
+        mono.setTooltip ("Both channels summed to mono (width 0 %)");
+        bass.setTooltip ("Bass Mono: everything below the frequency is mono, the highs keep their width");
+        dc.setTooltip ("Removes DC offset (a high pass at 5 Hz)");
+        on.setTooltip ("Switch the whole Utility on or off");
+        info.setText ("Utility\nPhase, channel, width and level of the channel, like Ableton's Utility. No latency, "
+                      "and every change is smoothed (no clicks).\n\n"
+                      "Width works on mid (what both sides share) and side (the difference): 0 % = mono, 100 % = unchanged, "
+                      "up to 400 % = wider. Bass Mono keeps the low end in the middle (e.g. for vinyl or club playback).");
+        setSize (700, 2 * kPad + 2 * kCardHeight + kGap);
+    }
+
+    void resized() override
+    {
+        cards.clear();
+        auto r = getLocalBounds().reduced (kPad);
+        auto top = r.removeFromTop (kCardHeight);
+        const auto pc = top.removeFromLeft (390);
+        {
+            auto a = card (pc, "Phase and channel").withSizeKeepingCentre (pc.getWidth() - 20, 30);
+            phase.setBounds (a.removeFromLeft (56));
+            a.removeFromLeft (10);
+            channel.setBounds (a);
+        }
+        top.removeFromLeft (kGap);
+        width.setBounds (card (top, "Width").withSizeKeepingCentre (84, kKnobs));
+        // Top right corner: the switch of the whole effect, the info left of it.
+        on.setBounds (captionSlot (top, 44));
+        info.setBounds (captionSlot (top, 20, 52).withSizeKeepingCentre (InfoButton::kSize, InfoButton::kSize));
+        mono.setBounds (captionSlot (top, 52, 80));
+        r.removeFromTop (kGap);
+
+        const auto bm = r.removeFromLeft (200);
+        bassFreq.setBounds (card (bm, "Bass Mono").withSizeKeepingCentre (84, kKnobs));
+        bass.setBounds (captionSlot (bm, 44));
+        r.removeFromLeft (kGap);
+        const auto out = r;
+        rowLayout (card (out, "Output").withSizeKeepingCentre (200, kKnobs), { &balance, &gain });
+        dc.setBounds (captionSlot (out, 44));
+    }
+
+private:
+    Toggle phase;
+    ChoiceSegments channel;
+    Knob width;
+    Toggle mono;
+    Knob bassFreq;
+    Toggle bass;
+    Knob balance, gain;
+    Toggle dc, on;
+    InfoButton info;
+};
+
+/** Utility block: phase, mono, channel mode, width and gain; everything else in its window. */
+class UtilityUnit final : public juce::Component
+{
+public:
+    UtilityUnit (UiContext& c, UtilityFx& u, std::function<juce::String()> channelName, const juce::String& title)
+        : ctx (c), fx (u), section (title, theme::fxUtility), on (c, *u.on, "ON", theme::fxUtility),
+          phase (c, *u.phase, {}, theme::fxUtility, Toggle::Icon::phase), mono (c, *u.mono, "MONO", theme::fxUtility),
+          channel (c, *u.channel, theme::fxUtility, { "L", "ST", "R", "SWAP" }),
+          width (c, *u.width, "WIDTH", theme::fxUtility), gain (c, *u.gain, "GAIN", theme::fxUtility)
     {
         addAndMakeVisible (section);
-        section.addAndMakeVisible (on);
-        on.setTooltip ("Invert the polarity of this channel");
-        ParamPoller::attach (this);
+        for (juce::Component* k : std::initializer_list<juce::Component*> { &on, &phase, &mono, &channel, &width, &gain })
+            section.addAndMakeVisible (k);
+        phase.setTooltip (kPhaseTip);
+        mono.setTooltip ("Sum to mono");
+        channel.setTooltip ("Left only / stereo / right only / left and right swapped (L and R: that channel on both sides)");
+        section.enableGear ([this, title, channelName] { ctx.openPanel (std::make_unique<UtilityPanel> (ctx, fx), title + "  -  " + channelName()); });
     }
-    ~PhaseUnit() override { ParamPoller::detach (this); }
     Section& getSection() noexcept { return section; }
+
     void resized() override
     {
         section.setBounds (getLocalBounds());
         on.setBounds (section.headerSlot());
-    }
-    void paintOverChildren (juce::Graphics& g) override
-    {
-        auto r = section.content().toFloat();
-        const bool inv = param.isOn();
-        auto sym = r.removeFromTop (r.getHeight() - 18.0f).withSizeKeepingCentre (34.0f, 34.0f);
-        g.setColour (inv ? theme::fxPhase : theme::textFaint);
-        g.drawEllipse (sym.reduced (3.0f), 2.0f);
-        g.drawLine (sym.getX() + 4.0f, sym.getBottom() - 2.0f, sym.getRight() - 4.0f, sym.getY() + 2.0f, 2.0f);
-        g.setFont (theme::font (10.5f));
-        g.drawText (inv ? "inverted" : "normal", r, juce::Justification::centred);
+        auto cc = section.content();
+        auto row = cc.removeFromTop (20);
+        phase.setBounds (row.removeFromLeft (row.getWidth() / 2 - 2));
+        row.removeFromLeft (4);
+        mono.setBounds (row);
+        cc.removeFromTop (5);
+        channel.setBounds (cc.removeFromTop (20));
+        cc.removeFromTop (2);
+        rowLayout (cc.withSizeKeepingCentre (cc.getWidth(), juce::jmin (cc.getHeight(), 70)), { &width, &gain });
     }
 
 private:
-    void pollParams() override { if (param.getVersion() != seen) { seen = param.getVersion(); repaint(); } }
-    Param& param;
+    UiContext& ctx;
+    UtilityFx& fx;
+    Section section;
+    Toggle on, phase, mono;
+    ChoiceSegments channel;
+    Knob width, gain;
+};
+
+//==============================================================================
+/** What Transpose's listener is doing / found, for the block and the window. */
+struct TransposeStatus
+{
+    juce::String text;
+    juce::Colour colour;
+    bool busy = false;
+};
+
+TransposeStatus transposeStatus (const TransposeFx& t, bool longText)
+{
+    using S = TransposeFx::State;
+    const auto st = t.getState();
+    if (st == S::listening)
+    {
+        const int pct = juce::roundToInt (t.getProgress() * 100.0f);
+        const juce::String what = t.autoTune->isOn() ? "Auto Tune: listening " : t.isAddingPart() ? "Adding a part: listening " : "Listening ";
+        return { what + juce::String (pct) + " %", theme::fxTranspose, true };
+    }
+    if (st == S::analysing) return { "Analysing...", theme::fxTranspose, true };
+    if (st == S::noSignal)
+        return { longText ? "Heard too little music: play the song and try again" : "No music heard", theme::warn, false };
+    const int key = juce::roundToInt (t.key->get()) - 1;
+    if (key < 0) return { longText ? "Key not detected yet: press Find Key while the song plays" : "Key: -", theme::textFaint, false };
+    const int semi = juce::roundToInt (t.semi->get());
+    const float found = t.cents->get();
+    auto text = "Key: " + dsp::keyName (key, semi) + "  " + juce::String (juce::roundToInt (t.prob->get() * 100.0f)) + " %";
+    if (! longText) text << "  " << (found >= 0.0f ? "+" : "-") << juce::String (std::abs (found), 0) << " ct";
+    return { text, theme::textDim, false };
+}
+
+/** The key found by Find Key / Add Part / Auto Tune: a box with the most likely key (after the semitone shift) and
+    its probability, a box with how far the song is off A = 440 Hz, and the notes of the first and the second
+    choice with their probabilities; notes heard while listening are filled, notes heard outside the first choice
+    are listed below. Repaints only when something it shows changed. */
+class KeyDisplay final : public juce::Component
+{
+public:
+    explicit KeyDisplay (TransposeFx& t) : fx (t) {}
+
+    /** Called ~30 Hz by the window. */
+    void update()
+    {
+        juce::String sig;
+        sig << fx.key->get() << "|" << fx.key2->get() << "|" << fx.prob->get() << "|" << fx.prob2->get() << "|" << fx.parts->get()
+            << "|" << fx.semi->get() << "|" << fx.cents->get() << "|" << fx.fine->get() << "|" << (int) fx.on->isOn();
+        for (auto* h : fx.heard) sig << "|" << h->get();
+        if (sig != shownSig) { shownSig = sig; repaint(); }
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto accent = theme::fxTranspose;
+        const int key = juce::roundToInt (fx.key->get()) - 1;
+        const int key2 = juce::roundToInt (fx.key2->get()) - 1;
+        const int semi = juce::roundToInt (fx.semi->get());
+        const bool known = key >= 0;
+        auto r = getLocalBounds().toFloat();
+        const float corner = theme::deep() ? 4.0f : 8.0f;
+        auto box = [&] (juce::Rectangle<float> b, bool lit)
+        {
+            g.setColour (lit ? theme::bg.interpolatedWith (accent, 0.10f) : theme::bg.withAlpha (0.6f));
+            g.fillRoundedRectangle (b, corner);
+            g.setColour (lit ? accent.withAlpha (0.55f) : theme::cardLine);
+            g.drawRoundedRectangle (b.reduced (0.5f), corner, 1.0f);
+        };
+
+        // Key box: the most likely key and how likely it is.
+        auto keyBox = r.removeFromLeft (r.getHeight() * 0.95f);
+        box (keyBox, known);
+        {
+            auto k = keyBox.reduced (6.0f, 8.0f);
+            g.setColour (known ? theme::text : theme::textFaint);
+            g.setFont (theme::font (k.getHeight() * 0.36f, true));
+            g.drawText (known ? juce::String (noteName ((key % 12) + semi)) : juce::String ("?"), k.removeFromTop (k.getHeight() * 0.52f), juce::Justification::centredBottom);
+            g.setColour (known ? accent : theme::textFaint);
+            g.setFont (theme::font (12.0f, true));
+            g.drawText (known ? (key >= 12 ? "MINOR" : "MAJOR") : "KEY", k.removeFromTop (17.0f), juce::Justification::centred);
+            if (known)
+            {
+                g.setColour (theme::text);
+                g.setFont (theme::font (13.0f, true));
+                g.drawText (percent (fx.prob->get()), k.removeFromTop (18.0f), juce::Justification::centred);
+                if (semi != 0)
+                {
+                    g.setColour (theme::textFaint);
+                    g.setFont (theme::font (10.0f));
+                    g.drawText ("song: " + dsp::keyName (key), k, juce::Justification::centred);
+                }
+            }
+        }
+        r.removeFromLeft (8.0f);
+
+        // Offset box: how far the song is off A = 440 Hz, whether Fine corrects it; the Auto Finetune button at
+        // its bottom belongs to the window (autoTuneArea).
+        auto off = r.removeFromLeft (offsetWidth());
+        box (off, false);
+        {
+            auto o = off.reduced (6.0f, 8.0f);
+            o.removeFromBottom ((float) kButtonHeight + 4.0f);
+            const float c = fx.cents->get();
+            const bool tuned = known && fx.on->isOn() && std::abs (fx.fine->get() + c) < 0.5f && std::abs (c) >= 0.5f;
+            g.setColour (known ? theme::text : theme::textFaint);
+            g.setFont (theme::font (o.getHeight() * 0.36f, true));
+            g.drawText (known ? (c >= 0.0f ? "+" : "-") + juce::String (std::abs (c), std::abs (c) < 10.0f ? 1 : 0) : juce::String ("-"),
+                        o.removeFromTop (o.getHeight() * 0.55f), juce::Justification::centredBottom);
+            g.setColour (tuned ? theme::good : theme::textFaint);
+            g.setFont (theme::font (11.0f, tuned));
+            g.drawText (tuned ? "ct, TUNED" : known ? (std::abs (c) < 0.5f ? "ct, in tune" : c > 0.0f ? "ct sharp" : "ct flat") : "ct",
+                        o.removeFromTop (16.0f), juce::Justification::centred);
+        }
+        r.removeFromLeft (14.0f);
+
+        if (! known)
+        {
+            g.setColour (theme::textFaint);
+            g.setFont (theme::font (12.0f));
+            g.drawFittedText ("Play the song and press Find Key: the key, how sure it is, a second choice and how far the song is off "
+                              "A = 440 Hz show here.", r.toNearestInt(), juce::Justification::centredLeft, 3, 1.0f);
+            return;
+        }
+
+        // First and second choice: name + probability, then their 7 notes (filled = heard).
+        const float rowH = juce::jmin (36.0f, (r.getHeight() - 16.0f) / 2.0f - 4.0f);
+        auto row1 = r.removeFromTop (rowH);
+        r.removeFromTop (8.0f);
+        auto row2 = r.removeFromTop (rowH);
+        drawChoice (g, row1, key, fx.prob->get(), semi, true);
+        if (key2 >= 0) drawChoice (g, row2, key2, fx.prob2->get(), semi, false);
+
+        // Heard outside the first choice, and how many parts of the song were heard.
+        bool inKey[12] {};
+        for (int pc : dsp::scaleOf (key)) inKey[pc] = true;
+        juce::StringArray outside;
+        for (int pc = 0; pc < 12; ++pc)
+            if (! inKey[pc] && fx.heard[(size_t) pc]->get() >= kHeardMin) outside.add (noteName (pc + semi));
+        const int parts = juce::roundToInt (fx.parts->get());
+        juce::String line = "Filled = heard";
+        if (outside.size() > 0) line << "   ·   also heard: " << outside.joinIntoString (", ");
+        if (parts > 0) line << "   ·   " << parts << (parts == 1 ? " part of the song" : " parts of the song");
+        g.setColour (theme::textFaint);
+        g.setFont (theme::font (11.0f));
+        g.drawFittedText (line, r.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+    }
+
+    /** Where the window puts its Auto Finetune button: the bottom of the offset box. */
+    juce::Rectangle<int> autoTuneArea() const
+    {
+        const auto r = getLocalBounds();
+        const int x = (int) (r.getHeight() * 0.95f) + 8;
+        return juce::Rectangle<int> (x, 0, offsetWidth(), r.getHeight()).reduced (7, 8).removeFromBottom (kButtonHeight);
+    }
+
+private:
+    static constexpr float kHeardMin = 0.25f;   // share of the loudest pitch class that counts as heard
+    static constexpr int kButtonHeight = 26;
+    float offsetWidth() const { return juce::jmax ((float) getHeight() * 0.8f, 128.0f); }
+
+    static const char* noteName (int pc)
+    {
+        static const char* names[] = { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
+        return names[(pc % 12 + 12) % 12];
+    }
+    static juce::String percent (float p) { return juce::String (juce::roundToInt (juce::jlimit (0.0f, 1.0f, p) * 100.0f)) + " %"; }
+
+    void drawChoice (juce::Graphics& g, juce::Rectangle<float> row, int key, float p, int semi, bool first) const
+    {
+        const auto accent = theme::fxTranspose;
+        auto label = row.removeFromLeft (118.0f);
+        g.setColour (first ? theme::text : theme::textDim);
+        g.setFont (theme::font (12.0f, true));
+        g.drawText (dsp::keyName (key, semi), label.removeFromTop (label.getHeight() * 0.55f), juce::Justification::bottomLeft);
+        g.setColour (first ? accent : theme::textFaint);
+        g.setFont (theme::font (11.0f));
+        g.drawText ((first ? "1st  " : "2nd  ") + percent (p), label, juce::Justification::topLeft);
+        const float gap = 5.0f, w = juce::jmin (40.0f, (row.getWidth() - 6 * gap) / 7.0f);
+        const auto scale = dsp::scaleOf (key);
+        for (int i = 0; i < 7; ++i)
+        {
+            const int pc = scale[(size_t) i];
+            const float h = fx.heard[(size_t) pc]->get();
+            const bool found = h >= kHeardMin;
+            auto chip = juce::Rectangle<float> (row.getX() + i * (w + gap), row.getY(), w, row.getHeight());
+            const float strength = first ? 1.0f : 0.6f;
+            g.setColour (found ? accent.withAlpha ((0.2f + 0.6f * juce::jlimit (0.0f, 1.0f, h)) * strength) : theme::bg.withAlpha (0.6f));
+            g.fillRoundedRectangle (chip, 5.0f);
+            g.setColour (found ? accent.withAlpha (strength) : theme::cardLine);
+            g.drawRoundedRectangle (chip.reduced (0.5f), 5.0f, 1.0f);
+            g.setColour (found ? theme::text : theme::textFaint);
+            g.setFont (theme::font (12.0f, i == 0));
+            g.drawText (noteName (pc + semi), chip, juce::Justification::centred);
+        }
+    }
+
+    TransposeFx& fx;
+    juce::String shownSig;
+};
+
+/** All Transpose settings: pitch, quality (with the on switch top right) and the key found. */
+class TransposePanel final : public AdvancedPanel
+{
+public:
+    TransposePanel (UiContext& c, TransposeFx& t)
+        : fx (t), rate (c.engine.getSampleRate()), semi (c, *t.semi, "SEMITONES", theme::fxTranspose), fine (c, *t.fine, "FINE", theme::fxTranspose),
+          on (c, *t.on, "ON", theme::fxTranspose),
+          findKey (c, *t.findKey, "FIND KEY", theme::fxTranspose), addPart (c, *t.addPart, "ADD PART", theme::fxTranspose),
+          autoTune (c, *t.autoTune, "AUTO FINETUNE", theme::fxTranspose),
+          quality (c, *t.quality, theme::fxTranspose), timbre (c, *t.timbre, "KEEP TIMBRE", theme::fxTranspose), keys (t)
+    {
+        showValues ({ &semi, &fine });
+        for (juce::Component* k : std::initializer_list<juce::Component*> { &semi, &fine, &on, &findKey, &addPart, &quality, &timbre, &keys, &autoTune, &info })
+            addAndMakeVisible (k);   // the Auto Finetune button lies on the key display
+        on.setTooltip ("Switch Transpose on or off");
+        findKey.setTooltip ("Listens to the song for about 10 s: its key, a second choice, how sure it is and how far it is off A = 440 Hz. Fine stays as it is");
+        addPart.setTooltip ("Listens to another part of the song (e.g. the chorus) and combines it with what was heard: a more reliable key");
+        autoTune.setTooltip ("Sets Fine so the song is in tune with A = 440 Hz (uses what Find Key / Add Part heard)");
+        updateButtons();
+        quality.setTooltip ("Shorter = less latency, longer = cleaner for chords and full mixes (the latency of each is shown below). "
+                            "Latency only while shifting");
+        timbre.setTooltip ("Keeps the tone colour of the original (its spectral envelope) while the pitch moves: up no longer sounds thin, "
+                           "down no longer muffled. Works best with Normal and High (Fast: only for small shifts). A little more CPU");
+        info.setText ("Transpose\nShifts the pitch in semitones (+-24) and cents (+-50) without changing the tempo. "
+                      "Voices sound a little brighter / darker, like on a sampler; Keep timbre keeps the tone colour of the original.\n\n"
+                      "Pitch shifting by Signalsmith Stretch (MIT licence, Signalsmith Audio).\n\n"
+                      "At 0 st and 0 ct the sound passes straight through: no latency. While it shifts, the latency of the quality applies.\n\n"
+                      "Find Key listens once (about 10 s of music, pauses do not count) and then stops. Add Part listens to another part "
+                      "and combines both. The percentages say how sure it is, based on the notes heard. Auto Tune uses the key found. "
+                      "The keys shown already include the semitone shift.");
+        setSize (720, 2 * kPad + kCardHeight + kGap + kKeyCard);
+    }
+
+    void resized() override
+    {
+        cards.clear();
+        auto r = getLocalBounds().reduced (kPad);
+        auto top = r.removeFromTop (kCardHeight);
+        const auto pitch = top.removeFromLeft (230);
+        rowLayout (card (pitch, "Pitch").withSizeKeepingCentre (200, kKnobs), { &semi, &fine });
+        top.removeFromLeft (kGap);
+        auto q = card (top, "Quality");
+        on.setBounds (captionSlot (top, 44));   // top right corner: the whole effect
+        info.setBounds (captionSlot (top, 20, 52).withSizeKeepingCentre (InfoButton::kSize, InfoButton::kSize));
+        quality.setBounds (q.removeFromTop (30));
+        q.removeFromTop (8);
+        timbre.setBounds (q.removeFromTop (26).withWidth (130));
+        latencyArea = q;
+        r.removeFromTop (kGap);
+
+        auto k = card (r, "Key");
+        auto buttons = k.removeFromLeft (130);
+        auto pair = buttons.withSizeKeepingCentre (buttons.getWidth(), 2 * 28 + 8);   // vertically centred
+        statusArea = buttons.withTop (pair.getBottom() + 4);                          // "Listening 40 %" below them
+        findKey.setBounds (pair.removeFromTop (28));
+        pair.removeFromTop (8);
+        addPart.setBounds (pair.removeFromTop (28));
+        k.removeFromLeft (14);
+        keys.setBounds (k);
+        autoTune.setBounds (keys.autoTuneArea() + keys.getPosition());
+    }
+
+    void paintOverChildren (juce::Graphics& g) override
+    {
+        g.setColour (theme::textDim);
+        g.setFont (theme::font (11.5f));
+        const int qn = juce::roundToInt (fx.quality->get());
+        const auto* ps = fx.live.load();
+        const int samples = ps != nullptr ? ps->latencyFor (qn) : dsp::PitchShifter::latencyAt (rate, qn);
+        const bool shifting = fx.on->isOn() && fx.ratio() != 1.0;
+        g.drawFittedText ("Latency while shifting: " + juce::String (juce::roundToInt (1000.0 * samples / rate)) + " ms"
+                              + (shifting ? juce::String() : "\nNow: 0 ms (no shift)"),
+                          latencyArea, juce::Justification::centredLeft, 2, 1.0f);
+        const auto st = transposeStatus (fx, false);
+        if (st.busy || fx.getState() == TransposeFx::State::noSignal)
+        {
+            g.setColour (st.colour);
+            g.setFont (theme::font (11.0f));
+            g.drawFittedText (st.text, statusArea, juce::Justification::topLeft, 3, 1.0f);
+        }
+    }
+
+private:
+    static constexpr int kKeyCard = kCaption + 134 + 8;
+
+    /** Add Part and Auto Finetune need a key found; Find Key then finds a new one. */
+    void updateButtons()
+    {
+        const bool known = juce::roundToInt (fx.key->get()) > 0;
+        for (auto* b : { &addPart, &autoTune })
+            if (b->isEnabled() != known) { b->setEnabled (known); b->setAlpha (known ? 1.0f : 0.35f); }
+        const juce::String label = known ? "FIND NEW KEY" : "FIND KEY";
+        if (findKey.text != label) { findKey.text = label; findKey.repaint(); }
+    }
+
+    void tick() override
+    {
+        keys.update();
+        updateButtons();
+        juce::String sig;
+        sig << transposeStatus (fx, false).text << "|" << fx.quality->get() << "|" << (int) (fx.on->isOn() && fx.ratio() != 1.0);
+        if (sig != shown) { shown = sig; repaint(); }
+    }
+
+    TransposeFx& fx;
+    double rate;
+    Knob semi, fine;
+    Toggle on, findKey, addPart, autoTune;
+    ChoiceSegments quality;
+    Toggle timbre;
+    KeyDisplay keys;
+    InfoButton info;
+    juce::Rectangle<int> statusArea, latencyArea;
+    juce::String shown;
+};
+
+/** Transpose block: semitones, fine, Auto Tune / Find Key and the key found. */
+class TransposeUnit final : public juce::Component
+{
+public:
+    TransposeUnit (UiContext& c, InputStrip& s, const juce::String& title)
+        : ctx (c), strip (s), fx (s.transpose), section (title, theme::fxTranspose), on (c, *fx.on, "ON", theme::fxTranspose),
+          semi (c, *fx.semi, "SEMI", theme::fxTranspose), fine (c, *fx.fine, "FINE", theme::fxTranspose),
+          autoTune (c, *fx.autoTune, "AUTO TUNE", theme::fxTranspose), findKey (c, *fx.findKey, "FIND KEY", theme::fxTranspose)
+    {
+        addAndMakeVisible (section);
+        for (juce::Component* k : std::initializer_list<juce::Component*> { &on, &semi, &fine, &autoTune, &findKey })
+            section.addAndMakeVisible (k);
+        semi.alwaysShowValue = fine.alwaysShowValue = true;
+        autoTune.setTooltip ("Sets Fine so the song is in tune (needs a key found with Find Key)");
+        findKey.setTooltip ("Listens once (~10 s) and shows the key and tuning (Fine stays)");
+        section.enableGear ([this, title] { ctx.openPanel (std::make_unique<TransposePanel> (ctx, fx), title + "  -  " + strip.name); });
+    }
+    Section& getSection() noexcept { return section; }
+
+    void resized() override
+    {
+        section.setBounds (getLocalBounds());
+        on.setBounds (section.headerSlot());
+        auto cc = section.content();
+        statusArea = cc.removeFromBottom (14);
+        cc.removeFromBottom (4);
+        auto row = cc.removeFromBottom (20);
+        autoTune.setBounds (row.removeFromLeft (row.getWidth() / 2 - 2));
+        row.removeFromLeft (4);
+        findKey.setBounds (row);
+        cc.removeFromBottom (2);
+        rowLayout (cc.withSizeKeepingCentre (cc.getWidth(), juce::jmin (cc.getHeight(), 70)), { &semi, &fine });
+    }
+
+    void paintOverChildren (juce::Graphics& g) override
+    {
+        const auto st = transposeStatus (fx, false);
+        g.setColour (st.colour);
+        g.setFont (theme::font (10.5f));
+        g.drawFittedText (st.text, statusArea, juce::Justification::centred, 1, 0.8f);
+    }
+
+    /** With the rack's meters (~60 Hz); the line is checked at 10 Hz. */
+    void tick()
+    {
+        if (++ticks % 6 != 0) return;
+        const bool known = juce::roundToInt (fx.key->get()) > 0;
+        if (autoTune.isEnabled() != known) { autoTune.setEnabled (known); autoTune.setAlpha (known ? 1.0f : 0.35f); }
+        if (const juce::String label = known ? "NEW KEY" : "FIND KEY"; findKey.text != label) { findKey.text = label; findKey.repaint(); }
+        const auto st = transposeStatus (fx, false);
+        if (st.text != shown) { shown = st.text; repaint (statusArea); }
+    }
+
+private:
+    UiContext& ctx;
+    InputStrip& strip;
+    TransposeFx& fx;
     Section section;
     Toggle on;
-    uint32_t seen = 0;
+    Knob semi, fine;
+    Toggle autoTune, findKey;
+    juce::Rectangle<int> statusArea;
+    juce::String shown;
+    int ticks = 0;
 };
 
 //==============================================================================
@@ -2004,6 +2512,7 @@ public:
         plus.card = true;
         plus.setTooltip ("Add an effect or a VST3 plugin at the end of the chain");
         plus.onClick = [this] { showAddMenu (plus); };
+        plus.setComponentID ("fx.add");
         row.addAndMakeVisible (plus);
         addChip.showArrow = false;
         addChip.centred = true;
@@ -2011,7 +2520,7 @@ public:
         row.addAndMakeVisible (addChip);
         row.addAndMakeVisible (emptyInfo);
         emptyInfo.setText ("Effect chain\nEverything here runs pre-fader, left to right, with no added buffering. "
-                           "Add built-in effects (EQ, gate, compressor, phase, ...) as often as you like and VST3 plugins in any order; "
+                           "Add built-in effects (EQ, gate, compressor, utility, ...) as often as you like and VST3 plugins in any order; "
                            "drag a header or a card to move it.\n\n"
                            "Right-click a block: copy, cut, paste, duplicate, delete. Right-click the empty space: copy or paste the whole chain.");
         rebuild();
@@ -2191,13 +2700,26 @@ private:
                         u.comp = std::move (l);
                         break;
                     }
-                    case Fx::phase:
+                    case Fx::utility:
                     {
-                        auto& param = isInput ? *e.inputs[(size_t) channel].phases[(size_t) k] : *e.buses[(size_t) (channel - kMaxInputs)].phases[(size_t) k];
-                        auto p = std::make_unique<PhaseUnit> (ctx, param, title);
+                        auto channelName = [this]
+                        {
+                            return channel < kMaxInputs ? ctx.engine.inputs[(size_t) channel].name : ctx.engine.buses[(size_t) (channel - kMaxInputs)].name;
+                        };
+                        auto& ut = isInput ? e.inputs[(size_t) channel].utilities[(size_t) k] : e.buses[(size_t) (channel - kMaxInputs)].utilities[(size_t) k];
+                        auto p = std::make_unique<UtilityUnit> (ctx, ut, channelName, title);
                         sec = &p->getSection();
-                        u.width = 120;
+                        u.width = 190;
                         u.comp = std::move (p);
+                        break;
+                    }
+                    case Fx::transpose:
+                    {
+                        auto t = std::make_unique<TransposeUnit> (ctx, e.inputs[(size_t) channel], title);
+                        sec = &t->getSection();
+                        u.tick = [p = t.get()] { p->tick(); };
+                        u.width = 190;
+                        u.comp = std::move (t);
                         break;
                     }
                     case Fx::stems:
@@ -3134,6 +3656,9 @@ private:
 } // namespace
 
 std::unique_ptr<juce::Component> makeStemsPanel (UiContext& c, InputStrip& s) { return std::make_unique<StemsPanel> (c, s); }
+std::unique_ptr<juce::Component> makeUtilityPanel (UiContext& c, UtilityFx& u) { return std::make_unique<UtilityPanel> (c, u); }
+std::unique_ptr<juce::Component> makeTransposePanel (UiContext& c, InputStrip& s) { return std::make_unique<TransposePanel> (c, s.transpose); }
+std::unique_ptr<juce::Component> makeCompPanel (UiContext& c, CompFx& f) { return std::make_unique<CompPanel> (c, f); }
 
 //==============================================================================
 EqGraph::EqGraph (UiContext& c, ParamEq& e, juce::Colour col, bool lg) : ctx (c), eq (e), colour (col), large (lg)
@@ -3235,24 +3760,32 @@ void EqGraph::rebuildCurve()
         }
 }
 
+juce::Path EqGraph::spectrumPath (const std::vector<float>& cols) const
+{
+    if (cols.size() < 2 || plot.getWidth() <= 2.0f) return {};
+    juce::Path p;
+    p.startNewSubPath (plot.getX(), plot.getBottom());
+    float x = plot.getX();
+    for (size_t i = 0; i < cols.size(); ++i)
+    {
+        x = juce::jmin (plot.getRight(), plot.getX() + (float) (i * kSpectrumStep));
+        p.lineTo (x, specToY (juce::jlimit (kSpecBottomDb - 6.0f, kSpecTopDb + 6.0f, cols[i])));
+    }
+    p.lineTo (x, plot.getBottom());
+    p.closeSubPath();
+    return p.createPathWithRoundedCorners (5.0f);
+}
+
 void EqGraph::setSpectrum (const std::vector<float>& cols)
 {
-    spectrum.clear();
-    if (cols.size() >= 2 && plot.getWidth() > 2.0f)
-    {
-        juce::Path p;
-        p.startNewSubPath (plot.getX(), plot.getBottom());
-        float x = plot.getX();
-        for (size_t i = 0; i < cols.size(); ++i)
-        {
-            x = juce::jmin (plot.getRight(), plot.getX() + (float) (i * kSpectrumStep));
-            p.lineTo (x, specToY (juce::jlimit (kSpecBottomDb - 6.0f, kSpecTopDb + 6.0f, cols[i])));
-        }
-        p.lineTo (x, plot.getBottom());
-        p.closeSubPath();
-        spectrum = p.createPathWithRoundedCorners (5.0f);
-    }
+    spectrum = spectrumPath (cols);
     repaint (plot.getSmallestIntegerContainer());
+}
+
+void EqGraph::setInputSpectrum (const std::vector<float>& cols)
+{
+    if (cols.empty() && inputSpectrum.isEmpty()) return;
+    inputSpectrum = spectrumPath (cols);   // repainted with the coloured one (setSpectrum follows each frame)
 }
 
 void EqGraph::paint (juce::Graphics& g)
@@ -3307,6 +3840,13 @@ void EqGraph::paint (juce::Graphics& g)
         juce::Graphics::ScopedSaveState clip (g);
         g.reduceClipRegion (plot.getSmallestIntegerContainer());
 
+        if (! inputSpectrum.isEmpty())   // before the EQ: grey, behind (where the EQ cuts, grey shows above the colour)
+        {
+            g.setColour (juce::Colour (0xff9aa3b5).withAlpha (0.13f));
+            g.fillPath (inputSpectrum);
+            g.setColour (juce::Colour (0xff9aa3b5).withAlpha (0.45f));
+            g.strokePath (inputSpectrum, juce::PathStrokeType (1.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
         if (! spectrum.isEmpty())
         {
             g.setGradientFill (juce::ColourGradient (accent.withAlpha (0.28f), 0.0f, plot.getY(),
@@ -3677,7 +4217,8 @@ EqEditor::EqEditor (UiContext& c, int sel, int k)
       tap (sel < kMaxInputs ? c.engine.inputs[(size_t) sel].spectrum : c.engine.buses[(size_t) (sel - kMaxInputs)].spectrum),
       fft (std::make_unique<juce::dsp::FFT> (kFftOrder))
 {
-    history.assign (kFftSize, 0.0f);
+    after.history.assign (kFftSize, 0.0f);
+    before.history.assign (kFftSize, 0.0f);
     fftData.assign (kFftSize * 2, 0.0f);
     window.resize (kFftSize);
     for (int i = 0; i < kFftSize; ++i) // Hann
@@ -3700,7 +4241,17 @@ EqEditor::EqEditor (UiContext& c, int sel, int k)
     info.setText ("Using the EQ\nClick: add a band.  Drag a point: frequency / gain.  Mouse wheel: Q.\n"
                   "Double-click a point: remove it.  Right-click: type, switch off, remove.\n"
                   "Click a value under a knob to type it (e.g. 2.5k, -3).  Ctrl+Z / Ctrl+Y: undo / redo.\n\n"
-                  "Background: live spectrum after the EQ (dBFS scale on the right).");
+                  "Background: live spectrum after the EQ (dBFS scale on the right). \"Show input\" adds the spectrum "
+                  "before the EQ in grey behind it, so you see what the EQ changes.");
+    showInput.setTooltip ("Grey spectrum of the signal before this EQ, behind the coloured one (after the EQ)");
+    showInput.onClick = [this]
+    {
+        if (ctx.session != nullptr) { ctx.session->prefs.eqShowInput = showInput.getToggleState(); ctx.session->prefsVersion.fetch_add (1); }
+        setShowInput (showInput.getToggleState());
+    };
+    addAndMakeVisible (showInput);
+    showInput.setToggleState (ctx.session != nullptr && ctx.session->prefs.eqShowInput, juce::dontSendNotification);
+    setShowInput (showInput.getToggleState());
     for (int k = 0; k < ParamEq::kBands; ++k)
     {
         bands.push_back (std::make_unique<BandColumn> (*this, k));
@@ -3715,7 +4266,26 @@ EqEditor::EqEditor (UiContext& c, int sel, int k)
 
 EqEditor::~EqEditor()
 {
+    setShowInput (false);
     tap.users.fetch_sub (1);
+}
+
+void EqEditor::setShowInput (bool on)
+{
+    if (on == inputShown) return;
+    inputShown = on;
+    if (on)
+    {
+        tap.preRing.skip (tap.preRing.available());   // stale audio from an earlier view
+        std::fill (before.history.begin(), before.history.end(), 0.0f);
+        before.smoothed.clear();
+        tap.preUsers.fetch_add (1);
+    }
+    else
+    {
+        tap.preUsers.fetch_sub (1);
+        graph.setInputSpectrum ({});
+    }
 }
 
 void EqEditor::analyse (double t)
@@ -3723,12 +4293,19 @@ void EqEditor::analyse (double t)
     if (t - lastFrame < 1.0 / 66.0) return; // high-refresh displays: stay at ~60 Hz
     const float dt = lastFrame > 0.0 ? (float) juce::jlimit (0.0, 0.2, t - lastFrame) : 1.0f / 60.0f;
     lastFrame = t;
+    if (inputShown && runAnalyzer (before, tap.preRing, dt)) graph.setInputSpectrum (before.columns);
+    if (runAnalyzer (after, tap.ring, dt)) graph.setSpectrum (after.columns);
+}
 
+bool EqEditor::runAnalyzer (Analyzer& a, SpscAudioRing& ring, float dt)
+{
+    auto& history = a.history;
+    auto& historyPos = a.historyPos;
     // 1. Collect the new audio (mono sum) into a sliding history of kFftSize samples.
     for (;;)
     {
         auto* const* ch = readBuf.getArrayOfWritePointers();
-        const int got = tap.ring.read (ch, 2, readBuf.getNumSamples());
+        const int got = ring.read (ch, 2, readBuf.getNumSamples());
         if (got <= 0) break;
         for (int i = 0; i < got; ++i)
         {
@@ -3746,7 +4323,10 @@ void EqEditor::analyse (double t)
     // 3. One dB value per graph column (log frequency), +3 dB/oct tilt like most analyzers.
     const auto plot = graph.getPlotArea();
     const int numCols = (int) (plot.getWidth() / (float) EqGraph::kSpectrumStep) + 1;
-    if (numCols < 8) return;
+    if (numCols < 8) return false;
+    auto& smoothed = a.smoothed;
+    auto& raw = a.raw;
+    auto& columns = a.columns;
     if ((int) smoothed.size() != numCols) smoothed.assign ((size_t) numCols, -120.0f);
     raw.resize ((size_t) numCols);
     columns.resize ((size_t) numCols);
@@ -3794,7 +4374,7 @@ void EqEditor::analyse (double t)
         sm += (target - sm) * (target > sm ? up : down);
         columns[(size_t) c] = sm;
     }
-    graph.setSpectrum (columns);
+    return true;
 }
 
 void EqEditor::selectBand (int b)
@@ -3820,6 +4400,8 @@ void EqEditor::resized()
     menu.setBounds (head.removeFromRight (90).withSizeKeepingCentre (90, 26));
     head.removeFromRight (10);
     info.setBounds (head.removeFromRight (InfoButton::kSize).withSizeKeepingCentre (InfoButton::kSize, InfoButton::kSize));
+    head.removeFromRight (14);
+    showInput.setBounds (head.removeFromRight (110).withSizeKeepingCentre (110, 24));
     layoutBands();
 }
 
@@ -3869,6 +4451,7 @@ void Inspector::showChannel (int sel)
     current = sel;
     auto scan = [this] { if (onScanRequested) onScanRequested(); };
     bypass.reset();
+    idleShown = channelIdle();
     if (sel == kRecorderSelect) content = std::make_unique<RecorderDetail> (ctx);
     else
     {
@@ -3927,6 +4510,21 @@ void Inspector::paint (juce::Graphics& g)
     g.drawText (channelCode (current), title.removeFromLeft (codeWidth()), juce::Justification::centredLeft);
     g.setColour (theme::text);
     g.drawText (name, title.removeFromLeft (300), juce::Justification::centredLeft);
+    if (idleShown && bypass != nullptr)   // the engine skips this chain while the channel cannot be heard
+    {
+        g.setColour (theme::textFaint);
+        g.setFont (theme::font (11.0f));
+        g.drawText (isBus ? "effects paused: output not heard" : "effects paused: channel not heard",
+                    getLocalBounds().withLeft (bypass->getRight() + 10).withY (bypass->getY()).withHeight (bypass->getHeight()),
+                    juce::Justification::centredLeft, true);
+    }
+}
+
+bool Inspector::channelIdle() const
+{
+    if (current < 0 || current >= kRecorderSelect) return false;
+    return current < kMaxInputs ? ctx.engine.inputs[(size_t) current].fxIdle.load (std::memory_order_relaxed)
+                                : ctx.engine.buses[(size_t) (current - kMaxInputs)].fxIdle.load (std::memory_order_relaxed);
 }
 
 void Inspector::resized()
@@ -3939,6 +4537,11 @@ void Inspector::resized()
 void Inspector::updateMeters()
 {
     layoutHeader();
+    if (const bool idle = channelIdle(); idle != idleShown)
+    {
+        idleShown = idle;
+        repaint (getLocalBounds().removeFromTop (32));
+    }
     if (auto* d = dynamic_cast<FxRack*> (content.get()))
         d->updateMeters();
     else if (auto* rd = dynamic_cast<RecorderDetail*> (content.get()))

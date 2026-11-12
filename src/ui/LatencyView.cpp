@@ -610,7 +610,7 @@ double LatencyView::inputSideMs (int i) const
     std::vector<Node> nodes;
     addPlugins (e, nodes, s.plugins, *s.fxBypass, i);
     return it->second + (s.denoiserActive() ? samplesToMs (e, s.dspLatency.load()) : 0.0) + samplesToMs (e, s.stemsLatency.load())
-         + sum (nodes) + e.getChannelDelayMs (i);
+         + samplesToMs (e, s.transposeLatency.load()) + sum (nodes) + e.getChannelDelayMs (i);
 }
 
 double LatencyView::busSideMs (int b) const
@@ -675,6 +675,11 @@ LatencyView::Flow LatencyView::build (int b) const
                                     "late so the model can hear what comes next (Live ~1.3 s, Fast ~2.2 s, Balanced ~2.8 s,\n"
                                     "Best ~3.6 s): meant for playback you play along to, not for live sources." });
         }
+        if (const int tpLat = s.transposeLatency.load(); tpLat > 0)
+            lane.nodes.push_back ({ "Transpose", "Pitch shift, " + s.transpose.quality->toText() + " quality",
+                                    samplesToMs (e, tpLat), kDenoiser, i,
+                                    "Transpose works on short overlapping pieces of the sound (FFT): it needs one piece\n"
+                                    "of look-ahead (more for Normal / High), only while it shifts (0 st / 0 ct adds nothing)." });
         addPlugins (e, lane.nodes, s.plugins, *s.fxBypass, i);
         addSyncDelay (e, lane.nodes, i, i);
         lane.ms = sum (lane.nodes);

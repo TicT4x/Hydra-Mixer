@@ -3,6 +3,8 @@
 #include "state/VoicemeeterImport.h"
 #include "state/Session.h"
 #include "state/Autostart.h"
+#include "state/Install.h"
+#include "state/Updater.h"
 #include "state/VacCables.h"
 #include "engine/NetLink.h"
 #include "remote/RemoteControl.h"
@@ -1531,7 +1533,7 @@ std::vector<int> activeHwValues (const Engine& e)
 } // namespace
 
 /** Start with Windows, system tray, devices, monitoring of the selected bus, shutdown. */
-class GeneralTab final : public SettingsPage
+class GeneralTab final : public SettingsPage, private juce::Timer
 {
 public:
     explicit GeneralTab (UiContext& c)
@@ -1562,6 +1564,40 @@ public:
                   "Off: Windows devices are offered in one mode only, Low Latency (shared), which suits almost everything. "
                   "On: also Exclusive (lowest latency, blocks the device for other apps) and Shared (compatibility).");
         for (auto* b : { &autostart, &trayIcon, &closeTray, &minTray, &startTray, &reconnect, &expertModes }) addAndMakeVisible (b);
+
+        // Updates and installation.
+        addHeading (updH, "Updates & installation",
+                    "Hydra looks for new versions on GitHub at start and every 6 hours. A new one shows up as a badge in the top "
+                    "bar; one click downloads it, checks it, saves your settings and restarts Hydra with it.\n\n"
+                    "Beta versions get new features earlier and are less tested.\n\n"
+                    "Installed copies live in your user folder (no administrator rights needed), so updates run without a prompt. "
+                    "Network access (Hydra Link, phone control) is allowed once per program path in the Windows Firewall.");
+        bindPref (ctx, updCheck, &Session::AppPrefs::updateCheck, "Check for updates automatically");
+        bindPref (ctx, updBeta, &Session::AppPrefs::updateBeta, "Include beta versions");
+        for (auto* c : std::initializer_list<juce::Component*> { &updCheck, &updBeta, &checkNow, &updStatus, &installInfo, &installBtn, &fwInfo, &fwBtn })
+            addAndMakeVisible (c);
+        styleLabel (updStatus);
+        styleLabel (installInfo);
+        styleLabel (fwInfo);
+        checkNow.onClick = [this] { if (ctx.checkForUpdates) ctx.checkForUpdates(); };
+        installBtn.onClick = [this]
+        {
+            // The installer is this exe with --install (it closes this mixer and starts the installed one).
+            if (install::isRunningInstalled()) return;
+            install::runningExe().startAsProcess (install::kInstallArgument);
+        };
+        fwBtn.onClick = [this]
+        {
+            fwBtn.setEnabled (false);
+            juce::Component::SafePointer<GeneralTab> safe (this);
+            juce::Thread::launch ([safe]
+            {
+                install::requestFirewall (install::runningExe(), true);
+                juce::MessageManager::callAsync ([safe] { if (safe != nullptr) { safe->fwBtn.setEnabled (true); safe->refreshInstall(); } });
+            });
+        };
+        refreshInstall();
+        startTimerHz (2);
 
         addAndMakeVisible (shutdown);
         shutdown.setColour (juce::TextButton::buttonColourId, theme::mute.withAlpha (0.25f));
@@ -1601,12 +1637,67 @@ public:
         row.removeFromLeft (24);
         monBusL.setBounds (row.removeFromLeft (110));
         monBus.setBounds (row.removeFromLeft (juce::jmin (300, row.getWidth())));
+        section (r, updH);
+        {
+            auto line = r.removeFromTop (28);
+            updCheck.setBounds (line.removeFromLeft (300));
+            updBeta.setBounds (line.removeFromLeft (220));
+            r.removeFromTop (4);
+            line = r.removeFromTop (30);
+            checkNow.setBounds (line.removeFromLeft (150));
+            line.removeFromLeft (12);
+            updStatus.setBounds (line.withWidth (juce::jmin (kMaxWidth - 162, line.getWidth())));
+            r.removeFromTop (8);
+            line = r.removeFromTop (30);
+            installBtn.setBounds (line.removeFromRight (installBtn.isVisible() ? 150 : 0));
+            installInfo.setBounds (line.withWidth (juce::jmin (kMaxWidth - 162, line.getWidth())));
+            r.removeFromTop (4);
+            line = r.removeFromTop (30);
+            fwBtn.setBounds (line.removeFromRight (fwBtn.isVisible() ? 150 : 0));
+            fwInfo.setBounds (line.withWidth (juce::jmin (kMaxWidth - 162, line.getWidth())));
+        }
         // Shut down at the bottom, set apart from the options.
         auto bottom = getLocalBounds().reduced (24, 18).removeFromBottom (32);
         shutdown.setBounds (bottom.removeFromLeft (220).withY (juce::jmax (bottom.getY(), r.getY() + 20)));
     }
 
 private:
+    void timerCallback() override
+    {
+        if (! isShowing() || ctx.updater == nullptr) return;
+        const auto st = ctx.updater->getStatus();
+        using S = Updater::State;
+        juce::String t;
+        switch (st.state)
+        {
+            case S::idle:        t = "Version " + install::currentVersion() + ", not checked yet"; break;
+            case S::checking:    t = "Looking for updates..."; break;
+            case S::upToDate:    t = "Version " + install::currentVersion() + " is the newest" + (ctx.session != nullptr && ctx.session->prefs.updateBeta ? " (betas included)" : ""); break;
+            case S::available:   t = st.release.version + (st.release.prerelease ? " (beta)" : "") + " is available: click the badge at the top"; break;
+            case S::downloading: t = "Downloading " + st.release.version + ": " + juce::String (juce::roundToInt (st.progress * 100.0f)) + " %"; break;
+            case S::ready:       t = st.release.version + " is downloaded"; break;
+            case S::failed:      t = "Update: " + st.error; break;
+        }
+        if (st.lastCheck.toMilliseconds() > 0 && st.state != S::checking) t << "  (" << st.lastCheck.formatted ("%H:%M") << ")";
+        if (t != updStatus.getText()) updStatus.setText (t, juce::dontSendNotification);
+        checkNow.setEnabled (st.state != S::checking && st.state != S::downloading);
+    }
+
+    /** Installation state and the firewall rule of this exe (reading the firewall needs no administrator rights). */
+    void refreshInstall()
+    {
+        const bool installed = install::isRunningInstalled();
+        installInfo.setText (installed ? "Installed in " + install::installDir().getFullPathName()
+                                       : "Not installed: running from " + install::runningExe().getParentDirectory().getFullPathName(),
+                             juce::dontSendNotification);
+        installBtn.setVisible (! installed);
+        const bool allowed = install::firewallAllows (install::runningExe());
+        fwInfo.setText (allowed ? "Network access is allowed in the Windows Firewall (all networks)"
+                                : "Network access: Windows asks the first time Hydra Link or Remote is on", juce::dontSendNotification);
+        fwBtn.setVisible (! allowed);
+        resized();
+    }
+
     /** Runs action (may be empty) and then reads the autostart state, both on a background thread. */
     void runAutostart (std::function<juce::String()> action)
     {
@@ -1627,7 +1718,10 @@ private:
     }
 
     UiContext& ctx;
-    Heading startH, trayH, devicesH, monH;
+    Heading startH, trayH, devicesH, monH, updH;
+    juce::ToggleButton updCheck, updBeta;
+    juce::TextButton checkNow { "Check now" }, installBtn { "Install..." }, fwBtn { "Allow now" };
+    juce::Label updStatus, installInfo, fwInfo;
     juce::Label monBusL { {}, "Monitor output" };
     Switch monOn;
     ChoiceSegments monBus;

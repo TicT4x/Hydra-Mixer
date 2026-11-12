@@ -10,6 +10,8 @@
 #include "SceneEditor.h"
 #include "SidePanel.h"
 #include "state/UndoHistory.h"
+#include "Tour.h"
+#include "Welcome.h"
 
 namespace hydra
 {
@@ -69,14 +71,36 @@ class DspMeter final : public juce::Component, public juce::SettableTooltipClien
 public:
     DspMeter();
     std::function<void()> onClick;
-    void setLoad (float average, float peak);
+    /** average / peak: share of real time; overloadsNow: blocks over 100 % since the last call. */
+    void setLoad (float average, float peak, int overloadsNow = 0, uint64_t overloadsTotal = 0);
+    void tick();   // 4x per second: fades the overload warning
     void paint (juce::Graphics&) override;
     void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
     void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
     void mouseUp (const juce::MouseEvent& e) override  { if (e.mouseWasClicked() && onClick) onClick(); }
 
 private:
-    float load = 0;
+    float load = 0, peakLoad = 0, alarm = 0;
+    bool hover = false;
+};
+
+/** "Update 0.9" in the top bar while a new version is available (Updater); shows the download progress. */
+class UpdateBadge final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    UpdateBadge() { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+    std::function<void()> onClick;
+    /** progress < 0: no download running. */
+    void set (const juce::String& text, float progress);
+    int idealWidth() const;
+    void paint (juce::Graphics&) override;
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
+    void mouseUp (const juce::MouseEvent& e) override  { if (e.mouseWasClicked() && onClick) onClick(); }
+
+private:
+    juce::String text;
+    float progress = -1.0f;
     bool hover = false;
 };
 
@@ -115,6 +139,7 @@ public:
     IconButton minimiseBtn { IconButton::Kind::minimise }, maximiseBtn { IconButton::Kind::maximise }, closeBtn { IconButton::Kind::close };
     DspMeter dsp;
     StatusLink statusLink;
+    UpdateBadge updateBadge;   // visible while an update is available
 
 private:
     /** Clears the maximise button's hover once the mouse has left it (runs only while it is hovered). */
@@ -144,7 +169,7 @@ private:
     juce::VBlankAttachment glideVBlank { this, [this] (double t) { glideFrame (t); } };
     juce::String status;
     Engine::LoadMeter cpuMeter;
-    float peakSmooth = 0;
+    uint64_t overloadsSeen = 0;
     int cpuTick = 0;
     uint32_t lastActivity = 0;
     float midiGlow = 0;
@@ -201,9 +226,26 @@ public:
     void demoSelect (int index)       { select (index); }
     void demoMeterFrame (double t)    { meterFrame (t); }
     std::unique_ptr<juce::Component> demoStemsPanel (int input) { return makeStemsPanel (ctx, ctx.engine.inputs[(size_t) input]); }
+    std::unique_ptr<juce::Component> demoUtilityPanel (int input) { return makeUtilityPanel (ctx, ctx.engine.inputs[(size_t) input].utilities[0]); }
+    std::unique_ptr<juce::Component> demoCompPanel (int input) { return makeCompPanel (ctx, ctx.engine.inputs[(size_t) input].comps[0]); }
+    std::unique_ptr<juce::Component> demoTransposePanel (int input) { return makeTransposePanel (ctx, ctx.engine.inputs[(size_t) input]); }
 
     /** Set by the application: preferences changed / quit requested from the UI. */
     std::function<void()> onPrefsChanged, onShutdown;
+
+    /** Updates (state/Updater.h): the updater, "install the downloaded update and restart", "check now". */
+    void setUpdater (Updater*, std::function<void()> install, std::function<void()> check);
+    /** First start: the welcome wizard over the mixer (ui/Welcome.h). */
+    void startWelcome();
+    /** Guided tour (ui/Tour.h) from a step; closing it pauses there (prefs.tour). */
+    void startTour (Tour::Kind, int step);
+    /** The small "Tour paused - Continue / Restart" card, if a tour is paused. */
+    void showTourResume();
+    /** A short message over the mixer. */
+    void notify (const juce::String& text, double seconds) { showToast (text, seconds); }
+    /** Screenshot tool only: the open wizard / tour. */
+    WelcomeWizard* demoWelcome() const noexcept { return welcome.get(); }
+    Tour* demoTour() const noexcept { return tour.get(); }
 
 private:
     void timerCallback() override;
@@ -259,6 +301,15 @@ private:
     /** Settings of an effect ("..." in its header: gate / denoiser / compressor) in their own window. */
     void openPanelWindow (std::unique_ptr<juce::Component> content, const juce::String& title);
     void closePanelWindow();
+
+    void showUpdateDialog();
+    void tickUpdates();
+    std::unique_ptr<WelcomeWizard> welcome;
+    std::unique_ptr<Tour> tour;
+    std::unique_ptr<TourResumeCard> tourResume;
+    std::unique_ptr<PluginScanJob> pluginScan;
+    uint32_t shownUpdate = ~0u;
+    bool installWhenReady = false;   // "Update now": install as soon as the download is done
 
     std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow, latencyWindow, dspWindow, syncWindow, deviceWindow, corrWindow, panelWindow, cableWindow;
     int shownSelBus = -1;     // bus selected with SEL as shown by the input faders

@@ -8,6 +8,7 @@ namespace hydra
 {
 class Session;
 class UndoHistory;
+class Updater;
 
 /** Inspector selection index of the recorder (after the input slots and the bus slots). */
 constexpr int kRecorderSelect = kMaxInputs + kMaxBuses;
@@ -79,6 +80,13 @@ struct UiContext
 
     /** Enters Change Order mode (drag the strips into a new order). */
     std::function<void()> changeOrder;
+
+    /** Updates from GitHub (state/Updater.h), owned by the app; nullptr in tools / tests. */
+    Updater* updater = nullptr;
+    /** Saves, installs the downloaded update and restarts Hydra (the app does it: it owns the session). */
+    std::function<void()> installUpdate;
+    /** Looks for updates now (Settings > General > Check now). */
+    std::function<void()> checkForUpdates;
 
     /** EQ of a channel (selection index), or nullptr for the recorder. */
     ParamEq* eqFor (int selectIndex) const
@@ -221,7 +229,7 @@ class Toggle final : public ParamControl, private juce::Timer
 {
 public:
     /** Symbol drawn instead of the text (transport buttons). playPause shows pause while the parameter is on. */
-    enum class Icon { none, record, playPause, stop, loop };
+    enum class Icon { none, record, playPause, stop, loop, phase };
 
     Toggle (UiContext& c, Param& p, juce::String text, juce::Colour onColour, Icon icon = Icon::none);
     void paint (juce::Graphics&) override;

@@ -366,6 +366,7 @@ InputStripView::InputStripView (UiContext& c, int i)
         auto& list = isHwBus (b) ? hwRoutes : virtRoutes;
         list.push_back (std::make_unique<Toggle> (c, *strip.route[(size_t) b], busLabel (b), theme::busColour (b)));
         list.back()->soft = true;
+        list.back()->setComponentID ("in" + juce::String (i) + ".route." + juce::String (b));
         // Hover: "Spotify -> [icon] Headphones" with the names of today (they may change meanwhile).
         list.back()->tooltipText = [this, b]
         {
@@ -378,6 +379,12 @@ InputStripView::InputStripView (UiContext& c, int i)
     }
 
     source.flat = true;
+    // Ids for the guided tour (ui/Tour.cpp finds the controls it explains by them).
+    setComponentID ("in" + juce::String (i));
+    source.setComponentID ("in" + juce::String (i) + ".source");
+    mute.setComponentID ("in" + juce::String (i) + ".mute");
+    solo.setComponentID ("in" + juce::String (i) + ".solo");
+    trim.setComponentID ("in" + juce::String (i) + ".gain");
     source.onClick = [this] { ctx.select (index); if (ctx.openDevicePicker) ctx.openDevicePicker (index); };
     source.setTooltip ("Select input source (hardware, Windows device, virtual input or loopback)");
     addMouseListener (this, true);
@@ -431,6 +438,7 @@ void InputStripView::setFaderTarget (int bus)
     faderParam = bus < 0 ? strip.gain : strip.send[(size_t) bus];
     fader = std::make_unique<Fader> (ctx, *faderParam, bus < 0 ? theme::accentIn : theme::busColour (bus));
     fader->horizontal = rows;
+    fader->setComponentID ("in" + juce::String (index) + ".fader");
     if (bus >= 0)
         fader->setTooltip ("Level of " + strip.name + " on " + busLabel (bus) + "  (bus " + busLabel (bus) + " is selected with SEL)");
     addAndMakeVisible (*fader);
@@ -655,6 +663,11 @@ BusStripView::BusStripView (UiContext& c, int i)
         addAndMakeVisible (comp);
 
     header.getIcon = [this] { return bus.icon; };
+    setComponentID ("bus" + juce::String (i));   // ids for the guided tour
+    output.setComponentID ("bus" + juce::String (i) + ".output");
+    fader.setComponentID ("bus" + juce::String (i) + ".fader");
+    sel.setComponentID ("bus" + juce::String (i) + ".sel");
+    mute.setComponentID ("bus" + juce::String (i) + ".mute");
     output.flat = true;
     output.onClick = [this] { ctx.select (busSelectIndex (index)); if (ctx.openDevicePicker) ctx.openDevicePicker (busSelectIndex (index)); };
     output.setTooltip ("Select output device for this bus");
@@ -1231,6 +1244,9 @@ StripArea::StripArea (UiContext& c) : ctx (c)
     }
     for (auto* b : addButtons)
         addAndMakeVisible (b);
+    addIn.setComponentID ("add.in");
+    addHw.setComponentID ("add.hw");
+    addVirt.setComponentID ("add.virt");
     animator.onFrame = [this]
     {
         // Their corners depend on who is next to them; after a size change only once at the end. The captions follow the "+".
