@@ -879,6 +879,125 @@
     b += button(W - 196, 376, 46, 18, 'AUTO', { fill: col, color: '#0a0c10' }) + R(W - 140, 383, 110, 5, 2.5, '#050608') + R(W - 140, 383, 60, 5, 2.5, mix(col, C.panel2, 0.4)) + `<circle cx="${W - 80}" cy="385.5" r="6" fill="${C.dim}"/>`;
     return [W, H, b, 'Stem Separator window: latency mode Best, 3.6 s latency, 48 % GPU, faders for vocals, drums, bass, guitar (muted) and rest, the two models'];
   };
+  // Segmented choice (Inspector.cpp ChoiceBar): dark track, the chosen entry filled in the effect colour.
+  const seg = (x, y, w, h, list, on, col) => R(x, y, w, h, 6, '#07090c') + list.map((t, i) => {
+    const sw = w / list.length, sx = x + i * sw, a = i === on;
+    return (a ? R(sx + 2, y + 2, sw - 4, h - 4, 5, col) : '') + T(sx + sw / 2, y + h / 2 + 3.8, t, { size: 10.5, anchor: 'middle', weight: a ? 700 : 400, fill: a ? '#0a0c10' : C.dim });
+  }).join('');
+  const C_UTIL = '#ff6ac1', C_TP = '#c77dff';
+  // Utility window (Inspector.cpp UtilityPanel): phase + channel, width, bass mono, output.
+  FX.utility = () => {
+    const W = 700, H = 300, col = C_UTIL;
+    let b = R(0, 0, W, H, 0, C.bg) + card(14, 14, 376, 130, 'Phase and channel');
+    b += R(24, 66, 56, 30, 6, col) + `<circle cx="52" cy="81" r="9" fill="none" stroke="#0a0c10" stroke-width="2.2"/>` + L(42, 93, 62, 69, '#0a0c10', 2.2, 'stroke-linecap="round"');
+    b += seg(92, 66, 288, 30, ['Left', 'Stereo', 'Right', 'Swap'], 1, col);
+    b += card(398, 14, 288, 130, 'Width') + button(520, 20, 52, 18, 'MONO') + toggle(646, 19, col) + knob(542, 76, 26, 0.58, col, { label: 'WIDTH', value: '140 %' });
+    b += card(14, 152, 200, 134, 'Bass Mono') + toggle(170, 157, col, false) + knob(114, 210, 24, 0.3, col, { label: 'FREQUENCY', value: '120 Hz' });
+    b += card(222, 152, 464, 134, 'Output') + button(636, 158, 40, 18, 'DC') +
+      knob(400, 210, 24, 0.5, col, { label: 'BALANCE', value: '0.0 %', bipolar: true }) + knob(500, 210, 24, 0.5, col, { label: 'GAIN', value: '0.0 dB', bipolar: true });
+    return [W, H, b, 'Utility window: phase, channel Left/Stereo/Right/Swap, width 140 %, bass mono, balance, gain, DC filter'];
+  };
+  // Transpose window (Inspector.cpp TransposePanel): pitch, quality, key detection.
+  FX.transpose = () => {
+    const W = 720, H = 330, col = C_TP;
+    let b = R(0, 0, W, H, 0, C.bg) + card(14, 14, 230, 130, 'Pitch');
+    b += knob(72, 70, 26, 0.54, col, { label: 'SEMITONES', value: '+2 st', bipolar: true }) + knob(184, 70, 26, 0.28, col, { label: 'FINE', value: '-22.5 ct', bipolar: true });
+    b += card(252, 14, 454, 130, 'Quality') + toggle(666, 19, col) + seg(262, 40, 434, 28, ['Fast', 'Normal', 'High'], 1, col);
+    b += button(262, 80, 130, 22, 'KEEP TIMBRE') + T(262, 128, 'Latency while shifting: 200 ms', { size: 10, fill: C.dim });
+    b += card(14, 152, 692, 166, 'Key') + button(24, 206, 130, 26, 'FIND NEW KEY') + button(24, 242, 130, 26, 'ADD PART');
+    b += R(166, 176, 128, 132, 6, mix(C.panel2, col, 0.1), { stroke: col }) + T(230, 238, 'B', { size: 34, weight: 700, anchor: 'middle' }) +
+      T(230, 260, 'MINOR', { size: 10, fill: col, weight: 700, anchor: 'middle' }) + T(230, 278, '81 %', { size: 10.5, weight: 700, anchor: 'middle' }) + T(230, 298, 'song: A minor', { size: 8.5, fill: C.faint, anchor: 'middle' });
+    b += R(302, 176, 128, 132, 6, '#0e1117') + T(366, 230, '+22.5', { size: 22, weight: 700, anchor: 'middle' }) + T(366, 248, 'ct, TUNED', { size: 9.5, fill: C.good, weight: 700, anchor: 'middle' }) +
+      button(312, 274, 108, 24, 'AUTO FINETUNE', { size: 8 });
+    b += T(444, 196, 'B minor', { size: 11, weight: 700 }) + T(444, 210, '1st  81 %', { size: 9.5, fill: col }) + T(444, 240, 'D major', { size: 11, weight: 700, fill: C.dim }) + T(444, 254, '2nd  15 %', { size: 9.5, fill: C.faint });
+    const tiles = (y, notes, heard) => notes.map((n, i) => { const h = heard[i]; return R(552 + i * 20, y, 16, 34, 4, h ? mix(C.panel2, col, 0.55) : '#0e1117', h ? { stroke: col } : {}) + T(560 + i * 20, y + 21, n, { size: 7.5, anchor: 'middle', fill: h ? C.text : C.faint, weight: i ? 400 : 700 }); }).join('');
+    b += tiles(178, ['B', 'C#', 'D', 'E', 'F#', 'G', 'A'], [1, 0, 1, 1, 1, 1, 1]) + tiles(222, ['D', 'E', 'F#', 'G', 'A', 'B', 'C#'], [1, 1, 1, 1, 1, 1, 0]);
+    b += T(444, 298, 'Filled = heard  ·  also heard: Bb  ·  2 parts of the song', { size: 9, fill: C.faint });
+    return [W, H, b, 'Transpose window: +2 semitones, -22.5 cents, quality Normal (200 ms), detected key B minor 81 %, song tuned +22.5 cents'];
+  };
+
+  /* ---------- wiki: device picker, controls, channel menu ---------- */
+  const menu = (x, y, w, items, hi = -1) => {
+    const h = items.reduce((a, t) => a + (t === '-' ? 9 : 22), 8);
+    let g = R(x + 3, y + 4, w, h, 7, '#000', { op: 0.35 }) + R(x, y, w, h, 7, '#1b2029', { stroke: C.outline });
+    let yy = y + 4;
+    items.forEach((t, i) => {
+      if (t === '-') { g += L(x + 10, yy + 4.5, x + w - 10, yy + 4.5, C.outline); yy += 9; return; }
+      if (i === hi) g += R(x + 4, yy, w - 8, 22, 4, mix('#1b2029', C.in, 0.25));
+      g += T(x + 14, yy + 15, t, { size: 10.5, fill: i === hi ? C.text : '#c9ced8' });
+      yy += 22;
+    });
+    return g;
+  };
+  const row = (x, y, w, t, o = {}) => (o.sel ? R(x, y, w, 22, 4, mix(C.panel2, C.in, 0.22), { stroke: mix(C.in, C.panel2, 0.4) }) : '') +
+    (o.dot ? `<circle cx="${x + 10}" cy="${y + 11}" r="3" fill="${C.in}"/>` : '') + T(x + 20, y + 15, t, { size: 10.5, fill: o.sel ? C.text : '#c9ced8', weight: o.sel ? 600 : 400 }) +
+    (o.tag ? R(x + w - 8 - o.tag.length * 6.2 - 8, y + 4, o.tag.length * 6.2 + 8, 14, 7, C.raised) + T(x + w - 12 - o.tag.length * 3.1, y + 14.5, o.tag, { size: 8, fill: C.dim, anchor: 'middle', weight: 700 }) : '') +
+    (o.tick ? `<path d="M${x + w - 22} ${y + 11}l4 4 7-8" fill="none" stroke="${C.good}" stroke-width="1.8" stroke-linecap="round"/>` : '');
+  G.picker = function (host) {
+    const W = 780, H = 360;
+    let b = R(0, 0, W, H, 10, C.bg) + R(0, 0, W, 38, 10, C.panel) + R(0, 28, W, 10, 0, C.panel);
+    b += T(16, 24, 'Input source', { size: 13, weight: 700 }) + T(110, 24, 'IN 1  Mic', { size: 11, fill: C.in, weight: 700 });
+    b += `<circle cx="${W - 30}" cy="19" r="9" fill="none" stroke="${C.dim}" stroke-width="1.3"/>` + T(W - 30, 23, 'i', { size: 11, fill: C.dim, anchor: 'middle', weight: 700 });
+    const col = (x, w, title) => card(x, 48, w, 262, title);
+    b += col(12, 236, 'Connection') + col(256, 270, 'Device') + col(534, 234, 'Channels');
+    const grp = (x, y, t) => T(x + 12, y + 14, t, { size: 8, fill: C.faint, weight: 700, ls: '.1em' });
+    let y = 70;
+    [['HARDWARE'], ['Master device', { sel: true, dot: true }], ['Other ASIO Devices'], ['VIRTUAL CABLE'], ['Virtual Cable'], ['WINDOWS'], ['Recording devices'],
+      ['SOFTWARE'], ['Application'], ['Loopback'], ['NETWORK'], ['Hydra Link']].forEach(([t, o]) => {
+      if (t === t.toUpperCase()) { b += grp(12, y, t); y += 17; } else { b += row(20, y, 220, t, o || {}); y += 22; }
+    });
+    b += T(268, 88, 'Show all devices', { size: 10, fill: C.dim }) + toggle(484, 76, C.in, false);
+    b += row(264, 100, 254, 'Focusrite USB ASIO', { sel: true, dot: true });
+    b += T(270, 146, 'The master device comes first.', { size: 9.5, fill: C.faint }) + T(270, 160, 'Other ASIO drivers are listed', { size: 9.5, fill: C.faint }) + T(270, 174, 'under "Other ASIO Devices".', { size: 9.5, fill: C.faint });
+    y = 76;
+    [['None'], ['Mono 1', { tag: 'IN 1' }], ['Mono 2'], ['Stereo 1/2', { sel: true, dot: true, tick: true }], ['Stereo 3/4', { tag: 'IN 3' }], ['Stereo 5/6'], ['Stereo 7/8']].forEach(([t, o]) => { b += row(542, y, 218, t, o || {}); y += 24; });
+    b += button(W - 150, 322, 64, 26, 'REFRESH', { color: C.text }) + button(W - 78, 322, 64, 26, 'DONE', { fill: C.in, color: '#0a0c10' });
+    b += T(14, 340, 'Click = use it right away  ·  double-click = use it and close', { size: 10, fill: C.dim });
+    host.innerHTML = svg(W, H, b, 'Device picker: connection type, device and channels in three columns');
+  };
+  G.controls = function (host) {
+    const W = 780, H = 250;
+    let b = R(0, 0, W, H, 10, C.bg);
+    const cap = (x, t1, t2) => T(x, 214, t1, { size: 11, weight: 700, anchor: 'middle' }) + T(x, 230, t2, { size: 9.5, fill: C.dim, anchor: 'middle' });
+    // 1 knob: drag up/down
+    b += knob(90, 96, 34, 0.62, C.in, { label: 'GAIN', value: '+4.5 dB', bipolar: true });
+    b += `<path d="M146 66v56M140 74l6-8 6 8M140 114l6 8 6-8" fill="none" stroke="${C.dim}" stroke-width="1.5" stroke-linecap="round"/>` + cap(100, 'Drag', 'Shift = fine  ·  double-click = default');
+    // 2 fader: click on the track
+    b += capGrad + faderBlock(206, 30, 180, -6, -14, C.in, false);
+    b += `<circle cx="246" cy="66" r="7" fill="none" stroke="${C.solo}" stroke-width="1.6"/><path d="M246 76v20" stroke="${C.solo}" stroke-width="1.4" stroke-dasharray="3 3"/>` + cap(250, 'Click the track', 'the fader glides there');
+    // 3 value field
+    b += R(352, 82, 110, 28, 5, '#07090c', { stroke: C.in }) + T(366, 101, '-6', { size: 13, mono: true }) + L(384, 88, 384, 104, C.text, 1.2);
+    b += T(407, 140, '-6 · 2.5k · -inf', { size: 9.5, fill: C.faint, anchor: 'middle' }) + cap(407, 'Click the value', 'and type a number');
+    // 4 wheel
+    b += R(510, 56, 40, 64, 20, C.raised, { stroke: C.outline }) + R(527, 68, 6, 16, 3, C.dim) + L(530, 92, 530, 120, C.outline);
+    b += `<path d="M562 70a14 14 0 0 1 0 28" fill="none" stroke="${C.dim}" stroke-width="1.5"/><path d="M558 94l4 5 5-4" fill="none" stroke="${C.dim}" stroke-width="1.5"/>` + cap(530, 'Mouse wheel', 'Ctrl + wheel always adjusts');
+    // 5 right-click menu
+    b += menu(612, 22, 156, ['MIDI Learn', 'Clear MIDI Mapping', 'MIDI Range (calibrate)', '-', 'Assign Keyboard Shortcut...', 'Reset to Default'], 0) + cap(690, 'Right-click', 'MIDI, shortcuts, reset');
+    host.innerHTML = svg(W, H, b, 'How controls work: drag, click the track, type a value, mouse wheel, right-click menu');
+  };
+  G.order = function (host) {
+    const W = 780, H = 300;
+    let b = R(0, 0, W, H, 10, C.bg);
+    b += menu(14, 14, 190, ['Rename', '-', 'Copy', 'Cut', 'Paste', 'Paste as new channel', 'Duplicate', 'Delete...', '-', 'Icon', 'Change Order...', 'Add Input'], 10);
+    b += T(110, 290, 'Right-click a strip', { size: 10, fill: C.dim, anchor: 'middle' });
+    const bx = 232;
+    b += R(bx, 14, W - bx - 14, 36, 7, C.panel) + T(bx + 14, 37, 'Change order: drag the strips, the trash can removes one', { size: 10.5, fill: C.dim }) +
+      button(W - 160, 21, 66, 22, 'DISCARD', { color: C.text }) + button(W - 88, 21, 60, 22, 'DONE', { fill: C.in, color: '#0a0c10' });
+    const mini = (x, y, n, name, o = {}) => {
+      let g = (o.drag ? R(x + 4, y + 6, 96, 216, 8, '#000', { op: 0.45 }) : '') + R(x, y, 96, 216, 8, C.panel, { stroke: o.drag ? C.in : C.outline, sw: o.drag ? 1.6 : 1 });
+      g += R(x + 8, y + 10, 20, 20, 5, mix(C.panel, C.in, 0.22)) + T(x + 18, y + 24, n, { size: 10.5, fill: C.in, anchor: 'middle', weight: 700 }) + T(x + 34, y + 24, name, { size: 11 });
+      g += grip(x + 44, y + 100) + trash(x + 38, y + 186);
+      [0, 1, 2].forEach(i => { g += R(x + 12 + i * 26, y + 42, 20, 14, 4, C.raised); });
+      g += R(x + 46, y + 66, 4, 104, 2, '#050608') + R(x + 38, y + 112, 20, 10, 3, '#c9ced8');
+      return g;
+    };
+    b += mini(bx + 4, 66, 1, 'Mic') + mini(bx + 108, 66, 2, 'Headset');
+    b += R(bx + 212, 66, 3, 216, 1.5, C.in) + mini(bx + 222, 66, 3, 'Chrome');
+    b += `<g transform="rotate(-3 ${bx + 378} 170)">${mini(bx + 330, 52, 7, 'Spotify', { drag: true })}</g>`;
+    b += mini(bx + 440, 66, 4, 'Game');
+    host.innerHTML = svg(W, H, b, 'Strip context menu and the Change Order mode: a strip is being dragged between two others');
+  };
+
   G.fxwin = function (host, k) {
     if (k === 'eq') return G.eq(host);
     const r = FX[k] && FX[k]();
