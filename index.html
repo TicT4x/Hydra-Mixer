@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hydra Mixer</title>
-<meta name="description" content="Hydra Mixer: a free, low-latency audio mixer for Windows. Mix microphones, games, apps and virtual cables, with effects, room correction, network audio and an Android app.">
+<meta name="description" content="Hydra Mixer: a free, low-latency audio mixer for Windows. Mix microphones, games, apps and virtual cables, with effects, speaker and headphone correction, network audio and an Android app.">
 <meta property="og:title" content="Hydra Mixer">
 <meta property="og:description" content="Free low-latency audio mixer for Windows, an alternative to Voicemeeter.">
 <meta property="og:image" content="screenshot.png">
@@ -484,7 +484,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 
 /* Effects */
 .fxgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 30px; }
-.fxgrid .fx[data-fx="vst"] { grid-column: span 3; }
+.fxgrid .fx[data-fx="vst"] { grid-column: span 2; }
 .fx { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 18px 16px; position: relative; overflow: hidden; }
 .fx::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; background: var(--c); }
 .fx h3 { margin: 0 0 6px; font-size: 13px; letter-spacing: .07em; text-transform: uppercase; color: var(--c); }
@@ -571,7 +571,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 
 @media (max-width: 1000px) {
   .fxgrid { grid-template-columns: repeat(2, 1fr); }
-  .fxgrid .fx[data-fx="vst"] { grid-column: auto; }
+  .fxgrid .fx[data-fx="vst"] { grid-column: span 2; }
   .feats { grid-template-columns: 240px minmax(0, 1fr); }
 }
 @media (max-width: 760px) {
@@ -594,6 +594,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 }
 @media (max-width: 480px) {
   .fxgrid { grid-template-columns: 1fr; }
+  .fxgrid .fx[data-fx="vst"] { grid-column: auto; }
 }
 
 </style>
@@ -672,7 +673,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
       </div>
       <div class="stat" style="--c:#3ee08f">
         <div class="si"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></div>
-        <b>9</b><span class="en">built-in effects, from denoiser to pitch shifter</span><span class="de">eingebaute Effekte, vom Denoiser bis zum Pitch-Shifter</span>
+        <b>10</b><span class="en">built-in effects, from denoiser to pitch shifter</span><span class="de">eingebaute Effekte, vom Denoiser bis zum Pitch-Shifter</span>
         <div class="viz fxs"></div>
       </div>
       <div class="stat" style="--c:#ffc23f">
@@ -729,8 +730,10 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         <p><span class="en">Evens out loud and quiet parts. Knee, attack, release, makeup and auto gain, with a live curve.</span><span class="de">Gleicht laute und leise Stellen aus. Knee, Attack, Release, Makeup und Auto-Gain, mit Live-Kennlinie.</span></p></div>
       <div class="fx rv" tabindex="0" data-fx="limiter" style="--c:#ff6a7d"><h3>Limiter</h3>
         <p><span class="en">A ceiling nothing goes over. Protects ears, speakers and your stream from peaks.</span><span class="de">Eine Grenze, über die nichts geht. Schützt Ohren, Lautsprecher und Stream vor Spitzen.</span></p></div>
-      <div class="fx rv" tabindex="0" data-fx="correction" style="--c:#a78bfa"><h3><span class="en">Room correction</span><span class="de">Raumkorrektur</span></h3>
+      <div class="fx rv" tabindex="0" data-fx="correction" style="--c:#a78bfa"><h3><span class="en">Speaker correction</span><span class="de">Lautsprecher-Korrektur</span></h3>
         <p><span class="en">Measured with a mic in a guided wizard: tames room resonances and lines up left and right speaker.</span><span class="de">Im Assistenten mit einem Mikro gemessen: zähmt Raumresonanzen und gleicht linken und rechten Lautsprecher an.</span></p></div>
+      <div class="fx rv" tabindex="0" data-fx="headphone" style="--c:#7c9cff"><h3><span class="en">Headphone correction</span><span class="de">Kopfhörer-Korrektur</span></h3>
+        <p><span class="en">Pick your headphones from 94 measured models: Hydra makes them neutral, or makes them sound like other headphones.</span><span class="de">Wähle deinen Kopfhörer aus 94 gemessenen Modellen: Hydra macht ihn neutral oder lässt ihn wie einen anderen klingen.</span></p></div>
       <div class="fx rv" tabindex="0" data-fx="utility" style="--c:#ff6ac1"><h3>Utility</h3>
         <p><span class="en">Phase, left/right, stereo width, mono bass, balance and gain: the small fixes, without a click when switching.</span><span class="de">Phase, links/rechts, Stereobreite, Bass in Mono, Balance und Gain: die kleinen Korrekturen, ohne Klicken beim Umschalten.</span></p></div>
       <div class="fx rv" tabindex="0" data-fx="transpose" style="--c:#c77dff"><h3>Transpose</h3>
@@ -758,7 +761,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         <button role="tab" data-f="eq"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 16c3 0 3-8 6-8s3 6 6 6 3-4 6-4"/></svg></span><span class="en">EQ with live spectrum</span><span class="de">EQ mit Live-Spektrum</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="stems"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 10v4M8 6v12M12 3v18M16 8v8M20 11v2"/></svg></span><span class="en">Stem separation</span><span class="de">Stem-Separation</span><span class="tag">Beta</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="sel"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></span><span class="en">A separate mix per output</span><span class="de">Eigener Mix pro Ausgang</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
-        <button role="tab" data-f="room"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10 12 3l9 7v10H3z"/><path d="M8 15c1.3-1.3 2.7-1.3 4 0s2.7 1.3 4 0"/></svg></span><span class="en">Room correction</span><span class="de">Raumkorrektur</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="room"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10 12 3l9 7v10H3z"/><path d="M8 15c1.3-1.3 2.7-1.3 4 0s2.7 1.3 4 0"/></svg></span><span class="en">Speaker &amp; headphone correction</span><span class="de">Lautsprecher- &amp; Kopfhörer-Korrektur</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="link"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16a5 5 0 0 1 6 0"/><circle cx="12" cy="19.5" r="1"/></svg></span>Hydra Link<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="remote"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10 7v8M14 9v6"/></svg></span><span class="en">Phone &amp; tablet remote</span><span class="de">Handy &amp; Tablet als Fernbedienung</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="recorder"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg></span>Recorder<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
@@ -839,7 +842,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         </article>
 
         <article data-f="room" hidden>
-          <h3><span class="en">Room correction</span><span class="de">Raumkorrektur</span></h3>
+          <h3><span class="en">Speaker &amp; headphone correction</span><span class="de">Lautsprecher- &amp; Kopfhörer-Korrektur</span></h3>
           <div class="pic hx" data-g="waterfall"></div>
           <p><span class="en">Your room changes how your speakers sound. A guided wizard measures them with a microphone at one to nine listening positions and builds a correction that tames resonances, without chasing room ripple it can't fix. The waterfall shows which frequencies keep ringing after the sound stops.</span><span class="de">Dein Raum verändert, wie deine Lautsprecher klingen. Ein Assistent misst sie mit einem Mikrofon an einer bis neun Hörpositionen und baut eine Korrektur, die Resonanzen zähmt, ohne Raum-Welligkeit hinterherzujagen, die man nicht korrigieren kann. Der Wasserfall zeigt, welche Frequenzen nachklingen, wenn der Ton schon vorbei ist.</span></p>
           <dl class="kv">
@@ -848,7 +851,9 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
             <dt><span class="en">Correct</span><span class="de">Korrigieren</span></dt><dd><span class="en">filter bands plus left/right timing, zero latency, validate and refine</span><span class="de">Filterbänder plus Laufzeitausgleich links/rechts, ohne Latenz, prüfen und nachbessern</span></dd>
             <dt>VST3</dt><dd><span class="en">"Hydra Room Correction" uses the same corrections in your DAW</span><span class="de">„Hydra Room Correction“ nutzt dieselben Korrekturen in deiner DAW</span></dd>
           </dl>
-          <a class="more" href="#room"><span class="en">Room calibration in the wiki →</span><span class="de">Raumkalibrierung im Wiki →</span></a>
+          <p><span class="en">Headphones need no measuring: pick yours from 94 measured headphones, headsets and in-ears, and Hydra makes them neutral or makes them sound like another model, say your studio headphones like your gaming headset. Own measurements can be imported.</span><span class="de">Kopfhörer musst du nicht messen: Wähle deinen aus 94 gemessenen Kopfhörern, Headsets und In-Ears, und Hydra macht ihn neutral oder lässt ihn wie ein anderes Modell klingen, etwa deinen Studiokopfhörer wie dein Gaming-Headset. Eigene Messungen lassen sich importieren.</span></p>
+          <div class="pic hx" data-g="fxwin" data-o="headphone"></div>
+          <a class="more" href="#correction"><span class="en">Corrections in the wiki →</span><span class="de">Korrekturen im Wiki →</span></a>
         </article>
 
         <article data-f="link" hidden>
@@ -1148,7 +1153,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
   <a href="#transpose">Transpose</a>
   <a href="#utility">Utility</a>
   <a href="#eq">Equalizer</a>
-  <a href="#correction">Correction</a>
+  <a href="#correction">Speaker &amp; Headphone Correction</a>
   <a href="#gate">Gate &amp; Voice Key</a>
   <a href="#comp">Compressor</a>
   <a href="#limiter">Limiter</a>
@@ -1205,7 +1210,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
   <a href="#transpose">Transpose</a>
   <a href="#utility">Utility</a>
   <a href="#eq">Equalizer</a>
-  <a href="#correction">Correction</a>
+  <a href="#correction">Speaker &amp; Headphone Correction</a>
   <a href="#gate">Gate &amp; Voice Key</a>
   <a href="#comp">Kompressor</a>
   <a href="#limiter">Limiter</a>
@@ -1389,7 +1394,7 @@ cd Hydra-Mixer
   <div class="flow">
     <span class="k">Sum</span><i>→</i><span>Effect chain</span><i>→</i><span>Mono</span><i>→</i><span>Fader / Mute</span><i>→</i><span>Sync Delay</span><i>→</i><span class="k">Output device</span>
   </div>
-  <p>On outputs the chain can hold <a href="#correction">Correction</a> (H outputs only), Utility, EQ, Compressor, Limiter and VST3 plugins. It runs before the fader.</p>
+  <p>On outputs the chain can hold <a href="#correction">Speaker and Headphone Correction</a>, Utility, EQ, Compressor, Limiter and VST3 plugins. It runs before the fader.</p>
 
   <h3 id="clock">The master device as the clock</h3>
   <p>Every audio device has its own clock, and no two clocks run at exactly the same speed. Hydra solves this like this:</p>
@@ -1646,12 +1651,12 @@ cd Hydra-Mixer
     <thead><tr><th>Channel</th><th>Available blocks</th></tr></thead>
     <tbody>
       <tr><td>Input</td><td><a href="#stems">Stem Separator</a> (beta) · <a href="#transpose">Transpose</a> · <a href="#utility">Utility</a> · <a href="#denoiser">Denoiser</a> · <a href="#eq">EQ</a> · <a href="#gate">Gate</a> · <a href="#comp">Compressor</a> · <a href="#limiter">Limiter</a> · <a href="#vst">VST3 plugins</a></td></tr>
-      <tr><td>Hardware output (H)</td><td><a href="#correction">Correction</a> · Utility · EQ · Compressor · Limiter · VST3 plugins</td></tr>
+      <tr><td>Hardware output (H)</td><td><a href="#correction">Speaker Correction</a> · <a href="#headphone">Headphone Correction</a> · Utility · EQ · Compressor · Limiter · VST3 plugins</td></tr>
       <tr><td>Virtual output (V)</td><td>Utility · EQ · Compressor · Limiter · VST3 plugins</td></tr>
     </tbody>
   </table>
   <ul>
-    <li>Up to four blocks of each built-in effect per channel (Correction, Stem Separator and Transpose once).</li>
+    <li>Up to four blocks of each built-in effect per channel (Stem Separator and Transpose once).</li>
     <li><b>Right-click a block</b>: Copy, Cut, Paste, Paste settings, Duplicate, Delete, Switch on/off, Insert after. Right-click the empty area: copy, paste or clear the whole chain. Chains can be pasted onto other channels.</li>
     <li>A channel nobody hears (muted, fader at −∞, not routed to an output in use) pauses its effects to save CPU; the header then says “effects paused: channel not heard”.</li>
     <li>What each effect does: see <a href="#fxoverview">Effects overview</a>.</li>
@@ -1661,7 +1666,7 @@ cd Hydra-Mixer
 <!-- ============================================================ -->
 <section id="fxoverview">
   <h2><span class="num">11</span>Effects overview</h2>
-  <p>Hydra has nine built-in effects. All of them run inside Hydra, need no plugin and, except Stem Separator and Transpose, add no latency.</p>
+  <p>Hydra has ten built-in effects. All of them run inside Hydra, need no plugin and, except Stem Separator and Transpose, add no latency.</p>
   <table>
     <thead><tr><th>Effect</th><th>What it does</th><th>Typical use</th><th>Latency</th></tr></thead>
     <tbody>
@@ -1673,7 +1678,8 @@ cd Hydra-Mixer
       <tr><td><a href="#utility">Utility</a></td><td>Phase, left/right, stereo width, bass mono, balance, gain.</td><td>Mono mic only on one side, too wide music, a wrongly wired cable.</td><td>0</td></tr>
       <tr><td><a href="#transpose">Transpose</a></td><td>Shifts the pitch, finds key and tuning of a song.</td><td>Play along with a song in a key that suits you.</td><td>100–300 ms while shifting</td></tr>
       <tr><td><a href="#stems">Stem Separator</a> (beta)</td><td>Splits music into vocals, drums, bass, guitar, rest.</td><td>Karaoke, practise your instrument over the band.</td><td>1.3–3.6 s</td></tr>
-      <tr><td><a href="#correction">Correction</a></td><td>Measured room correction for speakers.</td><td>Tame booming bass in your room.</td><td>0</td></tr>
+      <tr><td><a href="#correction">Speaker Correction</a></td><td>Measured room correction for speakers.</td><td>Tame booming bass in your room.</td><td>0</td></tr>
+      <tr><td><a href="#headphone">Headphone Correction</a></td><td>Makes headphones neutral or sound like other headphones.</td><td>Studio headphones that sound like your headset, or the other way round.</td><td>0</td></tr>
     </tbody>
   </table>
   <p>Plus any <a href="#vst">VST3 plugin</a> (amp simulations, reverbs, de-essers …), anywhere in the chain.</p>
@@ -1830,8 +1836,10 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="correction">
-  <h2><span class="num">14</span>Correction</h2>
-  <p>Room correction for your speakers, on <b>hardware outputs</b> (H) only: filter bands plus left/right timing, zero latency. By default the block sits before the EQ: the correction fixes the speakers in the room, the EQ after it is for taste. The block shows the curve and the name of the correction; its switch turns it on and off (MIDI-learnable, undo, scenes).</p>
+  <h2><span class="num">14</span>Speaker &amp; Headphone Correction</h2>
+  <p>Two effects make your speakers and headphones sound right: <b>Speaker Correction</b> measures your speakers in your room, <b>Headphone Correction</b> knows your headphones from a library of measurements. Both add no latency and are blocks on hardware outputs (H), by default before the EQ: the correction fixes the sound, the EQ after it is for taste. Up to four of each per channel.</p>
+  <h3>Speaker Correction</h3>
+  <p>Room correction for your speakers: filter bands plus left/right timing, zero latency. By default the block sits before the EQ: the correction fixes the speakers in the room, the EQ after it is for taste. The block shows the curve and the name of the correction; its switch turns it on and off (MIDI-learnable, undo, scenes).</p>
   <div class="hx shot" data-g="fxwin" data-o="correction"></div>
   <p>The picture shows the idea: the grey line is what the microphone measured at your listening position, purple is the correction Hydra builds (only cuts and small boosts, mostly in the bass where rooms cause the biggest problems), white is the result, close to the green target.</p>
   <ul>
@@ -1841,6 +1849,19 @@ cd Hydra-Mixer
     <li><b>VST3 plugin “Hydra Room Correction”</b>: the same correction in your DAW, with zero latency. It loads and edits corrections; measuring is done in Hydra.</li>
     <li>Export as an Equalizer APO text file.</li>
   </ul>
+  <h3 id="headphone">Headphone Correction</h3>
+  <p>Every pair of headphones has its own sound: one booms, another hisses. Headphone Correction doesn't measure anything, it knows <b>94 headphones, headsets and in-ears</b> from published measurements (AutoEq project: oratory1990, Rtings, Kuulokenurkka and others). Pick yours, pick how it should sound, done.</p>
+  <div class="hx shot" data-g="fxwin" data-o="headphone"></div>
+  <p>In the picture, Beyerdynamic DT 770 Pro studio headphones should sound like a SteelSeries Arctis 7 headset: orange is the DT 770, the dashed line is the Arctis, blue is the correction Hydra builds, green the result.</p>
+  <ul>
+    <li><b>Your headphones</b> (left list, searchable, sorted by brand) and <b>Should sound like</b> (right list): <i>Neutral (Harman)</i>, <i>Harman without bass</i>, <i>Diffuse field</i>, or any other headphones in the list.</li>
+    <li>The block shows both choices as menus plus a small curve; the expand button or a click on the curve opens the window.</li>
+    <li><b>AMOUNT</b> (0–100 %): how much of the correction is used. Every head is a bit different; if it sounds too much, turn it down.</li>
+    <li>A correction mostly makes things quieter (to avoid clipping). <b>GAIN</b> (±12 dB) and <b>AUTO MAKEUP</b> give the level back; AUTO MAKEUP makes it as loud as before, the window warns if peaks can then clip.</li>
+    <li><b>Add headphones…</b> imports your own measurement (REW, squig.link or AutoEq CSV, .txt, .frd). Right-click it in the list to rename, show or delete it.</li>
+    <li>The fitted correction is saved with the session, so it keeps working without the measurement file.</li>
+  </ul>
+  <div class="note"><b>Tip</b> Headphone Correction is meant for the output your headphones are on (an H output). On a V output it would change the sound of your stream or call.</div>
 </section>
 
 <!-- ============================================================ -->
@@ -2637,7 +2658,7 @@ cd Hydra-Mixer
   <div class="flow">
     <span class="k">Summe</span><i>→</i><span>Effektkette</span><i>→</i><span>Mono</span><i>→</i><span>Fader / Mute</span><i>→</i><span>Sync Delay</span><i>→</i><span class="k">Ausgabegerät</span>
   </div>
-  <p>An Ausgängen kann die Kette <a href="#correction">Correction</a> (nur H-Ausgänge), Utility, EQ, Kompressor, Limiter und VST3-Plugins enthalten. Sie läuft vor dem Fader.</p>
+  <p>An Ausgängen kann die Kette <a href="#correction">Speaker und Headphone Correction</a>, Utility, EQ, Kompressor, Limiter und VST3-Plugins enthalten. Sie läuft vor dem Fader.</p>
 
   <h3 id="clock">Das Master-Gerät als Clock</h3>
   <p>Jedes Audiogerät hat seinen eigenen Takt (Clock), und keine zwei Clocks laufen exakt gleich schnell. Hydra löst das so:</p>
@@ -2891,12 +2912,12 @@ cd Hydra-Mixer
     <thead><tr><th>Kanal</th><th>Verfügbare Blöcke</th></tr></thead>
     <tbody>
       <tr><td>Input</td><td><a href="#stems">Stem Separator</a> (Beta) · <a href="#transpose">Transpose</a> · <a href="#utility">Utility</a> · <a href="#denoiser">Denoiser</a> · <a href="#eq">EQ</a> · <a href="#gate">Gate</a> · <a href="#comp">Kompressor</a> · <a href="#limiter">Limiter</a> · <a href="#vst">VST3-Plugins</a></td></tr>
-      <tr><td>Hardware-Ausgang (H)</td><td><a href="#correction">Correction</a> · Utility · EQ · Kompressor · Limiter · VST3-Plugins</td></tr>
+      <tr><td>Hardware-Ausgang (H)</td><td><a href="#correction">Speaker Correction</a> · <a href="#headphone">Headphone Correction</a> · Utility · EQ · Kompressor · Limiter · VST3-Plugins</td></tr>
       <tr><td>Virtueller Ausgang (V)</td><td>Utility · EQ · Kompressor · Limiter · VST3-Plugins</td></tr>
     </tbody>
   </table>
   <ul>
-    <li>Von jedem eingebauten Effekt bis zu vier Blöcke pro Kanal (Correction, Stem Separator und Transpose einmal).</li>
+    <li>Von jedem eingebauten Effekt bis zu vier Blöcke pro Kanal (Stem Separator und Transpose einmal).</li>
     <li><b>Rechtsklick auf einen Block</b>: Copy, Cut, Paste, Paste settings, Duplicate, Delete, Switch on/off, Insert after. Rechtsklick ins Leere: ganze Kette kopieren, einfügen oder leeren. Ketten lassen sich auf andere Kanäle einfügen.</li>
     <li>Ein Kanal, den niemand hört (gemutet, Fader auf −∞, auf keinen benutzten Ausgang geroutet), pausiert seine Effekte und spart CPU; im Kopf steht dann „effects paused: channel not heard“.</li>
     <li>Was jeder Effekt macht: siehe <a href="#fxoverview">Effekte im Überblick</a>.</li>
@@ -2906,7 +2927,7 @@ cd Hydra-Mixer
 <!-- ============================================================ -->
 <section id="fxoverview">
   <h2><span class="num">11</span>Effekte im Überblick</h2>
-  <p>Hydra hat neun eingebaute Effekte. Alle laufen in Hydra selbst, brauchen kein Plugin und kosten, außer Stem Separator und Transpose, keine Latenz.</p>
+  <p>Hydra hat zehn eingebaute Effekte. Alle laufen in Hydra selbst, brauchen kein Plugin und kosten, außer Stem Separator und Transpose, keine Latenz.</p>
   <table>
     <thead><tr><th>Effekt</th><th>Was er macht</th><th>Typischer Einsatz</th><th>Latenz</th></tr></thead>
     <tbody>
@@ -2918,7 +2939,8 @@ cd Hydra-Mixer
       <tr><td><a href="#utility">Utility</a></td><td>Phase, links/rechts, Stereobreite, Bass mono, Balance, Gain.</td><td>Mono-Mikro nur auf einer Seite, zu breite Musik, falsch verdrahtetes Kabel.</td><td>0</td></tr>
       <tr><td><a href="#transpose">Transpose</a></td><td>Verschiebt die Tonhöhe, findet Tonart und Stimmung eines Songs.</td><td>Zu einem Song in einer passenden Tonart mitspielen.</td><td>100–300 ms beim Verschieben</td></tr>
       <tr><td><a href="#stems">Stem Separator</a> (Beta)</td><td>Zerlegt Musik in Gesang, Schlagzeug, Bass, Gitarre, Rest.</td><td>Karaoke, dein Instrument zur Band üben.</td><td>1,3–3,6 s</td></tr>
-      <tr><td><a href="#correction">Correction</a></td><td>Gemessene Raumkorrektur für Lautsprecher.</td><td>Dröhnenden Bass im Raum zähmen.</td><td>0</td></tr>
+      <tr><td><a href="#correction">Speaker Correction</a></td><td>Gemessene Raumkorrektur für Lautsprecher.</td><td>Dröhnenden Bass im Raum zähmen.</td><td>0</td></tr>
+      <tr><td><a href="#headphone">Headphone Correction</a></td><td>Macht Kopfhörer neutral oder klingt wie andere Kopfhörer.</td><td>Studiokopfhörer, der wie dein Headset klingt, oder umgekehrt.</td><td>0</td></tr>
     </tbody>
   </table>
   <p>Dazu jedes <a href="#vst">VST3-Plugin</a> (Amp-Simulationen, Hall, De-Esser …), an jeder Stelle der Kette.</p>
@@ -3075,8 +3097,10 @@ cd Hydra-Mixer
 
 <!-- ============================================================ -->
 <section id="correction">
-  <h2><span class="num">14</span>Correction</h2>
-  <p>Raumkorrektur für deine Lautsprecher, nur auf <b>Hardware-Ausgängen</b> (H): Filterbänder plus Laufzeitausgleich links/rechts, ohne Latenz. Standardmäßig sitzt der Block vor dem EQ: Die Korrektur gleicht die Lautsprecher im Raum aus, der EQ danach ist für den Geschmack. Der Block zeigt die Kurve und den Namen der Korrektur; sein Schalter schaltet sie an und aus (MIDI-lernbar, Undo, Szenen).</p>
+  <h2><span class="num">14</span>Speaker &amp; Headphone Correction</h2>
+  <p>Zwei Effekte lassen Lautsprecher und Kopfhörer richtig klingen: <b>Speaker Correction</b> misst deine Lautsprecher in deinem Raum, <b>Headphone Correction</b> kennt deinen Kopfhörer aus einer Bibliothek von Messungen. Beide kosten keine Latenz und sind Blöcke auf Hardware-Ausgängen (H), standardmäßig vor dem EQ: Die Korrektur gleicht den Klang aus, der EQ danach ist für den Geschmack. Von jedem bis zu vier pro Kanal.</p>
+  <h3>Speaker Correction</h3>
+  <p>Raumkorrektur für deine Lautsprecher: Filterbänder plus Laufzeitausgleich links/rechts, ohne Latenz. Standardmäßig sitzt der Block vor dem EQ: Die Korrektur gleicht die Lautsprecher im Raum aus, der EQ danach ist für den Geschmack. Der Block zeigt die Kurve und den Namen der Korrektur; sein Schalter schaltet sie an und aus (MIDI-lernbar, Undo, Szenen).</p>
   <div class="hx shot" data-g="fxwin" data-o="correction"></div>
   <p>Das Bild zeigt das Prinzip: Grau ist, was das Mikrofon an deinem Hörplatz gemessen hat, Lila die Korrektur, die Hydra baut (nur Absenkungen und kleine Anhebungen, vor allem im Bass, wo Räume die größten Probleme machen), Weiß das Ergebnis, nahe am grünen Ziel.</p>
   <ul>
@@ -3086,6 +3110,19 @@ cd Hydra-Mixer
     <li><b>VST3-Plugin „Hydra Room Correction“</b>: dieselbe Korrektur in deiner DAW, ohne Latenz. Es lädt und bearbeitet Korrekturen; gemessen wird in Hydra.</li>
     <li>Export als Equalizer-APO-Textdatei.</li>
   </ul>
+  <h3 id="headphone">Headphone Correction</h3>
+  <p>Jeder Kopfhörer klingt anders: einer dröhnt, ein anderer zischt. Headphone Correction misst nichts, sondern kennt <b>94 Kopfhörer, Headsets und In-Ears</b> aus veröffentlichten Messungen (AutoEq-Projekt: oratory1990, Rtings, Kuulokenurkka und andere). Deinen auswählen, auswählen, wie er klingen soll, fertig.</p>
+  <div class="hx shot" data-g="fxwin" data-o="headphone"></div>
+  <p>Im Bild soll ein Beyerdynamic DT 770 Pro (Studiokopfhörer) wie ein SteelSeries-Arctis-7-Headset klingen: Orange ist der DT 770, gestrichelt das Arctis, Blau die Korrektur, die Hydra baut, Grün das Ergebnis.</p>
+  <ul>
+    <li><b>Your headphones</b> (linke Liste, durchsuchbar, nach Marke sortiert) und <b>Should sound like</b> (rechte Liste): <i>Neutral (Harman)</i>, <i>Harman ohne Bass</i>, <i>Diffuse field</i> oder jeder andere Kopfhörer der Liste.</li>
+    <li>Der Block zeigt beide Auswahlen als Menüs und eine kleine Kurve; der Vergrößern-Button oder ein Klick auf die Kurve öffnet das Fenster.</li>
+    <li><b>AMOUNT</b> (0–100 %): wie viel der Korrektur wirkt. Jeder Kopf ist etwas anders; ist es zu viel, dreh es herunter.</li>
+    <li>Eine Korrektur macht meist leiser (gegen Übersteuern). <b>GAIN</b> (±12 dB) und <b>AUTO MAKEUP</b> holen den Pegel zurück; AUTO MAKEUP macht es so laut wie vorher, das Fenster warnt, wenn Spitzen dann übersteuern können.</li>
+    <li><b>Add headphones…</b> importiert eine eigene Messung (REW, squig.link oder AutoEq-CSV, .txt, .frd). Rechtsklick darauf in der Liste: umbenennen, anzeigen, löschen.</li>
+    <li>Die berechnete Korrektur wird mit der Session gespeichert und wirkt also auch ohne die Messdatei.</li>
+  </ul>
+  <div class="note"><b>Tipp</b> Headphone Correction gehört auf den Ausgang, an dem dein Kopfhörer hängt (ein H-Ausgang). Auf einem V-Ausgang würde sie den Klang deines Streams oder Calls verändern.</div>
 </section>
 
 <!-- ============================================================ -->
@@ -4018,13 +4055,13 @@ cd Hydra-Mixer
   const viz = (sel, html) => document.querySelectorAll(sel).forEach(v => v.innerHTML = html);
   viz('.stat .viz.ins', [...Array(16)].map((_, i) => `<i style="--h:${45 + (i * 37) % 55}%;--d:${(-(i * 0.29) % 1.2).toFixed(2)}s"></i>`).join(''));
   viz('.stat .viz.outs', [...Array(16)].map((_, i) => `<i style="background:${i < 8 ? '#a288ff' : '#ff6aa6'}"></i>`).join(''));
-  viz('.stat .viz.fxs', ['#3ee08f', '#35d0f4', '#ffc23f', '#ff8f4d', '#ff6a7d', '#a78bfa', '#ff6ac1', '#c77dff', '#56e0c8'].map(c => `<i style="background:${c};max-width:22px"></i>`).join(''));
+  viz('.stat .viz.fxs', ['#3ee08f', '#35d0f4', '#ffc23f', '#ff8f4d', '#ff6a7d', '#a78bfa', '#ff6ac1', '#c77dff', '#56e0c8', '#7c9cff'].map(c => `<i style="background:${c};max-width:22px"></i>`).join(''));
 
   /* ---------- Effects: the settings window of an effect appears when pointing at its card ---------- */
   const FXT = {
     denoiser: ['Denoiser', 'settings window', 'Einstellungsfenster'], eq: ['Equalizer', 'large EQ window', 'großes EQ-Fenster'],
     gate: ['Gate', 'settings window', 'Einstellungsfenster'], comp: ['Compressor', 'settings window', 'Einstellungsfenster'],
-    limiter: ['Limiter', 'block in the chain', 'Block in der Kette'], correction: ['Room correction', 'window', 'Fenster'],
+    limiter: ['Limiter', 'block in the chain', 'Block in der Kette'], correction: ['Speaker Correction', 'window', 'Fenster'], headphone: ['Headphone Correction', 'window', 'Fenster'],
     utility: ['Utility', 'settings window', 'Einstellungsfenster'], transpose: ['Transpose', 'settings window', 'Einstellungsfenster'], stems: ['Stem Separator', 'settings window', 'Einstellungsfenster'], vst: ['VST3', 'plugin window', 'Plugin-Fenster']
   };
   const pop = document.createElement('div');

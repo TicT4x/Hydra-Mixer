@@ -850,6 +850,53 @@
     b += T(W - 16, 297, '4 bands  ·  L/R aligned 0.42 ms', { size: 10, fill: C.dim, anchor: 'end' });
     return [W, H, b, 'Room correction window: measured response, correction, result and target'];
   };
+  // Headphone Correction window (ui/HeadphoneView.cpp): your headphones, "should sound like", AMOUNT/GAIN/AUTO MAKEUP, curves.
+  FX.headphone = () => {
+    const W = 800, H = 400, col = '#7c9cff', orange = '#ffa53d', green = C.good;
+    let b = R(0, 0, W, H, 0, C.bg);
+    const list = (x, title, rows, sel) => {
+      let g = T(x, 26, title, { size: 9.5, fill: C.dim, weight: 700, ls: '.04em' }) + R(x, 36, 176, 24, 3, '#07090c', { stroke: C.outline }) + T(x + 9, 52, 'Search', { size: 10, fill: C.faint });
+      g += R(x, 68, 176, H - 82, 6, C.panel);
+      let y = 74;
+      rows.forEach(r => {
+        if (r[0] === '#') { g += T(x + 8, y + 15, r.slice(1), { size: 8.5, fill: C.dim, weight: 700 }); y += 22; return; }
+        const [n, src] = r.split('|'), on = n === sel;
+        if (on) g += R(x + 4, y, 168, 22, 5, mix(C.panel, col, 0.3));
+        g += T(x + 12, y + 15, n, { size: 10, weight: on ? 700 : 400 }) + T(x + 164, y + 15, src, { size: 7.5, fill: C.faint, anchor: 'end' });
+        y += 24;
+      });
+      return g;
+    };
+    b += list(14, 'YOUR HEADPHONES', ['DT 770 Pro 80 Ohm|Kuulokenurkka', 'DT 770 Pro 250 Ohm|oratory1990', 'DT 880|oratory1990', 'DT 990 Pro|oratory1990', '#BOSE', 'QuietComfort 45|oratory1990', '#CORSAIR', 'HS80 RGB Wireless|Rtings', '#SENNHEISER', 'HD 560S|oratory1990', 'HD 600|oratory1990', 'HD 650|oratory1990'], 'DT 770 Pro 80 Ohm');
+    b += list(200, 'SHOULD SOUND LIKE', ['#TARGETS', 'Neutral (Harman)|target', 'Harman without bass|target', 'Diffuse field|target', '#SONY', 'WH-1000XM5|oratory1990', '#STEELSERIES', 'Arctis 7 (2019)|Rtings', 'Arctis 7 Wireless (2017)|Rtings', 'Arctis Nova Pro|Rtings'], 'Arctis 7 Wireless (2017)');
+    const gx = 392;
+    b += button(gx, 14, 150, 30, 'Add headphones…', { size: 10.5 });
+    b += knob(gx + 186, 36, 15, 1, col, { label: 'AMOUNT', value: '100 %' }) + knob(gx + 240, 36, 15, 0.5, col, { label: 'GAIN', value: '0.0 dB', bipolar: true });
+    b += button(gx + 274, 24, 80, 22, 'AUTO MAKEUP', { size: 8.5 }) + toggle(W - 42, 18, col);
+    const x = gx + 26, y = 92, w = W - x - 18, h = 230, lo = 20, hi = 20000, rg = 10;
+    const fx = f => x + w * Math.log(f / lo) / Math.log(hi / lo), fy = d => y + h / 2 - d / rg * (h / 2);
+    b += R(gx, 82, W - gx - 10, h + 34, 6, '#0c0f14');
+    [50, 100, 200, 500, 1000, 2000, 5000, 10000].forEach(f => { b += L(fx(f), y, fx(f), y + h, '#1c222c') + T(fx(f), y + h + 14, f >= 1000 ? f / 1000 + 'k' : f, { size: 8.5, fill: C.faint, anchor: 'middle' }); });
+    [-10, -5, 0, 5, 10].forEach(d => { b += L(x, fy(d), x + w, fy(d), d ? '#1c222c' : '#2a3240') + T(x - 6, fy(d) + 3, (d > 0 ? '+' : '') + d, { size: 8.5, fill: C.faint, anchor: 'end' }); });
+    const bell = (f, f0, g, q) => g / (1 + Math.pow(Math.log2(f / f0) * q, 2));
+    const hp = f => -2.5 + bell(f, 45, 3.8, 1.2) + bell(f, 90, -2.2, 4) + bell(f, 190, -3.8, 3) + bell(f, 1300, 1.6, 3) + bell(f, 6200, -6, 4) + bell(f, 8500, 4, 2) + bell(f, 11000, 3, 3);
+    const tgt = f => -3.6 + bell(f, 22, -2.5, 2) + bell(f, 150, 7.4, 1.4) + bell(f, 700, -1.6, 2) + bell(f, 2600, 1.5, 3) + bell(f, 5000, -5, 5) + bell(f, 11000, 3.5, 2) + bell(f, 15000, 1, 2);
+    const N = 180, fs = [...Array(N + 1)].map((_, i) => lo * Math.pow(hi / lo, i / N));
+    const cor = f => (tgt(f) - hp(f)) * (f > 10000 ? 0.4 : 1);
+    const pts = fn => fs.map(f => f1(fx(f)) + ' ' + f1(fy(Math.max(-rg, Math.min(rg, fn(f)))))).join('L');
+    b += `<path d="M${f1(x)} ${f1(fy(0))}L${pts(cor)}L${f1(x + w)} ${f1(fy(0))}Z" fill="${col}" opacity=".16"/>`;
+    b += `<path d="M${pts(hp)}" fill="none" stroke="${orange}" stroke-width="1.5"/>`;
+    b += `<path d="M${pts(tgt)}" fill="none" stroke="${C.dim}" stroke-width="1.4" stroke-dasharray="5 4"/>`;
+    b += `<path d="M${pts(cor)}" fill="none" stroke="${col}" stroke-width="2"/>`;
+    b += `<path d="M${pts(f => hp(f) + cor(f) + 0.25 * Math.sin(Math.log(f) * 9))}" fill="none" stroke="${green}" stroke-width="1.8"/>`;
+    [['DT 770 Pro 80 Ohm', orange, ''], ['Target: Arctis 7 Wireless (2017)', C.dim, 'd'], ['Correction', col, ''], ['Result', green, '']].forEach(([t, c, d], i) => {
+      const lx = x + 8 + (i % 2) * 150, ly = y + 6 + Math.floor(i / 2) * 16;
+      b += (d ? L(lx, ly, lx + 14, ly, c, 2, 'stroke-dasharray="4 3"') : R(lx, ly - 1.5, 14, 3, 1.5, c)) + T(lx + 20, ly + 3.5, t, { size: 9, weight: 600 });
+    });
+    b += T(gx, H - 30, '9 filters (zero latency), deviation 3.3 → 0.3 dB. Loudness −5.7 dB.', { size: 10 });
+    b += T(gx, H - 14, 'Built-in measurements: AutoEq project (MIT), oratory1990, Rtings, Kuulokenurkka and others.', { size: 8, fill: C.faint });
+    return [W, H, b, 'Headphone Correction window: DT 770 Pro 80 Ohm should sound like the Arctis 7 Wireless; headphone curve, target, correction and result'];
+  };
   // Stem Separator window (Inspector.cpp StemsPanel): latency mode, latency + GPU load, one fader per stem with M/S, models.
   FX.stems = () => {
     const W = 680, H = 420, col = '#56e0c8';
