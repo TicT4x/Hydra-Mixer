@@ -8,7 +8,6 @@
 #include "CorrectionView.h"
 #include "DevicePicker.h"
 #include "SceneEditor.h"
-#include "SidePanel.h"
 #include "state/UndoHistory.h"
 #include "Tour.h"
 #include "Welcome.h"
@@ -80,8 +79,13 @@ public:
     void mouseUp (const juce::MouseEvent& e) override  { if (e.mouseWasClicked() && onClick) onClick(); }
 
 private:
-    float load = 0, peakLoad = 0, alarm = 0;
+    /** Glides the bars to the values of the last setLoad (VBlank, only while they move). */
+    void frame (double timestamp);
+    float load = 0, peakLoad = 0, alarm = 0;          // targets (4x per second)
+    float shownLoad = 0, shownPeak = 0;               // drawn, glide towards the targets
+    double lastFrame = 0.0;
     bool hover = false;
+    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
 };
 
 /** "Update 0.9" in the top bar while a new version is available (Updater); shows the download progress. */
@@ -193,6 +197,7 @@ public:
     void stripLayoutChanged();
     void openMidiMap();
     void openLatencyFinder();
+    void openRecorderWindow();
     void openDspView();
     void openSyncDelay();
     void openCableManager();
@@ -201,7 +206,7 @@ public:
     /** Device selection window of a channel (input source / bus output); one window, follows the last strip. */
     void openDevicePicker (int channel);
     void toggleLearnMode();
-    /** Shows / hides the scene sidebar on the left. */
+    /** Folds the scene panel at the right edge out / in (Ctrl+Alt+S). */
     void toggleSceneEditor();
     /** Folds the effect browser at the right edge out / in (Ctrl+Alt+B). */
     void toggleEffectBrowser();
@@ -227,6 +232,7 @@ public:
     /** Screenshot tool (tools/Shots.cpp) only: select a channel / advance the meters without a window and v-sync. */
     void demoSelect (int index)       { select (index); }
     UiContext& demoContext()          { return ctx; }
+    StripArea& demoStrips()           { return strips; }
     void demoMeterFrame (double t)    { meterFrame (t); }
     std::unique_ptr<juce::Component> demoStemsPanel (int input) { return makeStemsPanel (ctx, ctx.engine.inputs[(size_t) input]); }
     std::unique_ptr<juce::Component> demoUtilityPanel (int input) { return makeUtilityPanel (ctx, ctx.engine.inputs[(size_t) input].utilities[0]); }
@@ -299,8 +305,13 @@ private:
     TopBar top;
     StripArea strips;
     Inspector inspector;
-    std::unique_ptr<SceneSidebar> sceneBar;   // Tools > Scene Editor
-    std::unique_ptr<SidePanel> sidePanel;     // Settings > Display > Side panel, only while there is room (resized)
+    std::unique_ptr<SceneSidebar> sceneBar;   // scene panel at the right edge (prefs.scenePanel); sceneTab folds it in / out
+    BrowserTab sceneTab { "SCENES", true, juce::Colour(), "Scenes: snapshots of the mixer, recall with a click (Ctrl+Alt+S)" };
+    bool scenePanelOpen() const;
+    float sceneShown = -1.0f, sceneGlideFrom = 0.0f;       // 0 = folded in .. 1 = out (glides)
+    double sceneGlideStart = 0.0;
+    bool sceneGliding = false;
+    int sceneWidth() const { return (scenePanelOpen() ? SceneSidebar::kWidth : 0) + BrowserTab::kWidth + 4; }
     std::unique_ptr<EffectBrowser> browser;   // effect browser at the left edge (prefs.fxBrowser); browserTab folds it in / out
     BrowserTab browserTab;
     bool browserOpen() const;
@@ -308,7 +319,8 @@ private:
     float browserShown = -1.0f, browserGlideFrom = 0.0f;   // 0 = folded in .. 1 = out (glides)
     double browserGlideStart = 0.0;
     bool browserGliding = false;
-    juce::VBlankAttachment browserVBlank { this, [this] (double) { browserFrame(); } };
+    juce::VBlankAttachment browserVBlank { this, [this] (double) { browserFrame(); sceneFrame(); } };
+    void sceneFrame();
     int browserWidth() const { return (browserOpen() ? EffectBrowser::kWidth : 0) + BrowserTab::kWidth + 4; }
     /** Settings of an effect ("..." in its header: gate / denoiser / compressor) in their own window. */
     void openPanelWindow (std::unique_ptr<juce::Component> content, const juce::String& title);
@@ -323,7 +335,7 @@ private:
     uint32_t shownUpdate = ~0u;
     bool installWhenReady = false;   // "Update now": install as soon as the download is done
 
-    std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow, latencyWindow, dspWindow, syncWindow, deviceWindow, corrWindow, panelWindow, cableWindow;
+    std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow, latencyWindow, dspWindow, syncWindow, deviceWindow, corrWindow, panelWindow, cableWindow, recorderWindow;
     int shownSelBus = -1;     // bus selected with SEL as shown by the input faders
     uint32_t shownLayout = 0; // engine channel layout the strips were built for
     float uiScale = 1.0f;

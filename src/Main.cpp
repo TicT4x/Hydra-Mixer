@@ -266,7 +266,7 @@ public:
         {
             // Windows "Apps" > Uninstall, or a downloaded release: only the installer window, no mixer.
             juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
-            theme::apply (theme::Style::deep);
+            theme::apply (theme::Style::dark);
             lnf.refreshColours();
             const bool uninstalling = commandLine.contains (install::kUninstallArgument);
             auto* panel = new InstallerPanel (uninstalling ? InstallerPanel::Mode::uninstall : InstallerPanel::Mode::install);
@@ -328,6 +328,7 @@ public:
         };
 
         theme::fontScale = session->prefs.fontScale; // before the UI creates its labels
+        theme::glow = true;   // no longer an option (13.11.)
         theme::apply (theme::styleFromName (session->prefs.theme));
         lnf.refreshColours();
         // The window starts exactly as wide as the channels need, so the dividers go to their default places (no gap).
@@ -497,7 +498,7 @@ private:
     {
         const auto& p = session->prefs;
         juce::String key;
-        key << (int) p.fitWindow << (int) p.horizontalStrips << (int) p.sidePanel << (int) p.adaptiveStrips
+        key << (int) p.fitWindow << (int) p.horizontalStrips << (int) p.adaptiveStrips
             << juce::String (p.uiScale, 3) << juce::String (p.fontScale, 3) << p.theme;
         return key;
     }
@@ -772,7 +773,7 @@ private:
         { UiActivity a ("app timer: master retry"); retryMaster(); }
         { UiActivity a ("app timer: pairing"); tickPairing(); }
         deviceNamer->useTask = session->prefs.renameNoPrompt;
-        if (! session->waitingForMaster) { UiActivity a ("app timer: device names"); deviceNamer->tick (session->prefs.renameDevices, session->prefs.vacAutoName); }
+        if (! session->waitingForMaster) { UiActivity a ("app timer: device names"); deviceNamer->tick (false, session->prefs.vacAutoName); }   // only VAC cables are renamed (13.11.); others get their old names back
         if (! session->waitingForMaster)
         {
             UiActivity a ("app timer: cable visibility");

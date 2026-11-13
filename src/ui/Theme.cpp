@@ -6,19 +6,98 @@ namespace hydra::theme
 void apply (Style s)
 {
     style = s;
-    const bool d = s == Style::deep;
-    bg       = juce::Colour (d ? 0xff0a0c10 : 0xff0d0f13);
-    panel    = juce::Colour (d ? 0xff13171e : 0xff151920);
-    panel2   = juce::Colour (d ? 0xff191e27 : 0xff1b2029);
-    raised   = juce::Colour (d ? 0xff212733 : 0xff232935);
-    outline  = juce::Colour (d ? 0xff262d3a : 0xff2a313e);
-    cardLine = d ? juce::Colours::transparentBlack : outline.withAlpha (0.6f);   // Deep: cards without a frame
-    textDim  = juce::Colour (d ? 0xff8f98a9 : 0xff8b94a5);
-    accentHw = juce::Colour (d ? 0xffa288ff : 0xff8d6cff);
+    const bool d = s != Style::legacy;
+    // Dark: slate with about half the blue of the earlier palette (user 13.11.: "too blue"), a step lighter.
+    // Darker: graphite, only a hint of blue. Legacy keeps its own colours.
+    struct Palette { juce::uint32 bg, panel, panel2, raised, outline, textDim; };
+    static constexpr Palette legacyP { 0xff0d0f13, 0xff151920, 0xff1b2029, 0xff232935, 0xff2a313e, 0xff8b94a5 };
+    static constexpr Palette darkP   { 0xff111317, 0xff1a1d22, 0xff21252b, 0xff2a2f36, 0xff30353e, 0xff929aa7 };
+    static constexpr Palette darkerP { 0xff0d0d0f, 0xff17181b, 0xff1d1e22, 0xff25272b, 0xff2c2e33, 0xff8f949e };
+    // Light ("Nebel", user 13.11.): bg = the gaps, panel = strips, panel2 = cards / selected, raised = buttons.
+    static constexpr Palette lightP  { 0xffe3e7ed, 0xfff5f6f8, 0xffffffff, 0xffe4e8ee, 0xffd3d9e1, 0xff586172 };
+    const bool l = s == Style::light;
+    const auto& p = s == Style::dark ? darkP : s == Style::darker ? darkerP : l ? lightP : legacyP;
+    bg       = juce::Colour (p.bg);
+    panel    = juce::Colour (p.panel);
+    panel2   = juce::Colour (p.panel2);
+    raised   = juce::Colour (p.raised);
+    outline  = juce::Colour (p.outline);
+    cardLine = l ? outline.withAlpha (0.8f) : d ? juce::Colours::transparentBlack : outline.withAlpha (0.6f);   // light: white cards need an edge
+    textDim  = juce::Colour (p.textDim);
+    text      = juce::Colour (l ? 0xff1b2130 : 0xffe8ebf1);
+    textFaint = juce::Colour (l ? 0xff8a93a3 : 0xff5a6273);
+
+    // Accents: on a light background the bright neon tones lose contrast, so they get darker, deeper versions.
+    auto pick = [l] (juce::uint32 dark, juce::uint32 bright) { return juce::Colour (l ? bright : dark); };
+    accentIn     = pick (0xff35d0f4, 0xff0e9cc4);
+    accentHw     = l ? juce::Colour (0xff7452ea) : juce::Colour (d ? 0xffa288ff : 0xff8d6cff);
+    accentVirt   = pick (0xffff6aa6, 0xffdb4687);
+    mute         = pick (0xffff4d5e, 0xffe0374a);
+    solo         = pick (0xffffc23f, 0xffd99410);
+    good         = pick (0xff3ee08f, 0xff17a862);
+    warn         = pick (0xffffa53d, 0xffe0811a);
+    learn        = pick (0xffffd400, 0xffd4a800);
+    fxEq         = pick (0xff35d0f4, 0xff0e9cc4);
+    fxGate       = pick (0xffffc23f, 0xffd18e0a);
+    fxComp       = pick (0xffff8f4d, 0xffe06a22);
+    fxLimiter    = pick (0xffff6a7d, 0xffde4258);
+    fxCorrection = pick (0xffa78bfa, 0xff7d5ce8);
+    fxUtility    = pick (0xffff6ac1, 0xffd9469d);
+    fxTranspose  = pick (0xffc77dff, 0xffa055e6);
+    fxStems      = pick (0xff56e0c8, 0xff16a890);
+    fxHeadphone  = pick (0xff7c9cff, 0xff4f72ea);
+    fx           = pick (0xff6cacfa, 0xff3b82e0);
 }
 
-Style styleFromName (const juce::String& name) { return name == "legacy" ? Style::legacy : Style::deep; }
-const char* styleName (Style s)                { return s == Style::legacy ? "legacy" : "default"; }
+Style styleFromName (const juce::String& name)
+{
+    if (name == "legacy") return Style::legacy;
+    if (name == "darker") return Style::darker;
+    if (name == "light")  return Style::light;
+    return Style::dark;   // "dark", the old "default", anything unknown
+}
+
+const char* styleName (Style s)
+{
+    switch (s)
+    {
+        case Style::legacy: return "legacy";
+        case Style::darker: return "darker";
+        case Style::light:  return "light";
+        default:            return "dark";
+    }
+}
+
+void drawSelectedTop (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c, bool vertical)
+{
+    const float reach = vertical ? juce::jmin (70.0f, r.getWidth() * 0.5f) : juce::jmin (90.0f, r.getHeight() * 0.45f);
+    // The same glow in every theme, only the colours differ (user 13.11.: "etwas weniger Glow", "in allen Themes gleich").
+    if (glow)
+    {
+        // Light falling from the line into the card: strong right below it, gone after `end`.
+        const float end = reach * 0.8f;
+        juce::ColourGradient fall (c.withAlpha (0.22f), r.getX(), r.getY(),
+                                   c.withAlpha (0.0f), vertical ? r.getX() + end : r.getX(), vertical ? r.getY() : r.getY() + end, false);
+        fall.addColour (0.25, c.withAlpha (0.09f));
+        g.setGradientFill (fall);
+        g.fillRect (vertical ? r.withWidth (end) : r.withHeight (end));
+    }
+    else
+    {
+        // Without glow only a faint wash, so the selection still reads at a glance.
+        g.setColour (c.withAlpha (0.05f));
+        g.fillRect (r);
+    }
+    g.setColour (c);
+    g.fillRect (vertical ? r.withWidth (kSelectedLine) : r.withHeight (kSelectedLine));
+    if (glow)
+    {
+        // A brighter core in the line, like a lit tube.
+        g.setColour (c.brighter (0.6f).withAlpha (0.45f));
+        g.fillRect (vertical ? r.withWidth (1.5f).translated (1.25f, 0.0f).reduced (0.0f, 2.0f)
+                             : r.withHeight (1.5f).translated (0.0f, 1.25f).reduced (2.0f, 0.0f));
+    }
+}
 
 LookAndFeel::LookAndFeel() { refreshColours(); }
 
@@ -54,7 +133,7 @@ void LookAndFeel::refreshColours()
     setColour (juce::TextEditor::highlightColourId, accentIn.withAlpha (0.3f));
     setColour (juce::Label::textColourId, text);
     setColour (juce::ListBox::backgroundColourId, panel);
-    setColour (juce::ScrollBar::thumbColourId, juce::Colour (0xff4a5366));
+    setColour (juce::ScrollBar::thumbColourId, juce::Colour (light() ? 0xffb3bbc7 : 0xff4a5366));
     setColour (juce::TabbedComponent::backgroundColourId, panel);
     setColour (juce::TabbedComponent::outlineColourId, juce::Colours::transparentBlack);
     setColour (juce::TabbedButtonBar::tabOutlineColourId, juce::Colours::transparentBlack);
@@ -487,9 +566,9 @@ juce::Rectangle<int> LookAndFeel::getTooltipBounds (const juce::String& tipText,
 void LookAndFeel::drawTooltip (juce::Graphics& g, const juce::String& text, int width, int height)
 {
     auto r = juce::Rectangle<float> ((float) width, (float) height).reduced (0.5f);
-    g.setColour (juce::Colour (0xff20252f));
+    g.setColour (light() ? panel2 : juce::Colour (0xff20252f));
     g.fillRoundedRectangle (r, 7.0f);
-    g.setColour (juce::Colour (0xff3a4354));
+    g.setColour (light() ? outline.darker (0.15f) : juce::Colour (0xff3a4354));
     g.drawRoundedRectangle (r, 7.0f, 1.0f);
     auto inner = r.reduced (kTipPadX, kTipPadY);
     if (icons::RouteTip route; icons::parseRouteTip (text, route))

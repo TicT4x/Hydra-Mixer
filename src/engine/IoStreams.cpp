@@ -1189,8 +1189,10 @@ std::vector<VirtualCable> findVirtualCables (const juce::StringArray& outs, cons
     std::vector<VirtualCable> cables;
     auto isCandidate = [] (const juce::String& n)
     {
+        // VB-Cable / Hi-Fi Cable / VB-Audio Point, Virtual Audio Cable, other virtual drivers with both sides.
+        // Voicemeeter is not a cable here (it is reached with Loopback).
         return ! n.containsIgnoreCase ("Voicemeeter")
-            && (n.containsIgnoreCase ("Cable") || n.containsIgnoreCase ("Virtual Audio"));
+            && (n.containsIgnoreCase ("Cable") || n.containsIgnoreCase ("Virtual") || n.containsIgnoreCase ("VB-Audio"));
     };
 
     for (auto& play : outs)
@@ -1208,6 +1210,15 @@ std::vector<VirtualCable> findVirtualCables (const juce::StringArray& outs, cons
         // Virtual Audio Cable style: identical name on both sides ("Line 1 (Virtual Audio Cable)")
         if (rec.isEmpty())
             for (auto& i : ins) if (i.equalsIgnoreCase (play)) rec = i;
+        // Any other pair of software endpoints with the same driver name in brackets, e.g. a renamed VB-Cable
+        // ("Game (VB-Audio Virtual Cable)" <-> "CABLE Output (VB-Audio Virtual Cable)"): only when the pair is unique.
+        if (rec.isEmpty() && tail.length() > 2)
+        {
+            int outsWithTail = 0, found = 0;
+            for (auto& o : outs) if (o.endsWithIgnoreCase (tail)) ++outsWithTail;
+            for (auto& i : ins) if (i.endsWithIgnoreCase (tail)) { rec = i; ++found; }
+            if (outsWithTail != 1 || found != 1) rec = {};
+        }
         if (rec.isEmpty()) continue;
 
         VirtualCable c;

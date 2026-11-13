@@ -24,6 +24,9 @@ public:
     const juce::String unit;
     juce::StringArray choices;   // non-empty: discrete choice parameter (value = index)
     bool persistent = true;      // false: not stored in the session (e.g. transport buttons)
+    /** Belongs to a recorder project (recorder track settings): saved in the project file, not in the session or
+        in scenes. Undo and copy / paste treat it like any other setting. */
+    bool project = false;
 
     float get() const noexcept            { return value.load (std::memory_order_relaxed); }
     bool isOn() const noexcept            { return get() >= 0.5f; }

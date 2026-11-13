@@ -4,7 +4,8 @@ namespace hydra
 {
 namespace
 {
-const juce::Colour kAccent = theme::solo;
+/** Plain, neutral grey instead of the earlier yellow (user, 13.11.: "not nice"); follows the theme (no static copy). */
+juce::Colour accent() { return theme::textDim; }
 constexpr int kRowH = 50;
 } // namespace
 
@@ -16,7 +17,7 @@ public:
     Row (SceneSidebar& o, int i) : index (i), owner (o)
     {
         auto* trigger = owner.bank.trigger (i);
-        go = std::make_unique<Toggle> (owner.ctx, *trigger, "GO", kAccent, Toggle::Icon::none);
+        go = std::make_unique<Toggle> (owner.ctx, *trigger, "GO", accent(), Toggle::Icon::none);
         go->setTooltip ("Recall this scene. Right-click: MIDI Learn / keyboard shortcut");
         addAndMakeVisible (*go);
         addAndMakeVisible (name);
@@ -24,7 +25,7 @@ public:
         name.setColour (juce::Label::textColourId, theme::text);
         name.setColour (juce::Label::backgroundWhenEditingColourId, theme::bg);
         name.setColour (juce::Label::textWhenEditingColourId, theme::text);
-        name.setColour (juce::Label::outlineWhenEditingColourId, kAccent);
+        name.setColour (juce::Label::outlineWhenEditingColourId, accent());
         name.setEditable (false, false, false);
         name.setInterceptsMouseClicks (false, false);
         name.onTextChange = [this] { owner.bank.rename (index, name.getText()); };
@@ -49,22 +50,22 @@ public:
     {
         auto r = getLocalBounds().toFloat().reduced (2.0f, 2.0f);
         const bool cur = owner.bank.getCurrent() == index;
-        g.setColour (cur ? kAccent.withAlpha (0.10f) : hover ? theme::raised.withAlpha (0.6f) : theme::panel2);
+        g.setColour (cur ? accent().withAlpha (0.10f) : hover ? theme::raised.withAlpha (0.6f) : theme::panel2);
         g.fillRoundedRectangle (r, 7.0f);
-        g.setColour (cur ? kAccent.withAlpha (0.8f) : theme::outline.withAlpha (0.6f));
+        g.setColour (cur ? accent().withAlpha (0.8f) : theme::outline.withAlpha (0.6f));
         g.drawRoundedRectangle (r, 7.0f, cur ? 1.4f : 1.0f);
 
         auto badge = juce::Rectangle<float> (8.0f, r.getCentreY() - 11.0f, 24.0f, 22.0f);
-        g.setColour (kAccent.withAlpha (cur ? 0.9f : 0.18f));
+        g.setColour (accent().withAlpha (cur ? 0.9f : 0.18f));
         g.fillRoundedRectangle (badge, 6.0f);
-        g.setColour (cur ? theme::bg : kAccent);
+        g.setColour (cur ? theme::bg : accent());
         g.setFont (theme::font (12.0f, true));
         g.drawText (juce::String (index + 1), badge, juce::Justification::centred);
 
         auto line = juce::Rectangle<int> (40, getHeight() / 2, go->getX() - 46, getHeight() / 2 - 6);
         if (cur && owner.differences > 0)
         {
-            g.setColour (theme::warn);
+            g.setColour (theme::text);
             g.setFont (theme::font (11.0f, true));
             g.drawText ("edited - not saved", line, juce::Justification::centredLeft);
         }
@@ -147,8 +148,8 @@ SceneSidebar::SceneSidebar (UiContext& c, SceneBank& b) : ctx (c), bank (b)
     keyChip.onClick  = [this] { if (auto* t = bank.trigger (bank.getCurrent()); t != nullptr && ctx.armHotkey) ctx.armHotkey (*t); };
     moreChip.onClick = [this] { if (bank.getCurrent() >= 0) showRowMenu (bank.getCurrent(), moreChip); };
 
-    prevBtn = std::make_unique<Toggle> (c, *c.engine.scenePrev, "< PREV", kAccent);
-    nextBtn = std::make_unique<Toggle> (c, *c.engine.sceneNext, "NEXT >", kAccent);
+    prevBtn = std::make_unique<Toggle> (c, *c.engine.scenePrev, "< PREV", accent());
+    nextBtn = std::make_unique<Toggle> (c, *c.engine.sceneNext, "NEXT >", accent());
     prevBtn->setTooltip ("Previous scene. Right-click: MIDI Learn / keyboard shortcut");
     nextBtn->setTooltip ("Next scene. Right-click: MIDI Learn / keyboard shortcut");
     addAndMakeVisible (*prevBtn);
@@ -197,7 +198,7 @@ void SceneSidebar::refreshState()
     differences = diff;
     shownCurrent = cur;
     saveChip.active = cur >= 0 && diff > 0;
-    saveChip.colour = saveChip.active ? theme::warn : theme::text;
+    saveChip.colour = theme::text;   // active (unsaved changes): highlighted, no extra colour
     for (auto* chip : { &saveChip, &revertChip, &learnChip, &keyChip, &moreChip })
     {
         chip->setEnabled (cur >= 0);
@@ -368,10 +369,10 @@ void SceneSidebar::paint (juce::Graphics& g)
     auto r = getLocalBounds().toFloat().reduced (4.0f, 2.0f);
     g.setColour (theme::panel);
     g.fillRoundedRectangle (r, 10.0f);
-    g.setColour (kAccent.withAlpha (0.35f));
+    g.setColour (theme::outline);
     g.drawRoundedRectangle (r, 10.0f, 1.0f);
 
-    g.setColour (kAccent);
+    g.setColour (theme::text);
     g.setFont (theme::font (15.0f, true));
     g.drawText ("Scenes", getLocalBounds().reduced (18, 0).removeFromTop (44), juce::Justification::centredLeft);
 
@@ -395,7 +396,7 @@ void SceneSidebar::paint (juce::Graphics& g)
     g.drawFittedText (cur >= 0 ? "Editing:  " + bank.get (cur).name : juce::String ("No scene selected"),
                       f.removeFromTop (18), juce::Justification::centredLeft, 1, 0.8f);
     g.setFont (theme::font (11.5f));
-    g.setColour (cur >= 0 && differences > 0 ? theme::warn : theme::textDim);
+    g.setColour (cur >= 0 && differences > 0 ? theme::text : theme::textDim);
     g.drawFittedText (cur < 0 ? juce::String ("Click a scene to recall and edit it.")
                       : differences > 0 ? juce::String (differences) + (differences == 1 ? " setting" : " settings")
                                               + " changed - Save keeps them in the scene"

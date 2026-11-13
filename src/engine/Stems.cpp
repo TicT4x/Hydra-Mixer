@@ -517,6 +517,8 @@ void Instance::prepare (double fs)
     wasReady = false;
     wetLast = 0.0f;
     lastMix.fill (StemMix::gain (1.0f));
+    for (auto& d : decor) d.prepare (fs);
+    decorRunning.fill (false);
     latencyNow = 0;
     latency.store (0);
     writtenShared.store (0);
@@ -615,6 +617,18 @@ void Instance::process (float* l, float* r, int n, const StemMix* mixIn, int m, 
         for (int c = 0; c < kStemChannels; ++c) st[c] = stem (c);
         std::array<float, numStems> pk {};
         const float inv = 1.0f / (float) n;
+        // Width: stems whose width is (or was) not 100 % need their own mixed signal; above 100 % the decorrelator runs.
+        std::array<bool, numStems> widthOn {}, decorOn {};
+        bool anyWidth = false;
+        for (int s = 0; s < numStems; ++s)
+        {
+            const float a = lastMix[(size_t) s].width, b = target[(size_t) s].width;
+            widthOn[(size_t) s] = std::abs (a - 1.0f) > 1.0e-4f || std::abs (b - 1.0f) > 1.0e-4f;
+            decorOn[(size_t) s] = a > 1.0f || b > 1.0f;
+            if (! decorOn[(size_t) s] && decorRunning[(size_t) s]) decor[(size_t) s].clear();
+            decorRunning[(size_t) s] = decorOn[(size_t) s];
+            anyWidth |= widthOn[(size_t) s];
+        }
         for (int i = 0; i < n; ++i)
         {
             const int64_t p = s0 + i;
@@ -628,23 +642,43 @@ void Instance::process (float* l, float* r, int n, const StemMix* mixIn, int m, 
             {
                 const auto& a = lastMix[(size_t) s];
                 const auto& b = target[(size_t) s];
-                g[s] = { a.ll + (b.ll - a.ll) * t, a.lr + (b.lr - a.lr) * t, a.rl + (b.rl - a.rl) * t, a.rr + (b.rr - a.rr) * t };
+                g[s] = { a.ll + (b.ll - a.ll) * t, a.lr + (b.lr - a.lr) * t, a.rl + (b.rl - a.rl) * t, a.rr + (b.rr - a.rr) * t,
+                         a.width + (b.width - a.width) * t };
             }
             const float dl = p >= 0 ? inL[at] : 0.0f, dr = p >= 0 ? inR[at] : 0.0f;
             const auto& R = g[rest];
             float ml = R.ll * dl + R.lr * dr, mr = R.rl * dl + R.rr * dr, restL = dl, restR = dr;
+            // Width of one stem from its mixed signal (lo, ro): the side signal scaled, above 1 plus the decorrelated
+            // mid as side (L and R still sum to the same mono signal).
+            auto widen = [&] (int s, float lo, float ro)
+            {
+                const float w = g[s].width;
+                const float mid = 0.5f * (lo + ro), side = 0.5f * (lo - ro);
+                float d = side * (w - 1.0f);
+                if (decorOn[(size_t) s])
+                {
+                    const float dec = decor[(size_t) s].process (mid);
+                    if (w > 1.0f) d += (w - 1.0f) * dec;
+                }
+                ml += d;
+                mr -= d;
+            };
+            const bool needRest = metering || (anyWidth && widthOn[rest]);
             for (int s = 0; s < kModelStems; ++s)
             {
                 const float sl = st[2 * s][sat], sr = st[2 * s + 1][sat];
                 ml += (g[s].ll - R.ll) * sl + (g[s].lr - R.lr) * sr;
                 mr += (g[s].rl - R.rl) * sl + (g[s].rr - R.rr) * sr;
-                if (metering)
+                if (anyWidth && widthOn[(size_t) s])
+                    widen (s, g[s].ll * sl + g[s].lr * sr, g[s].rl * sl + g[s].rr * sr);
+                if (metering) pk[(size_t) s] = juce::jmax (pk[(size_t) s], std::abs (sl), std::abs (sr));
+                if (needRest)
                 {
-                    pk[(size_t) s] = juce::jmax (pk[(size_t) s], std::abs (sl), std::abs (sr));
                     restL -= sl;
                     restR -= sr;
                 }
             }
+            if (anyWidth && widthOn[rest]) widen (rest, R.ll * restL + R.lr * restR, R.rl * restL + R.rr * restR);
             if (metering) pk[rest] = juce::jmax (pk[rest], std::abs (restL), std::abs (restR));
             l[i] = dl + wet * (ml - dl);
             r[i] = dr + wet * (mr - dr);

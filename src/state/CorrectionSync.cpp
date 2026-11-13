@@ -3,11 +3,12 @@
 
 namespace hydra
 {
-juce::Colour BusCorrectionTarget::colour() const { return index < kMaxInputs ? theme::accentIn : theme::busColour (index - kMaxInputs); }
+juce::Colour BusCorrectionTarget::colour() const { return index < kMaxInputs || isRecTrackChannel (index) ? theme::accentIn : theme::busColour (index - kMaxInputs); }
 
 CorrectionPoolSync::CorrectionPoolSync (Engine& e) : engine (e)
 {
-    for (int ch = 0; ch < kMaxInputs + kMaxBuses; ++ch)   // every channel can have corrections since 12.11.
+    for (int ch = 0; ch < kNumChannels; ++ch)   // every channel can have corrections since 12.11. (also recorder tracks)
+        if (isFxChannel (ch))   // not the recorder itself (index 32): it has no chain
         for (int k = 0; k < kFxInstances; ++k)
             outputs.emplace_back (std::make_unique<BusCorrectionTarget> (engine, ch, k), pool::Link (pool::kMixer));
     timerCallback();

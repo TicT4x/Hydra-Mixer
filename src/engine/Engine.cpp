@@ -100,7 +100,7 @@ void StemsFx::mixes (stems::StemMix* out) const noexcept
         }
         const float p = pan[i]->get();
         const float pl = p > 0.0f ? 1.0f - p : 1.0f, pr = p < 0.0f ? 1.0f + p : 1.0f;
-        out[k] = { g[k] * pl * ll, g[k] * pl * lr, g[k] * pr * rl, g[k] * pr * rr };
+        out[k] = { g[k] * pl * ll, g[k] * pl * lr, g[k] * pr * rl, g[k] * pr * rr, width[i]->get() * 0.01f };
     }
 }
 
@@ -137,6 +137,8 @@ Engine::Engine()
         inputs[(size_t) i].spectrum.preRing.allocate (2, 16384);
         inputs[(size_t) i].l.assign (kMaxBlock, 0.0f);
         inputs[(size_t) i].r.assign (kMaxBlock, 0.0f);
+        inputs[(size_t) i].recL.assign (kMaxBlock, 0.0f);
+        inputs[(size_t) i].recR.assign (kMaxBlock, 0.0f);
     }
     for (int b = 0; b < kMaxBuses; ++b)
     {
@@ -147,6 +149,41 @@ Engine::Engine()
         buses[(size_t) b].l.assign (kMaxBlock, 0.0f);
         buses[(size_t) b].r.assign (kMaxBlock, 0.0f);
     }
+    for (int t = 0; t < kMaxRecTracks; ++t)
+    {
+        auto& rt = recTracks[(size_t) t];
+        rt.index = t;
+        rt.name = "Track " + juce::String (t + 1);
+        rt.spectrum.ring.allocate (2, 8192);      // EQ window of a track (FFT 4096)
+        rt.spectrum.preRing.allocate (2, 8192);
+        rt.l.assign (kMaxBlock, 0.0f);
+        rt.r.assign (kMaxBlock, 0.0f);
+        trackL[(size_t) t] = rt.l.data();
+        trackR[(size_t) t] = rt.r.data();
+    }
+    // What the recorder needs from the mixer: names and kind of the recorded inputs, the tracks' processing.
+    recorder.inputName = [this] (int i) { return inputs[(size_t) i].name; };
+    recorder.inputIsMono = [this] (int i) { return inputs[(size_t) i].source.mono || inputs[(size_t) i].source.kind == IoTarget::Kind::None; };
+    recorder.renderTracks = [this] (float* const* l, float* const* r, int T, int n, bool mixer) { renderTracksOffline (l, r, T, n, mixer); };
+    recorder.resetTracks = [this] { for (auto& t : recTracks) resetTrackFx (t); };
+    recorder.trackLatency = [this] (int t)
+    {
+        const auto& rt = recTracks[(size_t) t];
+        return rt.plugins.getTotalLatency() + rt.dspLatency.load() + rt.stemsLatency.load() + rt.transposeLatency.load();
+    };
+    recorder.trackAudible = [this] (int t)
+    {
+        bool anySolo = false;
+        for (int k = 0; k < recorder.getNumTracks(); ++k) anySolo |= recTracks[(size_t) k].solo->isOn();
+        const auto& rt = recTracks[(size_t) t];
+        return anySolo ? rt.solo->isOn() : ! rt.mute->isOn();
+    };
+    recorder.needsRealtime = [this]
+    {
+        for (int t = 0; t < recorder.getNumTracks(); ++t)
+            if (recTracks[(size_t) t].plugins.hasBuiltin (Fx::stems) && recTracks[(size_t) t].stems.on->isOn()) return true;
+        return false;
+    };
     buses[0].output.kind = IoTarget::Kind::Master; // A1 = master device channels 1/2
     playL.assign (kMaxBlock, 0.0f);
     playR.assign (kMaxBlock, 0.0f);
@@ -162,6 +199,29 @@ Engine::~Engine()
     for (auto& s : inputs) { s.plugins.clear(); releaseStems (s); }
     stemsGraveyard.clear();
     for (auto& b : buses)  { b.plugins.clear(); releaseStems (b); }
+    for (auto& t : recTracks) { t.plugins.clear(); releaseStems (t); }
+}
+
+juce::String Engine::channelPrefix (int ch)
+{
+    if (isRecTrackChannel (ch)) return "rt" + juce::String (ch - kRecTrackBase + 1) + ".";
+    return ch < kMaxInputs ? "in" + juce::String (ch + 1) + "." : "bus." + busCode (ch - kMaxInputs) + ".";
+}
+
+juce::String Engine::channelName (int ch) const
+{
+    if (isRecTrackChannel (ch)) return recTracks[(size_t) (ch - kRecTrackBase)].name;
+    if (juce::isPositiveAndBelow (ch, kMaxInputs)) return inputs[(size_t) ch].name;
+    if (juce::isPositiveAndBelow (ch - kMaxInputs, kMaxBuses)) return buses[(size_t) (ch - kMaxInputs)].name;
+    return {};
+}
+
+bool Engine::isChannelActive (int ch) const noexcept
+{
+    if (isRecTrackChannel (ch)) return ch - kRecTrackBase < recorder.getNumTracks();
+    if (juce::isPositiveAndBelow (ch, kMaxInputs)) return isInputActive (ch);
+    if (juce::isPositiveAndBelow (ch - kMaxInputs, kMaxBuses)) return isBusActive (ch - kMaxInputs);
+    return false;
 }
 
 static void createCompParams (ParamRegistry& params, CompFx& c, const juce::String& idPrefix, const juce::String& namePrefix)
@@ -245,6 +305,8 @@ void Engine::createFxParams (ChannelFx& c, const juce::String& p, const juce::St
             st.mono[(size_t) k]  = &params.addToggle (sp + name.toLowerCase() + ".mono", n + "Stem Separator " + name + " Mono");
             st.pan[(size_t) k]   = &params.add (sp + name.toLowerCase() + ".pan", n + "Stem Separator " + name + " Pan", ParamType::Continuous,
                                                 linRange (-1, 1, 0.01f), 0.0f);
+            st.width[(size_t) k] = &params.add (sp + name.toLowerCase() + ".width", n + "Stem Separator " + name + " Width", ParamType::Continuous,
+                                                linRange (0, 200, 1.0f), 100.0f, " %");
         }
     }
     {
@@ -331,6 +393,23 @@ void Engine::createParams()
         bus.syncOn   = &params.addToggle (p + "sync", n + "Sync Delay Auto");
         bus.delayMs  = &params.add (p + "delay", n + "Sync Delay", ParamType::Continuous,
                                     linRange (0, (float) dsp::DelayLine::kMaxMs, 0.1f), 0.0f, " ms");
+    }
+
+    // Recorder tracks: like inputs without routing / Sync Delay. Project parameters (saved with the recording).
+    for (int t = 0; t < kMaxRecTracks; ++t)
+    {
+        auto& rt = recTracks[(size_t) t];
+        const auto p = channelPrefix (recTrackChannel (t));
+        const auto n = "Rec Track " + juce::String (t + 1) + " ";
+        const size_t first = params.all().size();
+        rt.gain = &params.add (p + "gain", n + "Fader", ParamType::Continuous, faderRange(), 0.0f, " dB");
+        rt.trim = &params.add (p + "trim", n + "Gain", ParamType::Continuous, linRange (-24, 24, 0.1f), 0.0f, " dB");
+        rt.pan  = &params.add (p + "pan", n + "Pan", ParamType::Continuous, linRange (-1, 1, 0.01f), 0.0f);
+        rt.mute = &params.addToggle (p + "mute", n + "Mute");
+        rt.solo = &params.addToggle (p + "solo", n + "Solo");
+        rt.mono = &params.addToggle (p + "mono", n + "Mono");
+        createFxParams (rt, p, n);
+        for (size_t i = first; i < params.all().size(); ++i) params.all()[i]->project = true;
     }
 
     for (int m = 0; m < stems::kNumModels; ++m)
@@ -1020,19 +1099,21 @@ void Engine::prepareChains()
 {
     for (auto& s : inputs) s.plugins.prepare (sampleRate, blockSize);
     for (auto& b : buses)  b.plugins.prepare (sampleRate, blockSize);
+    for (auto& t : recTracks) t.plugins.prepare (sampleRate, blockSize);
 }
 
 //==============================================================================
 std::vector<Fx> Engine::allowedFx (int ch) const
 {
     // Every effect everywhere, in the usual order of the channel's kind (where ensureBuiltins inserts them).
-    if (ch < kMaxInputs) return { Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::correction, Fx::headphone, Fx::limiter };
+    if (ch < kMaxInputs || isRecTrackChannel (ch))
+        return { Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::correction, Fx::headphone, Fx::limiter };
     return { Fx::correction, Fx::headphone, Fx::stems, Fx::transpose, Fx::denoiser, Fx::gate, Fx::utility, Fx::eq, Fx::comp, Fx::limiter };
 }
 
 std::vector<Fx> Engine::typicalFx (int ch) const
 {
-    if (ch < kMaxInputs) return { Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::limiter };
+    if (ch < kMaxInputs || isRecTrackChannel (ch)) return { Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::limiter };
     if (isHwBus (ch - kMaxInputs)) return { Fx::correction, Fx::headphone, Fx::utility, Fx::eq, Fx::comp, Fx::limiter };
     return { Fx::utility, Fx::eq, Fx::comp, Fx::limiter };
 }
@@ -1047,7 +1128,7 @@ juce::String Engine::fxPart (Fx f, int k)
 
 Param* Engine::fxOnParam (int ch, Fx f, int k) const
 {
-    if (! juce::isPositiveAndBelow (k, maxInstances (f)) || ! juce::isPositiveAndBelow (ch, kMaxInputs + kMaxBuses)) return nullptr;
+    if (! juce::isPositiveAndBelow (k, maxInstances (f)) || ! isFxChannel (ch)) return nullptr;
     const auto i = (size_t) k;
     const auto& c = fxOf (ch);
     switch (f)
@@ -1071,7 +1152,7 @@ std::vector<Param*> Engine::fxParams (int ch, Fx f, int k) const
     std::vector<Param*> out;
     auto* on = fxOnParam (ch, f, k);
     if (on == nullptr) return out;
-    const auto prefix = (ch < kMaxInputs ? "in" + juce::String (ch + 1) + "." : "bus." + busCode (ch - kMaxInputs) + ".") + fxPart (f, k) + ".";
+    const auto prefix = channelPrefix (ch) + fxPart (f, k) + ".";
     for (auto& p : params.all())
         if (p->id.startsWith (prefix)) out.push_back (p.get());
     return out;
@@ -1171,9 +1252,9 @@ void Engine::prepareDenoiser (DenoiserFx& d)
 
 void Engine::ensureBuiltins()
 {
-    for (int ch = 0; ch < kMaxInputs + kMaxBuses; ++ch)
+    for (int ch = 0; ch < kNumChannels; ++ch)
     {
-        if (ch < kMaxInputs ? ! isInputActive (ch) : ! isBusActive (ch - kMaxInputs)) continue;
+        if (! isFxChannel (ch) || ! isChannelActive (ch)) continue;
         auto& chain = chainFor (ch);
         const auto allowed = allowedFx (ch);
         // The former phase block (old session, scene, MIDI): Utility k with its phase inverted.
@@ -1210,6 +1291,8 @@ void Engine::ensureBuiltins()
         if (! isInputActive (i)) releaseStems (inputs[(size_t) i]);
     for (int b = 0; b < kMaxBuses; ++b)
         if (! isBusActive (b)) releaseStems (buses[(size_t) b]);
+    for (int t = recorder.getNumTracks(); t < kMaxRecTracks; ++t)
+        releaseStems (recTracks[(size_t) t]);
 }
 
 //==============================================================================
@@ -1405,7 +1488,7 @@ void Engine::setCorrection (int selectIndex, CorrectionProfile profile, int k)
 
 void Engine::setHeadphone (int ch, int k, const juce::String& from, const juce::String& to)
 {
-    if (! juce::isPositiveAndBelow (ch, kMaxInputs + kMaxBuses) || ! juce::isPositiveAndBelow (k, kFxInstances)) return;
+    if (! isFxChannel (ch) || ! juce::isPositiveAndBelow (k, kFxInstances)) return;
     auto& h = fxOf (ch).headphones[(size_t) k];
     auto& lib = hp::Library::get();
     h.from = from;
@@ -1444,7 +1527,8 @@ CorrectionProfile HeadphoneFx::output() const
 void Engine::updateHeadphones()
 {
     const auto now = callbackCount.load();
-    for (int ch = 0; ch < kMaxInputs + kMaxBuses; ++ch)
+    for (int ch = 0; ch < kNumChannels; ++ch)
+        if (isFxChannel (ch))
         for (auto& h : fxOf (ch).headphones)
     {
         // AMOUNT scales the fitted profile, GAIN / AUTO set its level.
@@ -1459,7 +1543,7 @@ void Engine::updateHeadphones()
 
 std::unique_ptr<juce::XmlElement> Engine::headphoneToXml (int ch, int k) const
 {
-    if (! juce::isPositiveAndBelow (ch, kMaxInputs + kMaxBuses) || ! juce::isPositiveAndBelow (k, kFxInstances)) return nullptr;
+    if (! isFxChannel (ch) || ! juce::isPositiveAndBelow (k, kFxInstances)) return nullptr;
     const auto& h = fxOf (ch).headphones[(size_t) k];
     if (h.from.isEmpty() && h.full.isEmpty()) return nullptr;
     auto x = std::make_unique<juce::XmlElement> ("HPCORR");
@@ -1473,7 +1557,7 @@ std::unique_ptr<juce::XmlElement> Engine::headphoneToXml (int ch, int k) const
 
 void Engine::headphoneFromXml (int ch, int k, const juce::XmlElement* x)
 {
-    if (! juce::isPositiveAndBelow (ch, kMaxInputs + kMaxBuses) || ! juce::isPositiveAndBelow (k, kFxInstances)) return;
+    if (! isFxChannel (ch) || ! juce::isPositiveAndBelow (k, kFxInstances)) return;
     if (x == nullptr) { setHeadphone (ch, k, {}, {}); return; }
     auto& h = fxOf (ch).headphones[(size_t) k];
     auto* c = x->getChildByName ("CORRECTION");
@@ -1630,13 +1714,15 @@ void Engine::timerCallback()
     ensureBuiltins();
     for (auto& s : inputs) s.transpose.tick (callbackCount.load(), running, sampleRate);
     for (auto& b : buses)  b.transpose.tick (callbackCount.load(), running, sampleRate);
+    for (auto& t : recTracks) t.transpose.tick (callbackCount.load(), running, sampleRate);
     updateDropoutLogs();
     updateOverloadLog();
     updateSyncDelays();
 
     const auto now = callbackCount.load();
-    for (int ch = 0; ch < kMaxInputs + kMaxBuses; ++ch)
-        for (int k = 0; k < kFxInstances; ++k) fxOf (ch).correctionAt (k).update (sampleRate, now, running);
+    for (int ch = 0; ch < kNumChannels; ++ch)
+        if (isFxChannel (ch))
+            for (int k = 0; k < kFxInstances; ++k) fxOf (ch).correctionAt (k).update (sampleRate, now, running);
     updateHeadphones();
     measureGraveyard.erase (std::remove_if (measureGraveyard.begin(), measureGraveyard.end(),
                                             [&] (const auto& r) { return now >= r.second || ! running; }),
@@ -1763,6 +1849,11 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
         prepareFx (b);
         b.delay.prepare (sampleRate);
         b.lastGain = 0;
+    }
+    for (auto& t : recTracks)
+    {
+        prepareFx (t);
+        t.lastTrim = 1; t.lastL = t.lastR = 0;
     }
     prepareChains();
 }
@@ -1899,6 +1990,7 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
 
     // 2. Input strips -> bus sums.
     const int micTap = micTapInput.load (std::memory_order_relaxed);
+    const bool recInputs = recorder.wantsInputs();
     for (int i = 0; i < kMaxInputs; ++i)
     {
         auto& s = inputs[(size_t) i];
@@ -1939,14 +2031,52 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
         {
             s.lastL = s.lastR = 0.0f;
             s.lastRoute.fill (0.0f);
+            if (recInputs && recorder.tapsInput (i))   // armed but nothing comes in: silence keeps the tracks aligned
+            {
+                std::memset (s.recL.data(), 0, (size_t) n * sizeof (float));
+                std::memset (s.recR.data(), 0, (size_t) n * sizeof (float));
+            }
             continue;
         }
         processStrip (s, L, R, n, anySolo, L == R, timed, busOpen);
     }
 
-    // 3. Recorder playback into the chosen buses.
+    // Recording inputs (multitrack recorder): the taps processStrip filled.
+    if (recInputs)
+    {
+        const auto t0 = timed ? now() : 0;
+        const float* tl[kMaxInputs];
+        const float* tr[kMaxInputs];
+        for (int i = 0; i < kMaxInputs; ++i) { tl[i] = inputs[(size_t) i].recL.data(); tr[i] = inputs[(size_t) i].recR.data(); }
+        recorder.pushInputs (tl, tr, n);
+        if (timed) addTicks (profile.recorder, now() - t0);
+    }
+
+    // 3. Recorder playback into the chosen buses: a single file, or the tracks of the loaded project, each through
+    //    its own strip (gain, effects, mono, pan, fader, mute / solo) and mixed.
     const auto recStart = timed ? now() : 0;
-    if (recorder.pullPlayback (playL.data(), playR.data(), n))
+    bool havePlayback = recorder.pullPlayback (playL.data(), playR.data(), n);
+    if (! havePlayback && recorder.getNumTracks() > 0)
+    {
+        tracksBusy.store (true, std::memory_order_seq_cst);
+        if (const int T = recorder.isExporting() ? 0 : recorder.pullTracks (trackL.data(), trackR.data(), n); T > 0)
+        {
+            bool anyTrackSolo = false;
+            for (int t = 0; t < T; ++t) anyTrackSolo |= recTracks[(size_t) t].solo->isOn();
+            std::memset (playL.data(), 0, (size_t) n * sizeof (float));
+            std::memset (playR.data(), 0, (size_t) n * sizeof (float));
+            for (int t = 0; t < T; ++t)
+            {
+                auto& rt = recTracks[(size_t) t];
+                processRecTrack (rt, n, anyTrackSolo, timed);
+                juce::FloatVectorOperations::add (playL.data(), rt.l.data(), n);
+                juce::FloatVectorOperations::add (playR.data(), rt.r.data(), n);
+            }
+            havePlayback = true;
+        }
+        tracksBusy.store (false, std::memory_order_release);
+    }
+    if (havePlayback)
     {
         const float lvl = dbToGain (recorder.level->get());
         for (int b = 0; b < kMaxBuses; ++b)
@@ -2228,6 +2358,15 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
     s.lastTrim = trim;
     s.preMeter.push (dsp::peak (l, n), dsp::peak (r, n));
 
+    // Multitrack recorder: Pre effects = here (after the Gain knob, before MONO and the effects), Post effects = after the chain.
+    const bool recTap = recorder.wantsInputs() && recorder.tapsInput (s.index);
+    const bool recTapFx = recTap && recorder.tapsWithEffects();
+    if (recTap && ! recTapFx)
+    {
+        std::memcpy (s.recL.data(), l, (size_t) n * sizeof (float));
+        std::memcpy (s.recR.data(), r, (size_t) n * sizeof (float));
+    }
+
     // Nothing of this channel can be heard (muted / another channel soloed, fader at -inf, not routed to a bus
     // that is heard) and it has faded out: skip its effects, Sync Delay and routing. Its meter shows the level
     // before the effects. Resuming starts from silence (fader and sends fade in, denoiser, Stems and Transpose
@@ -2244,7 +2383,7 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
             if (fadingOut && s.lastRoute[(size_t) b] != 0.0f) heard = true;
             else if (faderOpen && s.route[(size_t) b]->isOn() && dbToGain (s.send[(size_t) b]->get()) > 0.0f) heard = true;
         }
-        if (! heard && ! fxWatched (s))
+        if (! heard && ! fxWatched (s) && ! recTapFx)   // recorded with effects: they keep running
         {
             s.fxIdle.store (true, std::memory_order_relaxed);
             const float fader = dbToGain (s.gain->get());
@@ -2274,19 +2413,25 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
     {
         lap (DspTimes::other);
         runFxChain (s, l, r, n, timed, ! monoSource);
+        if (recTapFx)
+        {
+            std::memcpy (s.recL.data(), l, (size_t) n * sizeof (float));
+            std::memcpy (s.recR.data(), r, (size_t) n * sizeof (float));
+        }
         mark = timed ? juce::Time::getHighResolutionTicks() : 0;
         // Sync Delay (aligns this input with slower ones); nothing to do while it is 0.
         s.delay.process (l, r, n, delaySamples (s.index));
     };
-    const bool post = s.fxPost->isOn();
-    if (! post) runChain();
-
+    // MONO comes first (13.11., wish of the user): stereo effects after it work again (a reverb or Utility width
+    // makes the mono channel wide). For a mono result at the end: Utility (Mono) as the last block, or the output.
     if (s.mono->isOn())
     {
         juce::FloatVectorOperations::add (l, r, n);
         juce::FloatVectorOperations::multiply (l, 0.5f, n);
         std::memcpy (r, l, (size_t) n * sizeof (float));
     }
+    const bool post = s.fxPost->isOn();
+    if (! post) runChain();
 
     const bool silent = anySolo ? ! s.solo->isOn() : s.mute->isOn();   // a soloed channel plays even if muted
     const float pan = s.pan->get();
@@ -2333,6 +2478,90 @@ void Engine::processStrip (InputStrip& s, const float* srcL, const float* srcR, 
     lap (DspTimes::other);
 }
 
+void Engine::processRecTrack (RecTrack& t, int n, bool anySolo, bool timed) noexcept
+{
+    float* l = t.l.data();
+    float* r = t.r.data();
+    const float trim = dbToGain (t.trim->get(), -100.0f);
+    dsp::applyRamp (l, n, t.lastTrim, trim);
+    dsp::applyRamp (r, n, t.lastTrim, trim);
+    t.lastTrim = trim;
+
+    const bool silent = anySolo ? ! t.solo->isOn() : t.mute->isOn();   // a soloed track plays even if muted
+    const float pan = t.pan->get();
+    const float fader = dbToGain (t.gain->get());
+    const float panL = pan > 0.0f ? 1.0f - pan : 1.0f;
+    const float panR = pan < 0.0f ? 1.0f + pan : 1.0f;
+
+    // Not heard and faded out: the effects pause (like an input that is not heard).
+    if ((silent || fader <= 0.0f) && t.lastL == 0.0f && t.lastR == 0.0f && ! fxWatched (t))
+    {
+        t.fxIdle.store (true, std::memory_order_relaxed);
+        t.meter.push (dsp::peak (l, n) * fader * panL, dsp::peak (r, n) * fader * panR);
+        t.meter.muted.store (silent, std::memory_order_relaxed);
+        pauseFx (t);
+        std::memset (l, 0, (size_t) n * sizeof (float));
+        std::memset (r, 0, (size_t) n * sizeof (float));
+        return;
+    }
+    t.fxIdle.store (false, std::memory_order_relaxed);
+
+    if (t.mono->isOn())   // before the effects, like the inputs
+    {
+        juce::FloatVectorOperations::add (l, r, n);
+        juce::FloatVectorOperations::multiply (l, 0.5f, n);
+        std::memcpy (r, l, (size_t) n * sizeof (float));
+    }
+    const bool post = t.fxPost->isOn();
+    if (! post) runFxChain (t, l, r, n, timed, true);
+    if (silent) t.meter.push (dsp::peak (l, n) * fader * panL, dsp::peak (r, n) * fader * panR);
+    t.meter.muted.store (silent, std::memory_order_relaxed);
+    const float g = silent ? 0.0f : fader;
+    dsp::applyRamp (l, n, t.lastL, g * panL);
+    dsp::applyRamp (r, n, t.lastR, g * panR);
+    t.lastL = g * panL;
+    t.lastR = g * panR;
+    if (post) runFxChain (t, l, r, n, timed, true);
+    if (! silent) t.meter.push (dsp::peak (l, n), dsp::peak (r, n));
+}
+
+void Engine::renderTracksOffline (float* const* l, float* const* r, int T, int n, bool withMixer) noexcept
+{
+    if (! withMixer) return;
+    while (tracksBusy.load (std::memory_order_seq_cst)) juce::Thread::yield();   // the audio thread let go of them
+    bool anySolo = false;
+    for (int t = 0; t < T; ++t) anySolo |= recTracks[(size_t) t].solo->isOn();
+    for (int t = 0; t < T; ++t)
+    {
+        auto& rt = recTracks[(size_t) t];
+        for (int done = 0; done < n;)
+        {
+            const int m = juce::jmin (kMaxBlock, n - done);
+            std::memcpy (rt.l.data(), l[t] + done, (size_t) m * sizeof (float));
+            std::memcpy (rt.r.data(), r[t] + done, (size_t) m * sizeof (float));
+            processRecTrack (rt, m, anySolo, false);
+            std::memcpy (l[t] + done, rt.l.data(), (size_t) m * sizeof (float));
+            std::memcpy (r[t] + done, rt.r.data(), (size_t) m * sizeof (float));
+            done += m;
+        }
+    }
+}
+
+void Engine::resetTrackFx (RecTrack& t) noexcept
+{
+    // Before / after an export: the effects start like switched on (no tails of the playback before).
+    pauseFx (t);
+    for (int k = 0; k < kFxInstances; ++k)
+    {
+        t.eqs[(size_t) k].prepare();
+        t.gates[(size_t) k].dsp.prepare (sampleRate);
+        t.comps[(size_t) k].dsp.prepare (sampleRate);
+        t.limiters[(size_t) k].dsp.prepare (sampleRate);
+        t.utilities[(size_t) k].dsp.prepare (sampleRate);
+    }
+    t.lastTrim = 1; t.lastL = t.lastR = 0;
+}
+
 void Engine::processBus (Bus& b, int n, bool timed, bool used) noexcept
 {
     auto mark = timed ? juce::Time::getHighResolutionTicks() : 0;
@@ -2364,8 +2593,14 @@ void Engine::processBus (Bus& b, int n, bool timed, bool used) noexcept
     }
     b.fxIdle.store (false, std::memory_order_relaxed);
 
-    // Effect chain (runFxChain) in the order the user set: before mono and the fader (PRE, default) or after them
-    // (POST, fx.post: e.g. a limiter that also catches the fader).
+    // MONO first, then the effect chain (runFxChain) in the order the user set: before the fader (PRE, default) or
+    // after it (POST, fx.post: e.g. a limiter that also catches the fader).
+    if (b.mono->isOn())
+    {
+        juce::FloatVectorOperations::add (l, r, n);
+        juce::FloatVectorOperations::multiply (l, 0.5f, n);
+        std::memcpy (r, l, (size_t) n * sizeof (float));
+    }
     auto runChain = [&]
     {
         lap (DspTimes::other);
@@ -2374,13 +2609,6 @@ void Engine::processBus (Bus& b, int n, bool timed, bool used) noexcept
     };
     const bool post = b.fxPost->isOn();
     if (! post) runChain();
-
-    if (b.mono->isOn())
-    {
-        juce::FloatVectorOperations::add (l, r, n);
-        juce::FloatVectorOperations::multiply (l, 0.5f, n);
-        std::memcpy (r, l, (size_t) n * sizeof (float));
-    }
 
     const bool muted = b.mute->isOn();
     const float fader = dbToGain (b.gain->get());

@@ -7,7 +7,7 @@ namespace
 {
 juce::String prefixOf (int ch)
 {
-    return ch < kMaxInputs ? "in" + juce::String (ch + 1) + "." : "bus." + busCode (ch - kMaxInputs) + ".";
+    return Engine::channelPrefix (ch);
 }
 
 /** Id part of instance k of a built-in effect including the channel prefix ("in1.gate2"). */
@@ -18,7 +18,7 @@ std::unique_ptr<juce::XmlElement> newClip (What w, int ch)
     auto xml = std::make_unique<juce::XmlElement> ("HYDRACLIP");
     xml->setAttribute ("version", 2);
     xml->setAttribute ("what", w == What::fx ? "fx" : w == What::chain ? "chain" : "channel");
-    xml->setAttribute ("kind", ch < kMaxInputs ? "input" : "bus");
+    xml->setAttribute ("kind", ch < kMaxInputs ? "input" : isRecTrackChannel (ch) ? "track" : "bus");
     return xml;
 }
 
@@ -89,7 +89,7 @@ int freeInstance (const Engine& e, int ch, Fx f)
 {
     const auto allowed = e.allowedFx (ch);
     if (std::find (allowed.begin(), allowed.end(), f) == allowed.end()) return -1;
-    const auto& chain = ch < kMaxInputs ? e.inputs[(size_t) ch].plugins : e.buses[(size_t) (ch - kMaxInputs)].plugins;
+    const auto& chain = e.chainFor (ch);
     for (int k = 0; k < Engine::maxInstances (f); ++k)
         if (! chain.hasBuiltin (f, k)) return k;
     return -1;
@@ -97,7 +97,7 @@ int freeInstance (const Engine& e, int ch, Fx f)
 
 const PluginChain& chainOf (const Engine& e, int ch)
 {
-    return ch < kMaxInputs ? e.inputs[(size_t) ch].plugins : e.buses[(size_t) (ch - kMaxInputs)].plugins;
+    return e.chainFor (ch);
 }
 } // namespace
 
@@ -247,8 +247,9 @@ std::unique_ptr<juce::XmlElement> copyChannel (const Engine& e, int ch)
 {
     auto xml = newClip (What::channel, ch);
     const bool input = ch < kMaxInputs;
-    xml->setAttribute ("name", input ? e.inputs[(size_t) ch].name : e.buses[(size_t) (ch - kMaxInputs)].name);
-    xml->addChildElement ((input ? e.inputs[(size_t) ch].source : e.buses[(size_t) (ch - kMaxInputs)].output).toXml ("IO").release());
+    xml->setAttribute ("name", e.channelName (ch));
+    if (! isRecTrackChannel (ch))
+        xml->addChildElement ((input ? e.inputs[(size_t) ch].source : e.buses[(size_t) (ch - kMaxInputs)].output).toXml ("IO").release());
     const auto prefix = prefixOf (ch);
     for (auto& suffix : channelSuffixes (e, ch))
         if (auto* p = e.params.find (prefix + suffix)) addParam (*xml, suffix, p->get());
@@ -387,7 +388,8 @@ bool pasteChain (Engine& e, int ch, const juce::XmlElement& clip)
 
 bool canPasteChannel (const juce::XmlElement* clip, int ch)
 {
-    return whatOf (clip) == What::channel && (clip->getStringAttribute ("kind") == "input") == (ch < kMaxInputs);
+    const auto kind = ch < kMaxInputs ? "input" : isRecTrackChannel (ch) ? "track" : "bus";
+    return whatOf (clip) == What::channel && clip->getStringAttribute ("kind") == kind;
 }
 
 bool pasteChannel (Engine& e, int ch, const juce::XmlElement& clip)

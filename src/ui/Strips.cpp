@@ -300,7 +300,8 @@ void paintDeepStrip (juce::Graphics& g, juce::Component& strip, juce::Colour acc
     shape.addRoundedRectangle (r.getX(), r.getY(), r.getWidth(), r.getHeight(), 8.0f, 8.0f, tl, tr, bl, br);
     juce::Graphics::ScopedSaveState clip (g);
     g.reduceClipRegion (shape);
-    // Selected: only slightly lighter (the buttons stay visible on it), plus a frame in the group colour.
+    // Selected (user 13.11.): slightly lighter, the line on top thicker and (with glow) lighting the strip from
+    // there; no frame any more.
     g.fillAll (selected ? theme::panel2 : theme::panel);
     if (! tint.isTransparent()) g.fillAll (tint);
     if (after)
@@ -309,16 +310,12 @@ void paintDeepStrip (juce::Graphics& g, juce::Component& strip, juce::Colour acc
         g.fillRect (rows ? r.withTop (r.getBottom() - 1.0f) : r.withLeft (r.getRight() - 1.0f));
     }
     if (selected)
+        theme::drawSelectedTop (g, r, accent, rows);
+    else
     {
-        // Follows the rounded corners (a plain rectangle would be cut off by the clip there).
-        const auto f = r.reduced (0.75f);
-        juce::Path frame;
-        frame.addRoundedRectangle (f.getX(), f.getY(), f.getWidth(), f.getHeight(), 7.25f, 7.25f, tl, tr, bl, br);
-        g.setColour (accent.withAlpha (0.6f));
-        g.strokePath (frame, juce::PathStrokeType (1.5f));
+        g.setColour (accent);
+        g.fillRect (rows ? r.withWidth (2.0f) : r.withHeight (2.0f));
     }
-    g.setColour (accent);
-    g.fillRect (rows ? r.withWidth (2.0f) : r.withHeight (2.0f));
 }
 
 /** Rows: name column, routing button cell, the switches at the right end (the same width in input and bus rows,
@@ -673,7 +670,7 @@ BusStripView::BusStripView (UiContext& c, int i)
     output.onClick = [this] { ctx.select (busSelectIndex (index)); if (ctx.openDevicePicker) ctx.openDevicePicker (busSelectIndex (index)); };
     output.setTooltip ("Select output device for this bus");
     sel.setTooltip ("SEL: the input faders set the level of each input on " + busLabel (i)
-                    + " (separate from the other buses). With monitoring enabled in Settings > General, "
+                    + " (separate from the other buses). With monitoring enabled in Settings > Audio Engine, "
                       "this bus is also heard on the monitor output.");
     styleSmallLabel (outputStatus);
     outputStatus.setColour (juce::Label::textColourId, theme::warn);
@@ -829,11 +826,66 @@ StripPane::StripPane()
     view.moved = [this] { if (onScroll) onScroll(); };
     holder.addAndMakeVisible (content);
     content.onMenu = [this] (juce::Point<int> p) { if (onBackgroundMenu) onBackgroundMenu (p); };
+    content.onClick = [this] (juce::Point<int> p) { if (onBackgroundClick) onBackgroundClick (p); };
     content.onPaint = [this] (juce::Graphics& g) { if (paintContent) paintContent (g); };
     addAndMakeVisible (view);
 }
 
 void StripPane::resized() { view.setBounds (getLocalBounds()); }
+
+void StripPane::View::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
+{
+    ParamControl::notePaneScrolled();   // faders / knobs passing under the mouse stay put meanwhile
+    const bool canH = getHorizontalScrollBar().isVisible(), canV = getVerticalScrollBar().isVisible();
+    if (w.isSmooth || w.isInertial || e.mods.isAltDown() || e.mods.isCtrlDown() || e.mods.isCommandDown() || (! canH && ! canV))
+    {
+        stopGlide();
+        juce::Viewport::mouseWheelMove (e, w);   // touchpads are smooth already; otherwise up to the parent
+        return;
+    }
+    // The same distances as juce::Viewport (single step 24 px), but reached in a glide.
+    auto scaled = [] (float d) { return d == 0.0f ? 0.0f : (d < 0.0f ? juce::jmin (d * 14.0f * 24.0f, -1.0f) : juce::jmax (d * 14.0f * 24.0f, 1.0f)); };
+    const float dx = scaled (w.deltaX), dy = scaled (w.deltaY);
+    if (! gliding)
+    {
+        target = shown = getViewPosition().toFloat();
+        lastSet = getViewPosition();
+    }
+    if (canH && (dx != 0.0f || e.mods.isShiftDown() || ! canV)) target.x -= dx != 0.0f ? dx : dy;
+    else if (canV && dy != 0.0f)                                 target.y -= dy;
+    if (auto* c = getViewedComponent())
+    {
+        target.x = juce::jlimit (0.0f, (float) juce::jmax (0, c->getWidth() - getViewWidth()), target.x);
+        target.y = juce::jlimit (0.0f, (float) juce::jmax (0, c->getHeight() - getViewHeight()), target.y);
+    }
+    if (! gliding && target.getDistanceFrom (shown) >= 0.5f)
+    {
+        gliding = true;
+        lastFrame = 0.0;
+        if (vblank == nullptr) vblank = std::make_unique<juce::VBlankAttachment> (this, [this] (double t) { glideFrame (t); });
+    }
+}
+
+void StripPane::View::glideFrame (double t)
+{
+    // Moved by someone else meanwhile (scroll bar, scrollToShow): the glide ends there.
+    // Ending the glide removes the attachment after this callback (never from inside it).
+    auto finish = [this]
+    {
+        gliding = false;
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<View> (this)] { if (safe != nullptr && ! safe->gliding) safe->vblank.reset(); });
+    };
+    if (! gliding) return;
+    if (getViewPosition() != lastSet) { finish(); return; }
+    const double dt = lastFrame > 0.0 ? juce::jlimit (0.0, 0.05, t - lastFrame) : 1.0 / 60.0;
+    lastFrame = t;
+    const float k = 1.0f - (float) std::exp (-dt / 0.055);   // ~0.15 s to arrive
+    shown += (target - shown) * k;
+    if (target.getDistanceFrom (shown) < 0.5f) shown = target;
+    lastSet = shown.roundToInt();
+    setViewPosition (lastSet);
+    if (shown == target) finish();
+}
 
 void StripPane::setContentSize (int w, int h, float s)
 {
@@ -1107,7 +1159,516 @@ private:
     Chip discard { "Discard", theme::text }, done { "Done", theme::good };
 };
 
-StripArea::~StripArea() = default;
+//==============================================================================
+/** A collapsed group: one narrow column per channel (one cell per channel in horizontal rows) with its number,
+    level, MUTE and (inputs) SOLO. Click = select the channel, double-click = show the strips again. */
+class StripArea::Summary final : public juce::Component, public juce::TooltipClient
+{
+public:
+    Summary (StripArea& o, int g) : owner (o), group (g)
+    {
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    }
+
+    void setChannels (const std::vector<int>& sels)
+    {
+        cells.clear();
+        for (int sel : sels)
+        {
+            auto& c = cells.emplace_back();
+            c.sel = sel;
+            c.meter = std::make_unique<MeterView> (sel < kMaxInputs ? owner.ctx.engine.inputs[(size_t) sel].meter
+                                                                    : owner.ctx.engine.buses[(size_t) (sel - kMaxInputs)].meter, true);
+            c.meter->horizontal = rows;
+            addAndMakeVisible (*c.meter);
+        }
+        resized();
+    }
+
+    void setRows (bool r)
+    {
+        if (r == rows) return;
+        rows = r;
+        for (auto& c : cells) c.meter->horizontal = r;
+        resized();
+    }
+
+    void update (float dt)
+    {
+        bool changed = false;
+        for (auto& c : cells)
+        {
+            c.meter->update (dt);
+            const bool m = muteOf (c.sel), s = soloOf (c.sel);
+            if (m != c.mute || s != c.solo) { c.mute = m; c.solo = s; changed = true; }
+        }
+        if (owner.ctx.selected != shownSel) { shownSel = owner.ctx.selected; changed = true; }
+        if (changed) repaint();
+    }
+
+    void resized() override
+    {
+        for (int k = 0; k < (int) cells.size(); ++k)
+        {
+            const auto r = cellArea (k);
+            if (rows) cells[(size_t) k].meter->setBounds (r.getX() + 32, r.getCentreY() - 5, juce::jmax (8, r.getWidth() - 32 - letters() - 8), 10);
+            else      cells[(size_t) k].meter->setBounds (r.getCentreX() - 5, r.getY() + 24, 10, juce::jmax (8, r.getHeight() - 24 - letters() - 6));
+        }
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        for (int k = 0; k < (int) cells.size(); ++k)
+        {
+            const auto& c = cells[(size_t) k];
+            const auto r = cellArea (k).toFloat();
+            const auto colour = colourOf (c.sel);
+            const bool sel = owner.ctx.selected == c.sel;
+            g.setColour (theme::panel2);
+            g.fillRoundedRectangle (r, 5.0f);
+            g.setColour (sel ? colour.withAlpha (0.9f) : theme::outline);
+            g.drawRoundedRectangle (r.reduced (0.5f), 5.0f, sel ? 1.5f : 1.0f);
+            g.setColour (colour.withAlpha (sel ? 1.0f : 0.75f));
+            if (rows) g.fillRoundedRectangle (r.withWidth (3.0f).reduced (0.0f, 5.0f), 1.5f);
+            else      g.fillRoundedRectangle (r.withHeight (3.0f).reduced (5.0f, 0.0f), 1.5f);
+
+            g.setFont (theme::font (rows ? 12.0f : 10.5f, true));
+            g.setColour (sel ? theme::text : theme::textDim);
+            const auto label = rows ? r.withWidth (30.0f).withTrimmedLeft (4.0f) : r.withHeight (22.0f).withTrimmedTop (4.0f);
+            g.drawFittedText (labelOf (c.sel), label.toNearestInt(), juce::Justification::centred, 1, 0.7f);
+
+            // MUTE (and SOLO): lit while on
+            auto letter = [&] (juce::Rectangle<float> b, const char* t, bool on, juce::Colour col)
+            {
+                g.setColour (on ? col : theme::bg.withAlpha (0.6f));
+                g.fillRoundedRectangle (b, 3.0f);
+                g.setColour (on ? theme::bg : theme::textFaint);
+                g.setFont (theme::font (9.5f, true));
+                g.drawText (t, b, juce::Justification::centred, false);
+            };
+            const bool input = c.sel < kMaxInputs;
+            if (rows)
+            {
+                const auto b = juce::Rectangle<float> (r.getRight() - 4.0f - 14.0f, r.getCentreY() - 7.0f, 14.0f, 14.0f);
+                letter (b, "M", c.mute, theme::mute);
+                if (input) letter (b.translated (-16.0f, 0.0f), "S", c.solo, theme::solo);
+            }
+            else
+            {
+                const auto b = juce::Rectangle<float> (r.getCentreX() - 8.0f, r.getBottom() - 4.0f - 14.0f, 16.0f, 14.0f);
+                letter (b, "M", c.mute, theme::mute);
+                if (input) letter (b.translated (0.0f, -16.0f), "S", c.solo, theme::solo);
+            }
+        }
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (const int k = cellAt (e.getPosition()); k >= 0)
+            owner.ctx.select (cells[(size_t) k].sel);
+        if (e.mods.isPopupMenu()) showGroupMenu (owner.ctx, group);
+    }
+
+    void mouseDoubleClick (const juce::MouseEvent&) override { owner.toggleCollapsed (group); }
+
+    juce::String getTooltip() override
+    {
+        const int k = cellAt (getMouseXYRelative());
+        if (k < 0) return {};
+        const int sel = cells[(size_t) k].sel;
+        auto& e = owner.ctx.engine;
+        juce::String t;
+        if (sel < kMaxInputs)
+        {
+            auto& in = e.inputs[(size_t) sel];
+            t << juce::String (sel + 1) << "  " << in.name;
+            juce::StringArray to;
+            for (int b = 0; b < kMaxBuses; ++b)
+                if (e.isBusActive (b) && in.route[(size_t) b] != nullptr && in.route[(size_t) b]->get() > 0.5f)
+                    to.add (e.buses[(size_t) b].name.isNotEmpty() ? e.buses[(size_t) b].name : busLabel (b));
+            t << "\n" << (to.isEmpty() ? juce::String ("not routed") : "-> " + to.joinIntoString (", "));
+        }
+        else
+            t << busLabel (sel - kMaxInputs) << "  " << e.buses[(size_t) (sel - kMaxInputs)].name;
+        if (cells[(size_t) k].mute) t << "\nmuted";
+        if (cells[(size_t) k].solo) t << "\nsolo";
+        return t + "\nClick: select.  Double-click: show the strips again.";
+    }
+
+    /** Lines of cells the horizontal rows need at this width. */
+    static int linesFor (int count, int width) noexcept
+    {
+        const int perLine = juce::jmax (1, width / kMiniCell);
+        return juce::jmax (1, (count + perLine - 1) / perLine);
+    }
+
+private:
+    struct Cell { int sel = 0; std::unique_ptr<MeterView> meter; bool mute = false, solo = false; };
+
+    int letters() const noexcept { return group == 0 ? 30 : 14; }   // room for S / M
+    juce::Rectangle<int> cellArea (int k) const
+    {
+        if (rows)
+        {
+            const int perLine = juce::jmax (1, getWidth() / kMiniCell);
+            return juce::Rectangle<int> ((k % perLine) * kMiniCell, (k / perLine) * kMiniLine, kMiniCell, kMiniLine).reduced (2);
+        }
+        return juce::Rectangle<int> (k * kMiniWidth, 0, kMiniWidth, getHeight()).reduced (2, 2);
+    }
+    int cellAt (juce::Point<int> p) const
+    {
+        for (int k = 0; k < (int) cells.size(); ++k)
+            if (cellArea (k).expanded (2).contains (p)) return k;
+        return -1;
+    }
+    bool muteOf (int sel) const
+    {
+        auto& e = owner.ctx.engine;
+        auto* m = sel < kMaxInputs ? e.inputs[(size_t) sel].mute : e.buses[(size_t) (sel - kMaxInputs)].mute;
+        return m != nullptr && m->get() > 0.5f;
+    }
+    bool soloOf (int sel) const
+    {
+        if (sel >= kMaxInputs) return false;
+        auto* s = owner.ctx.engine.inputs[(size_t) sel].solo;
+        return s != nullptr && s->get() > 0.5f;
+    }
+    static juce::Colour colourOf (int sel) { return sel < kMaxInputs ? theme::accentIn : theme::busColour (sel - kMaxInputs); }
+    static juce::String labelOf (int sel) { return sel < kMaxInputs ? juce::String (sel + 1) : busLabel (sel - kMaxInputs); }
+
+    StripArea& owner;
+    const int group;
+    std::vector<Cell> cells;
+    bool rows = false;
+    int shownSel = -1;
+};
+
+/** Symbol beside a selected group caption: collapse the group or pin it. */
+class StripArea::CaptionTool final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    CaptionTool (StripArea& o, int g, bool pinKind) : owner (o), group (g), pin (pinKind)
+    {
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        setWantsKeyboardFocus (false);
+        setMouseClickGrabsKeyboardFocus (false);
+        updateTooltip();
+    }
+
+    bool isOn() const
+    {
+        if (owner.ctx.session == nullptr) return false;
+        const int mask = pin ? owner.ctx.session->prefs.stripPinned : owner.ctx.session->prefs.stripCollapsed;
+        return ((mask >> group) & 1) != 0;
+    }
+
+    void updateTooltip()
+    {
+        if (pin) setTooltip (isOn() ? "Pinned: always shown in full, the other groups scroll. Click to unpin."
+                                    : "Pin: always show this group in full, the other groups scroll.");
+        else     setTooltip (isOn() ? "Show the strips again" : "Collapse to a narrow summary (level, mute, solo of each channel)");
+        repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto colour = owner.sections[group].colour;
+        const bool on = isOn();
+        auto r = getLocalBounds().toFloat().reduced (1.0f);
+        if (hover || on)
+        {
+            g.setColour (colour.withAlpha (on ? 0.22f : 0.12f));
+            g.fillRoundedRectangle (r, 5.0f);
+        }
+        const auto ink = on ? colour : hover ? theme::text : theme::textDim;
+        const auto c = r.getCentre();
+        const float u = r.getWidth() * 0.5f;
+        juce::Path p;
+        if (pin)
+        {
+            // Push pin: upright while pinned, tilted otherwise.
+            p.addRoundedRectangle (c.x - 0.34f * u, c.y - 0.72f * u, 0.68f * u, 0.22f * u, 0.08f * u);
+            p.addRectangle (c.x - 0.18f * u, c.y - 0.50f * u, 0.36f * u, 0.42f * u);
+            p.addRoundedRectangle (c.x - 0.46f * u, c.y - 0.10f * u, 0.92f * u, 0.18f * u, 0.08f * u);
+            p.addRectangle (c.x - 0.05f * u, c.y + 0.08f * u, 0.10f * u, 0.62f * u);
+            if (! on) p.applyTransform (juce::AffineTransform::rotation (0.75f, c.x, c.y));
+            g.setColour (ink);
+            g.fillPath (p);
+            return;
+        }
+        // Two chevrons at a bar: pointing at it = collapse, away from it = expand. Rows: one above the other.
+        const float a = 0.28f * u, depth = 0.26f * u;
+        p.startNewSubPath (c.x, c.y - 0.42f * u);
+        p.lineTo (c.x, c.y + 0.42f * u);
+        for (float side : { -1.0f, 1.0f })
+        {
+            const float tip = c.x + side * (on ? 0.70f * u : 0.20f * u);
+            const float back = on ? tip - side * depth : tip + side * depth;
+            p.startNewSubPath (back, c.y - a);
+            p.lineTo (tip, c.y);
+            p.lineTo (back, c.y + a);
+        }
+        if (owner.shownRows) p.applyTransform (juce::AffineTransform::rotation (juce::MathConstants<float>::halfPi, c.x, c.y));
+        g.setColour (ink);
+        g.strokePath (p, juce::PathStrokeType (1.7f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
+    void mouseDown (const juce::MouseEvent&) override  { owner.captionClick = true; }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (! getLocalBounds().contains (e.getPosition())) return;
+        if (pin) owner.togglePinned (group);
+        else     owner.toggleCollapsed (group);
+    }
+
+private:
+    StripArea& owner;
+    const int group;
+    const bool pin;
+    bool hover = false;
+};
+
+void StripArea::ClickElsewhere::mouseDown (const juce::MouseEvent&)
+{
+    if (owner.captionClick) { owner.captionClick = false; return; }
+    owner.clearCaptionSelection();
+}
+
+StripArea::~StripArea()
+{
+    removeMouseListener (&clickElsewhere);
+}
+
+int StripArea::pinMask() const noexcept
+{
+    return ctx.session != nullptr ? ctx.session->prefs.stripPinned & 7 : 0;
+}
+
+bool StripArea::collapsed (int g) const noexcept
+{
+    return ! reordering && ctx.session != nullptr && ((ctx.session->prefs.stripCollapsed >> g) & 1) != 0;
+}
+
+int StripArea::paneIndex (int g) const noexcept
+{
+    if (shownRows)
+    {
+        // One pane for the pinned groups, one for the others.
+        for (int k = 0; k < kGroups; ++k)
+            if (pinned (k) == pinned (g)) return k;
+        return 0;
+    }
+    if (! shownJoined || pinned (g)) return g;
+    int k = g;   // joined: neighbours that are not pinned share one pane (with one scroll bar)
+    while (k > 0 && ! pinned (k - 1)) --k;
+    return k;
+}
+
+int StripArea::captionTitleWidth (int g) const
+{
+    return collapsed (g) && ! shownRows ? sections[g].shortWidth : sections[g].captionWidth;
+}
+
+int StripArea::toolsWidth (int g) const
+{
+    // Grows with the selection (selAnim): the caption box, the symbols and the "+" glide open together.
+    const float base = pinned (g) ? (float) (kToolSize + 4) : 0.0f, full = (float) (2 * kToolSize + 6);
+    return juce::roundToInt (base + (full - base) * selAnim[g]);
+}
+
+void StripArea::placeTools (int g, juce::Rectangle<int> caption, int titleWidth, bool animated)
+{
+    const float a = reordering ? 0.0f : selAnim[g];
+    const int y = caption.getY() + (caption.getHeight() - kToolSize) / 2;
+    const int x0 = caption.getX() + titleWidth + 8;
+    auto put = [&] (CaptionTool& t, int x, float alpha)
+    {
+        if (alpha <= 0.01f) { t.setVisible (false); return; }
+        const juce::Rectangle<int> target (x, y, kToolSize, kToolSize);
+        if (animated && t.isVisible()) animator.moveTo (t, target, true);
+        else                           animator.place (t, target);
+        t.setAlpha (alpha);
+        // Vertical strips: the tools are children of this component and stay inside their pane like the caption.
+        const auto& pane = paneOf (g);
+        t.setVisible (shownRows || (target.getX() >= pane.getX() && target.getRight() <= pane.getRight()));
+    };
+    // Collapse fades in at the first place; a pin that is shown anyway slides over to make room for it.
+    put (*collapseTools[g], x0, a);
+    put (*pinTools[g], pinned (g) ? x0 + juce::roundToInt ((float) (kToolSize + 2) * a) : x0 + kToolSize + 2, pinned (g) ? 1.0f : a);
+}
+
+void StripArea::selectCaption (int g)
+{
+    if (reordering) g = -1;
+    if (g == captionSel) return;
+    captionSel = g;
+    if (g >= 0 && isShowing()) grabKeyboardFocus();   // Esc ends it
+    startCaptionGlide();
+}
+
+void StripArea::clearCaptionSelection()
+{
+    if (captionSel < 0) return;
+    captionSel = -1;
+    startCaptionGlide();
+}
+
+void StripArea::startCaptionGlide()
+{
+    if (! isShowing())
+    {
+        // Not on screen (no display frames): straight to the end.
+        for (int g = 0; g < kGroups; ++g) selAnim[g] = captionSel == g && ! reordering ? 1.0f : 0.0f;
+        placeCaptions();
+        repaint();
+        return;
+    }
+    captionGliding = true;
+    captionLastFrame = 0.0;
+    if (captionVBlank == nullptr)
+        captionVBlank = std::make_unique<juce::VBlankAttachment> (this, [this] (double t) { captionFrame (t); });
+}
+
+void StripArea::captionFrame (double t)
+{
+    if (! captionGliding) return;
+    const double dt = captionLastFrame > 0.0 ? juce::jlimit (0.0, 0.05, t - captionLastFrame) : 1.0 / 60.0;
+    captionLastFrame = t;
+    bool moving = false;
+    for (int g = 0; g < kGroups; ++g)
+    {
+        const float want = captionSel == g && ! reordering ? 1.0f : 0.0f;
+        const float step = (float) (dt / 0.16);   // 0.16 s open or closed
+        selAnim[g] = want > selAnim[g] ? juce::jmin (want, selAnim[g] + step) : juce::jmax (want, selAnim[g] - step);
+        moving = moving || selAnim[g] != want;
+    }
+    placeCaptions();
+    if (! moving)
+    {
+        // The attachment goes after this callback (never from inside it).
+        captionGliding = false;
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<StripArea> (this)]
+                                         { if (safe != nullptr && ! safe->captionGliding) safe->captionVBlank.reset(); });
+    }
+}
+
+void StripArea::placeCaptions()
+{
+    // Only the captions move: "+", symbols and box (the strips stay where they are).
+    if (shownRows)
+    {
+        for (int g = 0; g < kGroups; ++g) placeRowCaption (g, false);
+        for (int g = 0; g < kGroups; ++g) paneOf (g).getContent().repaint (sections[g].caption.withWidth (sections[g].caption.getWidth() + 80).expanded (8, 0));
+    }
+    else
+        layoutCaptions (false);
+}
+
+void StripArea::placeRowCaption (int g, bool animated)
+{
+    // Horizontal rows: caption (title, symbols, "+") of a group in its pane's content, at sec.caption's height.
+    static constexpr int maxStrips[kGroups] { kMaxInputs, kMaxHwBuses, kMaxVirtBuses };
+    auto& sec = sections[g];
+    const int tools = toolsWidth (g), y = sec.caption.getY();
+    sec.caption = { kPad + 6, y, sec.captionWidth + 10 + tools + kPlusSize + 6, kRowCaption };
+    auto& plus = *addButtons[g];
+    const juce::Rectangle<int> target (sec.caption.getX() + sec.captionWidth + 10 + tools, y + (kRowCaption - kPlusSize) / 2 + 1, kPlusSize, kPlusSize - 2);
+    if (animated && plus.isVisible()) animator.moveTo (plus, target, true);
+    else                              animator.place (plus, target);
+    plus.setVisible (! reordering && ! collapsed (g) && stripCount (g) < maxStrips[g]);
+    placeTools (g, sec.caption, sec.captionWidth, animated);
+}
+
+bool StripArea::keyPressed (const juce::KeyPress& k)
+{
+    if (k == juce::KeyPress::escapeKey && captionSel >= 0)
+    {
+        clearCaptionSelection();
+        return true;
+    }
+    return false;
+}
+
+void StripArea::toggleCollapsed (int g)
+{
+    if (ctx.session == nullptr) return;
+    ctx.session->prefs.stripCollapsed ^= 1 << g;
+    ctx.session->prefsVersion.fetch_add (1);   // stored with the session
+    collapseTools[g]->updateTooltip();
+    layout (true);
+    repaint();
+}
+
+void StripArea::togglePinned (int g)
+{
+    if (ctx.session == nullptr) return;
+    ctx.session->prefs.stripPinned ^= 1 << g;
+    ctx.session->prefsVersion.fetch_add (1);
+    pinTools[g]->updateTooltip();
+    layout (true);   // the panes change: placed directly
+    repaint();
+}
+
+void StripArea::applyCollapsed()
+{
+    for (int g = 0; g < kGroups; ++g)
+    {
+        const bool c = collapsed (g);
+        for (int k = 0; k < stripCount (g); ++k) stripAt (g, k)->setVisible (! c);
+        if (summaries[g] != nullptr)
+        {
+            summaries[g]->setRows (shownRows);
+            summaries[g]->setVisible (c);
+        }
+    }
+}
+
+void StripArea::mouseDown (const juce::MouseEvent& e)
+{
+    // Vertical strips: the captions are drawn here, above the panes.
+    if (shownRows || e.y < captionTop() || e.y >= captionTop() + kCaptionHeight) return;
+    for (int g = 0; g < kGroups; ++g)
+    {
+        const auto& pane = paneOf (g);
+        const auto& cap = sections[g].caption;
+        const juce::Rectangle<int> title (cap.getX() - 6, cap.getY(), captionTitleWidth (g) + 14, cap.getHeight());
+        if (! pane.isVisible() || ! title.contains (e.getPosition()) || e.x < pane.getX() || e.x >= pane.getRight()) continue;
+        captionClick = true;
+        if (e.mods.isPopupMenu()) showGroupMenu (ctx, g);
+        else                      selectCaption (captionSel == g ? -1 : g);
+        return;
+    }
+}
+
+int StripArea::groupAt (int pane, juce::Point<int> p) const
+{
+    int best = -1;
+    for (int k = 0; k < kGroups; ++k)
+    {
+        if (paneIndex (k) != pane) continue;
+        if (best < 0 || (shownRows ? p.y >= sections[k].caption.getY() : p.x >= sections[k].x - kPad)) best = k;
+    }
+    return juce::jmax (0, best);
+}
+
+void StripArea::paintOverChildren (juce::Graphics& g)
+{
+    // Horizontal rows with pinned groups: a line under their pane, the rest scrolls below it.
+    if (! shownRows || shownPinned == 0 || shownPinned == 7) return;
+    for (int k = 0; k < kGroups; ++k)
+        if (pinned (k))
+        {
+            const int y = paneOf (k).getBottom();
+            g.setColour (theme::outline);
+            g.fillRect (0, y, getWidth(), 1);
+            g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.22f), 0.0f, (float) y + 1.0f,
+                                                     juce::Colours::transparentBlack, 0.0f, (float) y + 7.0f, false));
+            g.fillRect (0, y + 1, getWidth(), 6);
+            return;
+        }
+}
 
 void StripArea::beginReorder()
 {
@@ -1204,11 +1765,20 @@ void StripArea::placeStrips (int group, juce::Component* except, bool animated)
         else          animator.place (*c, target);
     }
 
+    if (summaries[group] != nullptr && summaries[group]->isVisible())
+    {
+        // Collapsed: the summary takes the group's place (the strips are hidden).
+        summaries[group]->setBounds (shownRows ? juce::Rectangle<int> (sec.x, sec.y, sec.width, rowsGroupHeight (group, sec.width + 2 * kPad) - kRowCaption - kRowGroupGap)
+                                               : juce::Rectangle<int> (sec.x, sec.y, juce::jmax (1, count) * kMiniWidth, h));
+    }
+
     if (auto* layer = layers[group].get())
     {
+        bool sharesPane = false;
+        for (int g = 0; g < kGroups; ++g) sharesPane = sharesPane || (g != group && paneIndex (g) == paneIndex (group));
         // Sharing a pane, each group's layer covers only that group.
         layer->setBounds (shownRows   ? juce::Rectangle<int> (0, sec.y, paneOf (group).getContent().getWidth(), juce::jmax (1, count) * h)
-                        : shownJoined ? juce::Rectangle<int> (sec.x - kPad, 0, sec.width + 2 * kPad, h)
+                        : sharesPane  ? juce::Rectangle<int> (sec.x - kPad, 0, sec.width + 2 * kPad, h)
                                       : paneOf (group).getContent().getLocalBounds());
         layer->toFront (false);
         layer->repaint();
@@ -1217,9 +1787,19 @@ void StripArea::placeStrips (int group, juce::Component* except, bool animated)
 
 StripArea::StripArea (UiContext& c) : ctx (c)
 {
-    sections[0] = { "Inputs", theme::accentIn };
-    sections[1] = { "Hardware Outputs", theme::accentHw };
-    sections[2] = { "Virtual Outputs", theme::accentVirt };
+    sections[0] = { "Inputs", "Inputs", theme::accentIn };
+    sections[1] = { "Hardware Outputs", "Hardware", theme::accentHw };
+    sections[2] = { "Virtual Outputs", "Virtual", theme::accentVirt };
+    setWantsKeyboardFocus (true);              // Esc ends a caption selection
+    setMouseClickGrabsKeyboardFocus (false);   // focus only then
+    addMouseListener (&clickElsewhere, true);
+    for (int g = 0; g < kGroups; ++g)
+    {
+        collapseTools[g] = std::make_unique<CaptionTool> (*this, g, false);
+        pinTools[g] = std::make_unique<CaptionTool> (*this, g, true);
+        addChildComponent (*collapseTools[g]);
+        addChildComponent (*pinTools[g]);
+    }
     addIn.setTooltip ("Add an input channel");
     addHw.setTooltip ("Add a hardware output (H bus)");
     addVirt.setTooltip ("Add a virtual output (V bus)");
@@ -1229,14 +1809,25 @@ StripArea::StripArea (UiContext& c) : ctx (c)
         panes[g].onBackgroundMenu = [this, g] (juce::Point<int> p)
         {
             // Sharing a pane: the group whose part of the row (rows: of the list) was clicked.
-            const int group = shownRows    ? (p.y < sections[1].caption.getY() ? 0 : p.y < sections[2].caption.getY() ? 1 : 2)
-                            : ! shownJoined ? g : p.x < sections[1].x - kPad ? 0 : p.x < sections[2].x - kPad ? 1 : 2;
-            showGroupMenu (ctx, group);
+            showGroupMenu (ctx, groupAt (g, p));
         };
+        panes[g].onBackgroundClick = [this, g] (juce::Point<int> p)
+        {
+            // Horizontal rows: the captions are part of the content.
+            if (! shownRows) return;
+            for (int k = 0; k < kGroups; ++k)
+            {
+                const auto& cap = sections[k].caption;
+                if (paneIndex (k) != g || ! juce::Rectangle<int> (cap.getX() - 6, cap.getY(), sections[k].captionWidth + 14, cap.getHeight()).contains (p)) continue;
+                captionClick = true;
+                selectCaption (captionSel == k ? -1 : k);
+                return;
+            }
+        };
+        panes[g].paintContent = [this, g] (juce::Graphics& gr) { if (shownRows) paintRowCaptions (gr, g); };
         panes[g].onScroll = [this] { if (! layingOut && ! shownRows) layoutCaptions(); };
         addAndMakeVisible (panes[g]);
     }
-    panes[0].paintContent = [this] (juce::Graphics& g) { if (shownRows) paintRowCaptions (g); };
     for (int d = 0; d < kGroups - 1; ++d)
     {
         addAndMakeVisible (dividers[d]);
@@ -1282,8 +1873,10 @@ void StripArea::rebuild()
     hoverBus = -1;
     shownJoined = joined();
     shownRows = rowsMode();
+    shownPinned = pinMask();
+    for (auto& sum : summaries) sum.reset();
     attachPlusButtons();
-    panes[0].setVertical (shownRows);
+    for (auto& p : panes) p.setVertical (shownRows);
     auto& e = ctx.engine;
     for (int i = 0; i < kMaxInputs; ++i)
         if (e.isInputActive (i))
@@ -1300,13 +1893,26 @@ void StripArea::rebuild()
         }
     routesHw = numHw;
     routesVirt = numVirt;
+    for (int g = 0; g < kGroups; ++g)
+    {
+        std::vector<int> sels;
+        for (auto& st : inStrips) if (g == 0) sels.push_back (st->getSelectIndex());
+        for (size_t k = 0; k < busStrips.size(); ++k)
+            if (g == ((int) k < numHw ? 1 : 2)) sels.push_back (busStrips[k]->getSelectIndex());
+        summaries[g] = std::make_unique<Summary> (*this, g);
+        summaries[g]->setChannels (sels);
+        paneOf (g).getContent().addChildComponent (*summaries[g]);
+    }
     addIn.setVisible (e.numActiveInputs() < kMaxInputs);
     addHw.setVisible (numHw < kMaxHwBuses);
     addVirt.setVisible (numVirt < kMaxVirtBuses);
 
     const auto f = captionFont();
     for (auto& sec : sections)
+    {
         sec.captionWidth = juce::GlyphArrangement::getStringWidthInt (f, sec.title);
+        sec.shortWidth = juce::GlyphArrangement::getStringWidthInt (f, sec.shortTitle);
+    }
     layout (false);
     resizeGlide = false;
     auto glide = [&] (juce::Component& c, int sel)
@@ -1322,15 +1928,18 @@ void StripArea::rebuild()
     repaint();
 }
 
-int StripArea::groupWidth (const Section& sec, int strips, int w) const
+int StripArea::groupWidth (int g, int strips, int w) const
 {
+    const auto& sec = sections[g];
+    // Collapsed: the narrow columns, wide enough for the short caption and its symbols.
+    if (collapsed (g) && ! rowsMode()) return juce::jmax (strips * kMiniWidth, sec.shortWidth + 10 + 2 * kToolSize + 6);
     // Wide enough for the caption and its "+" button even with a single (or no) strip.
     return juce::jmax (strips * w, sec.captionWidth + 10 + kPlusSize + 8);
 }
 
 int StripArea::paneWidthFor (int group, int w) const
 {
-    return 2 * kPad + groupWidth (sections[group], stripCount (group), w);
+    return 2 * kPad + groupWidth (group, stripCount (group), w);
 }
 
 float StripArea::scaleFor (int paneHeight) const
@@ -1353,7 +1962,7 @@ int StripArea::idealWidthFor (int areaHeight) const
     const float s = scaleFor (areaHeight - captionTop() - kCaptionHeight - StripPane::kScrollBar);
     int total = 1;
     for (int g = 0; g < kGroups; ++g)
-        total += (int) std::ceil ((float) (2 * kPad + groupWidth (sections[g], stripCount (g), kStripWidth)) * s);
+        total += (int) std::ceil ((float) paneWidthFor (g, kStripWidth) * s);
     return total;
 }
 
@@ -1374,20 +1983,37 @@ int StripArea::rowControlsWidth() const
     return juce::jmax (InputStripView::rowControlsWidth (routesHw, routesVirt), BusStripView::rowControlsWidth());
 }
 
-int StripArea::rowsContentHeight() const
+int StripArea::rowsGroupHeight (int g, int width) const
+{
+    const int body = collapsed (g) ? Summary::linesFor (stripCount (g), width - 2 * kPad) * kMiniLine : stripCount (g) * kRowHeight;
+    return kRowCaption + body + kRowGroupGap;
+}
+
+int StripArea::rowsPaneHeight (int pane, int width) const
 {
     int h = 4;
     for (int g = 0; g < kGroups; ++g)
-        h += kRowCaption + stripCount (g) * kRowHeight + kRowGroupGap;
+        if (paneIndex (g) == pane) h += rowsGroupHeight (g, width);
+    return h;
+}
+
+int StripArea::rowsContentHeight() const
+{
+    const int w = idealWidthFor (0);
+    int h = 4;
+    for (int g = 0; g < kGroups; ++g)
+        h += rowsGroupHeight (g, w);
     return h;
 }
 
 void StripArea::attachPlusButtons()
 {
-    for (auto* b : addButtons)
+    for (int g = 0; g < kGroups; ++g)
     {
-        auto& parent = shownRows ? panes[0].getContent() : static_cast<juce::Component&> (*this);
-        if (b->getParentComponent() != &parent) parent.addChildComponent (b);
+        auto& parent = shownRows ? paneOf (g).getContent() : static_cast<juce::Component&> (*this);
+        juce::Component* parts[] { addButtons[g], collapseTools[g].get(), pinTools[g].get() };
+        for (auto* b : parts)
+            if (b != nullptr && b->getParentComponent() != &parent) parent.addChildComponent (b);
     }
 }
 
@@ -1395,59 +2021,84 @@ void StripArea::layoutRows (bool animated)
 {
     // One row per channel, the groups one below the other, each with its caption and "+". Rows stretch to the
     // width (longer faders); below the minimum they scroll sideways, and up / down when there are too many.
-    auto& pane = panes[0];
+    // Pinned groups have their own pane on top (it scrolls only when it would take more than 3/5 of the height).
     const int top = captionTop();
-    pane.setBounds (0, top, getWidth(), getHeight() - top);
-    const int contentH = rowsContentHeight();
-    const int minW = rowControlsWidth() + kMinRowFader + 6 + kRowValue + 2 * kPad;
-    const int w = juce::jmax (minW, pane.getWidth() - (contentH > pane.getHeight() ? StripPane::kScrollBar : 0));
-    pane.setContentSize (w, contentH, 1.0f);
-
-    const int maxStrips[kGroups] { kMaxInputs, kMaxHwBuses, kMaxVirtBuses };
-    int y = 4;
-    for (int g = 0; g < kGroups; ++g)
+    int ids[kGroups] {}, numPanes = 0;
+    auto addPane = [&] (int id) { for (int k = 0; k < numPanes; ++k) if (ids[k] == id) return; ids[numPanes++] = id; };
+    for (int g = 0; g < kGroups; ++g) if (pinned (g)) addPane (paneIndex (g));
+    for (int g = 0; g < kGroups; ++g) if (! pinned (g)) addPane (paneIndex (g));
+    for (int p = 0; p < kGroups; ++p)
     {
-        auto& sec = sections[g];
-        sec.caption = { kPad + 6, y, sec.captionWidth + 10 + kPlusSize + 6, kRowCaption };
-        auto& plus = *addButtons[g];
-        const juce::Rectangle<int> target (sec.caption.getX() + sec.captionWidth + 10, y + (kRowCaption - kPlusSize) / 2 + 1, kPlusSize, kPlusSize - 2);
-        if (animated && plus.isVisible()) animator.moveTo (plus, target, true);
-        else                              animator.place (plus, target);
-        plus.setVisible (! reordering && stripCount (g) < maxStrips[g]);
-        y += kRowCaption;
-        sec.x = kPad;
-        sec.y = y;
-        sec.width = w - 2 * kPad;
-        stripWidth[g] = sec.width;
-        stripHeight[g] = kRowHeight;
-        for (int k = 0; k < stripCount (g); ++k)
-        {
-            auto* c = stripAt (g, k);
-            if (auto* in = dynamic_cast<InputStripView*> (c)) in->setHorizontal (true);
-            else if (auto* bus = dynamic_cast<BusStripView*> (c)) bus->setHorizontal (true);
-        }
-        placeStrips (g, nullptr, animated);
-        y += stripCount (g) * kRowHeight + kRowGroupGap;
+        bool used = false;
+        for (int k = 0; k < numPanes; ++k) used = used || ids[k] == p;
+        panes[p].setVisible (used);
     }
-    pane.getContent().repaint();
+
+    const int minW = rowControlsWidth() + kMinRowFader + 6 + kRowValue + 2 * kPad;
+    int paneY = top;
+    for (int k = 0; k < numPanes; ++k)
+    {
+        auto& pane = panes[ids[k]];
+        int contentH = rowsPaneHeight (ids[k], juce::jmax (minW, getWidth()));
+        const int paneH = k + 1 < numPanes ? juce::jmin (contentH, (getHeight() - top) * 3 / 5) : getHeight() - paneY;
+        pane.setBounds (0, paneY, getWidth(), juce::jmax (1, paneH));
+        paneY += paneH;
+        const int w = juce::jmax (minW, pane.getWidth() - (contentH > paneH ? StripPane::kScrollBar : 0));
+        contentH = rowsPaneHeight (ids[k], w);
+        pane.setContentSize (w, contentH, 1.0f);
+
+        int y = 4;
+        for (int g = 0; g < kGroups; ++g)
+        {
+            if (paneIndex (g) != ids[k]) continue;
+            auto& sec = sections[g];
+            sec.caption.setY (y);
+            placeRowCaption (g, animated);
+            y += kRowCaption;
+            sec.x = kPad;
+            sec.y = y;
+            sec.width = w - 2 * kPad;
+            stripWidth[g] = sec.width;
+            stripHeight[g] = kRowHeight;
+            for (int n = 0; n < stripCount (g); ++n)
+            {
+                auto* c = stripAt (g, n);
+                if (auto* in = dynamic_cast<InputStripView*> (c)) in->setHorizontal (true);
+                else if (auto* bus = dynamic_cast<BusStripView*> (c)) bus->setHorizontal (true);
+            }
+            placeStrips (g, nullptr, animated);
+            y += rowsGroupHeight (g, w) - kRowCaption;
+        }
+        pane.getContent().repaint();
+    }
 }
 
-void StripArea::paintRowCaptions (juce::Graphics& g)
+void StripArea::paintRowCaptions (juce::Graphics& g, int pane)
 {
-    g.setFont (captionFont());
-    for (auto& sec : sections)
+    for (int k = 0; k < kGroups; ++k)
     {
+        if (paneIndex (k) != pane) continue;
+        const auto& sec = sections[k];
+        if (const float a = selAnim[k]; a > 0.0f)
+        {
+            const auto r = juce::Rectangle<int> (sec.caption.getX() - 6, sec.caption.getY() + 2, sec.captionWidth + 10 + toolsWidth (k) + 4, kRowCaption - 4).toFloat();
+            g.setColour (sec.colour.withAlpha (0.12f * a));
+            g.fillRoundedRectangle (r, 6.0f);
+            g.setColour (sec.colour.withAlpha (0.5f * a));
+            g.drawRoundedRectangle (r.reduced (0.5f), 6.0f, 1.0f);
+        }
+        g.setFont (captionFont());
         g.setColour (sec.colour);
         g.drawText (sec.title, sec.caption.withWidth (sec.captionWidth + 4), juce::Justification::centredLeft, false);
     }
-    if (selBus >= 0)
+    if (selBus >= 0 && paneIndex (0) == pane)
     {
         const auto& cap = sections[0].caption;
         g.setColour (theme::busColour (selBus));
         g.setFont (theme::font (11.5f, true));
         g.drawFittedText ("FADERS = LEVEL ON " + busLabel (selBus)
                               + (monBus >= 0 ? "   (monitoring on " + busLabel (monBus) + ")" : juce::String()),
-                          juce::Rectangle<int> (cap.getRight() + 6, cap.getY(), juce::jmax (0, panes[0].getContent().getWidth() - cap.getRight() - 6 - kPad), kRowCaption),
+                          juce::Rectangle<int> (cap.getRight() + 6, cap.getY(), juce::jmax (0, paneOf (0).getContent().getWidth() - cap.getRight() - 6 - kPad), kRowCaption),
                           juce::Justification::centredLeft, 1, 0.8f);
     }
 }
@@ -1501,8 +2152,10 @@ void StripArea::attachStrips()
         if (layers[g] != nullptr)
             paneOf (g).getContent().addAndMakeVisible (*layers[g]);
     }
+    for (int g = 0; g < kGroups; ++g)
+        if (summaries[g] != nullptr) paneOf (g).getContent().addChildComponent (*summaries[g]);
     for (auto& s : removedStrips) paneOf (0).getContent().addChildComponent (*s);
-    panes[0].setVertical (shownRows);
+    for (auto& p : panes) p.setVertical (shownRows);
     attachPlusButtons();
 }
 
@@ -1565,7 +2218,7 @@ void StripArea::layoutPane (int group, int paneHeight, bool animated, const Fit*
     else
         sec.x = group == 0 ? kPad : kPad + (total - needed);
     sec.y = 0;
-    sec.width = groupWidth (sec, stripCount (group), w);
+    sec.width = groupWidth (group, stripCount (group), w);
     stripWidth[group] = w;
     stripHeight[group] = h;
     placeStrips (group, nullptr, animated);
@@ -1591,7 +2244,7 @@ void StripArea::layoutJoined (int paneHeight, bool animated, const Fit* fit)
         auto& sec = sections[g];
         sec.x = x + (fit == nullptr && g == 1 ? total - needed : 0);
         sec.y = 0;
-        sec.width = groupWidth (sec, stripCount (g), w);
+        sec.width = groupWidth (g, stripCount (g), w);
         x = sec.x + sec.width + 2 * kPad + (fit != nullptr ? juce::roundToInt (fit->gap / s) : 0);
         stripWidth[g] = w;
         stripHeight[g] = h;
@@ -1606,14 +2259,16 @@ void StripArea::resized()
 
 void StripArea::layout (bool animated)
 {
-    if (joined() != shownJoined || rowsMode() != shownRows)
+    if (joined() != shownJoined || rowsMode() != shownRows || pinMask() != shownPinned)
     {
         shownJoined = joined();
         shownRows = rowsMode();
+        shownPinned = pinMask();
         animator.clear();
         attachStrips();
         animated = false;
     }
+    applyCollapsed();
     layingOut = true;
     resizeGlide = animated;
     if (shownRows)
@@ -1635,6 +2290,17 @@ void StripArea::layout (bool animated)
     const int paneH = height - top - kCaptionHeight, paneY = top + kCaptionHeight;
     Fit fit;
     const bool fitted = computeFit (paneH, fit);
+    if (shownPinned != 0 || collapsed (0) || collapsed (1) || collapsed (2))
+    {
+        // Pinned or collapsed groups keep the width they need; the others share the rest (no dividers).
+        if (reorderBar != nullptr)
+            reorderBar->setBounds (kPad, 4, width - 2 * kPad, kBannerHeight - 6);
+        for (auto& d : dividers) d.setVisible (false);
+        layoutUnits (paneY, paneH, animated, fitted ? &fit : nullptr);
+        layoutCaptions (animated);
+        layingOut = false;
+        return;
+    }
     // The dividers only exist while the channels do not fit; their positions count only then.
     const bool shown = ! fitted && dividersShown();
     const int dividerWidth = shown ? kDividerWidth : 0, half = dividerWidth / 2;
@@ -1653,6 +2319,7 @@ void StripArea::layout (bool animated)
     dividers[0].setBounds (a - half, top, dividerWidth, height - top);
     dividers[1].setBounds (b - half, top, dividerWidth, height - top);
     for (auto& d : dividers) d.setVisible (shown);
+    panes[0].setVisible (true);
     panes[1].setVisible (! shownJoined);
     panes[2].setVisible (! shownJoined);
     if (shownJoined)
@@ -1678,6 +2345,118 @@ void StripArea::layout (bool animated)
     layingOut = false;
 }
 
+void StripArea::layoutUnits (int paneY, int paneH, bool animated, const Fit* fit)
+{
+    // A unit = one pane with its groups (several only with one shared scroll bar). A unit whose groups are all
+    // pinned or collapsed is fixed: it gets the width it needs, the others share what is left and scroll.
+    const int width = getWidth();
+    const int stripsHeight = paneH - StripPane::kScrollBar;
+    const float s = fit != nullptr ? fit->scale : scaleFor (stripsHeight);
+    const int h = juce::roundToInt ((float) stripsHeight / s);
+    struct Unit { int first = 0, last = 0, logical = 0, x = 0, w = 0; bool fixed = true; };
+    Unit units[kGroups];
+    int n = 0;
+    for (int g = 0; g < kGroups; ++g)
+    {
+        if (n == 0 || paneIndex (g) == g) { units[n] = {}; units[n].first = g; ++n; }
+        auto& u = units[n - 1];
+        u.last = g;
+        u.logical += paneWidthFor (g, kStripWidth);
+        u.fixed = u.fixed && (pinned (g) || collapsed (g));
+    }
+    const int oldX[kGroups] { panes[0].getX(), panes[1].getX(), panes[2].getX() };
+
+    float gx[kGroups] {};   // everything fits: where each group starts (as in the adaptive layout)
+    if (fit != nullptr)
+    {
+        float x = fit->margin;
+        for (int g = 0; g < kGroups; ++g) { gx[g] = x; x += (float) paneWidthFor (g, kStripWidth) * s + fit->gap; }
+        for (int u = 0; u < n; ++u)
+        {
+            const int left = u == 0 ? 0 : juce::roundToInt (gx[units[u].first] - fit->gap * 0.5f);
+            const int right = u + 1 == n ? width : juce::roundToInt (gx[units[u + 1].first] - fit->gap * 0.5f);
+            units[u].x = left;
+            units[u].w = right - left;
+        }
+    }
+    else
+    {
+        int need[kGroups] {}, widths[kGroups] {};
+        int fixedSum = 0, flexSum = 0, numFlex = 0;
+        for (int u = 0; u < n; ++u)
+        {
+            need[u] = (int) std::ceil ((float) units[u].logical * s);
+            if (units[u].fixed) fixedSum += need[u];
+            else { flexSum += need[u]; ++numFlex; }
+        }
+        if (fixedSum + flexSum <= width)
+        {
+            // Room to spare: to the hardware outputs (as without pins), else the last group that scrolls, else the last.
+            int extra = -1;
+            for (int u = 0; u < n; ++u) if (! units[u].fixed && units[u].first <= 1 && units[u].last >= 1) extra = u;
+            if (extra < 0) for (int u = 0; u < n; ++u) if (! units[u].fixed) extra = u;
+            if (extra < 0) extra = n - 1;
+            for (int u = 0; u < n; ++u) widths[u] = need[u];
+            widths[extra] += width - fixedSum - flexSum;
+        }
+        else if (numFlex > 0 && fixedSum + numFlex * kMinPaneWidth <= width)
+        {
+            int lastFlex = 0, sum = 0;
+            for (int u = 0; u < n; ++u)
+            {
+                if (units[u].fixed) widths[u] = need[u];
+                else { widths[u] = juce::jmax (kMinPaneWidth, juce::roundToInt ((float) (width - fixedSum) * (float) need[u] / (float) flexSum)); lastFlex = u; }
+                sum += widths[u];
+            }
+            widths[lastFlex] += width - sum;
+        }
+        else
+        {
+            // Not even the fixed groups fit: all of them scroll, each in proportion to what it needs.
+            int sum = 0;
+            for (int u = 0; u < n; ++u) { widths[u] = juce::roundToInt ((float) width * (float) need[u] / (float) (fixedSum + flexSum)); sum += widths[u]; }
+            widths[n - 1] += width - sum;
+        }
+        int x = 0;
+        for (int u = 0; u < n; ++u) { units[u].x = x; units[u].w = widths[u]; x += widths[u]; }
+    }
+
+    for (auto& p : panes) p.setVisible (false);
+    for (int u = 0; u < n; ++u)
+    {
+        const auto& unit = units[u];
+        auto& pane = panes[unit.first];
+        pane.setVisible (true);
+        pane.setBounds (unit.x, paneY, juce::jmax (1, unit.w), paneH);
+        const int total = juce::jmax (unit.logical, (int) std::floor ((float) pane.getWidth() / s));
+        pane.setContentSize (total, h, s);
+        const int moved = oldX[unit.first] - pane.getX();
+        int x = 0;
+        bool spread = false;
+        for (int g = unit.first; g <= unit.last; ++g)
+        {
+            auto& sec = sections[g];
+            if (fit != nullptr)
+                sec.x = kPad + juce::jlimit (0, juce::jmax (0, total - paneWidthFor (g, kStripWidth)), juce::roundToInt ((gx[g] - (float) unit.x) / s));
+            else
+            {
+                // Spare room: the inputs stay at the left, the outputs move right.
+                if (g != 0 && ! spread) { x += total - unit.logical; spread = true; }
+                sec.x = x + kPad;
+                x += paneWidthFor (g, kStripWidth);
+            }
+            sec.y = 0;
+            sec.width = groupWidth (g, stripCount (g), kStripWidth);
+            stripWidth[g] = kStripWidth;
+            stripHeight[g] = h;
+            if (animated && moved != 0)   // the pane jumps, its strips glide from where they were on screen
+                for (int k = 0; k < stripCount (g); ++k)
+                    animator.shift (*stripAt (g, k), juce::roundToInt ((float) moved / s));
+            placeStrips (g, nullptr, animated);
+        }
+    }
+}
+
 void StripArea::layoutCaptions (bool animated)
 {
     // Captions follow their group of strips but stay in view (sticky) while the pane is scrolled.
@@ -1689,15 +2468,17 @@ void StripArea::layoutCaptions (bool animated)
         const auto& pane = paneOf (g);
         auto& plus = *addButtons[g];
         const float s = pane.getScale();
-        const int full = sec.captionWidth + 10 + kPlusSize + 6;
+        const int titleW = captionTitleWidth (g), tools = toolsWidth (g);
+        const int full = titleW + 10 + tools + (collapsed (g) ? 0 : kPlusSize + 6);
         const int groupX = pane.getX() + juce::roundToInt (((float) sec.x - pane.getScrollX()) * s);
         const int groupR = groupX + juce::roundToInt ((float) sec.width * s);
-        const int x = juce::jmin (juce::jmax (groupX, pane.getX() + kPad), groupR - full) + 6;
+        const int x = juce::jmax (juce::jmin (juce::jmax (groupX, pane.getX() + kPad), groupR - full), pane.getX() + kPad) + 6;
         sec.caption = { x, captionTop(), full, kCaptionHeight };
-        const juce::Rectangle<int> target (x + sec.captionWidth + 10, captionTop() + (kCaptionHeight - kPlusSize) / 2 + 1, kPlusSize, kPlusSize - 2);
+        const juce::Rectangle<int> target (x + titleW + 10 + tools, captionTop() + (kCaptionHeight - kPlusSize) / 2 + 1, kPlusSize, kPlusSize - 2);
         if (animated) animator.moveTo (plus, target, true);
         else          animator.place (plus, target);
-        plus.setVisible (! reordering && target.getX() >= pane.getX() && target.getRight() <= pane.getRight() && stripCount (g) < maxStrips[g]);
+        plus.setVisible (! reordering && ! collapsed (g) && target.getX() >= pane.getX() && target.getRight() <= pane.getRight() && stripCount (g) < maxStrips[g]);
+        placeTools (g, sec.caption, titleW, animated);
     }
     repaint (getLocalBounds().withHeight (captionTop() + kCaptionHeight));
 }
@@ -1717,11 +2498,24 @@ void StripArea::paint (juce::Graphics& g)
     const int top = captionTop();
     for (int k = 0; k < kGroups; ++k)
     {
+        const auto& pane = paneOf (k);
+        if (! pane.isVisible()) continue;
         juce::Graphics::ScopedSaveState state (g);
-        g.reduceClipRegion (paneOf (k).getX(), top, paneOf (k).getWidth(), kCaptionHeight);
-        g.setColour (sections[k].colour);
+        g.reduceClipRegion (pane.getX(), top, pane.getWidth(), kCaptionHeight);
+        const auto& sec = sections[k];
+        const int titleW = captionTitleWidth (k), tools = toolsWidth (k);
         // Follows its "+" button, which glides when the layout changes.
-        g.drawText (sections[k].title, juce::Rectangle<int> (addButtons[k]->getX() - sections[k].captionWidth - 10, top, sections[k].captionWidth + 4, kCaptionHeight),
+        const int x = addButtons[k]->getX() - tools - titleW - 10;
+        if (const float a = selAnim[k]; a > 0.0f)
+        {
+            const auto r = juce::Rectangle<int> (x - 6, top + 3, titleW + 10 + tools + 4, kCaptionHeight - 6).toFloat();
+            g.setColour (sec.colour.withAlpha (0.12f * a));
+            g.fillRoundedRectangle (r, 6.0f);
+            g.setColour (sec.colour.withAlpha (0.5f * a));
+            g.drawRoundedRectangle (r.reduced (0.5f), 6.0f, 1.0f);
+        }
+        g.setColour (sec.colour);
+        g.drawText (collapsed (k) ? sec.shortTitle : sec.title, juce::Rectangle<int> (x, top, titleW + 4, kCaptionHeight),
                     juce::Justification::centredLeft, false);
     }
 
@@ -1743,14 +2537,16 @@ void StripArea::setSelInfo (int sb, int mb)
     if (sb == selBus && mb == monBus) return;
     selBus = sb;
     monBus = mb;
-    if (shownRows) panes[0].getContent().repaint();
-    else           repaint (0, captionTop(), panes[0].getRight(), kCaptionHeight);
+    if (shownRows) paneOf (0).getContent().repaint();
+    else           repaint (0, captionTop(), paneOf (0).getRight(), kCaptionHeight);
 }
 
 void StripArea::updateMeters (float dt)
 {
-    for (auto& s : inStrips) s->updateMeters (dt);
-    for (auto& s : busStrips) s->updateMeters (dt);
+    // Hidden strips (collapsed group) leave their meters to the summary (a meter has one reader).
+    for (auto& s : inStrips)  if (s->isVisible()) s->updateMeters (dt);
+    for (auto& s : busStrips) if (s->isVisible()) s->updateMeters (dt);
+    for (auto& sum : summaries) if (sum != nullptr && sum->isVisible()) sum->update (dt);
 }
 
 void StripArea::refreshStrips()

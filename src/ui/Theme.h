@@ -5,14 +5,29 @@ namespace hydra::theme
 {
 /** Look of the app (Settings > Display > Theme). The palette below follows it; the same colours are
     read when painting, so apply() + a repaint switches open windows. Message thread only.
-    deep = the theme shown as "Default"; the app applies it unless the session says "legacy". The palette
-    below starts as Legacy: the plugin never calls apply() and keeps that look. */
-enum class Style { legacy, deep };
+    dark / darker = the current look (channels as one block, rectangular faders) in two palettes: Dark is the
+    default (blue-grey slate), Darker nearly neutral graphite, Light the same look bright ("Nebel": cool
+    blue-grey, the accents a little darker so they carry on white). The palette below starts as Legacy: the
+    plugin never calls apply() and keeps that look. Colours are copied by value when components are built;
+    MainComponent::themeChanged rebuilds strips and inspector, so keep no static copies of them. */
+enum class Style { legacy, dark, darker, light };
 inline Style style = Style::legacy;
-inline bool deep() noexcept { return style == Style::deep; }
+/** The current look (Dark, Darker or Light), as opposed to Legacy. */
+inline bool deep() noexcept { return style != Style::legacy; }
+/** Bright background: shadows lighter, glow weaker, text dark. */
+inline bool light() noexcept { return style == Style::light; }
+/** Glow of selected strips and effect blocks: always on in the app (no option since 13.11.); HydraShots can switch it
+    off (HYDRA_SHOTS_GLOW=0), then only the thicker line on top. */
+inline bool glow = true;
 void apply (Style);
-Style styleFromName (const juce::String&);   // session value ("default", "legacy"); anything else = default
+Style styleFromName (const juce::String&);   // session value ("dark", "darker", "legacy"; old "default" = dark)
 const char* styleName (Style);
+
+/** Selected strip or effect block: the coloured line on top gets thicker and (with glow) lights the card
+    from there down, plus a soft halo just around the line. r = the card, clipped to its shape by the caller
+    when it has rounded corners. vertical = the line runs down the left side (horizontal channel rows). */
+void drawSelectedTop (juce::Graphics&, juce::Rectangle<float> r, juce::Colour, bool vertical = false);
+constexpr float kSelectedLine = 4.0f;
 
 inline juce::Colour bg        { 0xff0d0f13 };
 inline juce::Colour panel     { 0xff151920 };
@@ -20,30 +35,29 @@ inline juce::Colour panel2    { 0xff1b2029 };
 inline juce::Colour raised    { 0xff232935 };
 inline juce::Colour outline   { 0xff2a313e };
 inline juce::Colour cardLine  { outline.withAlpha (0.6f) };   // frame of the effect blocks
-inline const juce::Colour text      { 0xffe8ebf1 };
+inline juce::Colour text      { 0xffe8ebf1 };
 inline juce::Colour textDim   { 0xff8b94a5 };
-inline const juce::Colour textFaint { 0xff5a6273 };
+inline juce::Colour textFaint { 0xff5a6273 };
 
-inline const juce::Colour accentIn   { 0xff35d0f4 }; // input strips
+inline juce::Colour accentIn   { 0xff35d0f4 }; // input strips
 inline juce::Colour accentHw   { 0xff8d6cff }; // H buses
-inline const juce::Colour accentVirt { 0xffff6aa6 }; // V buses
-inline const juce::Colour mute       { 0xffff4d5e };
-inline const juce::Colour solo       { 0xffffc23f };
-inline const juce::Colour good       { 0xff3ee08f };
-inline const juce::Colour warn       { 0xffffa53d };
-inline const juce::Colour learn      { 0xffffd400 };
+inline juce::Colour accentVirt { 0xffff6aa6 }; // V buses
+inline juce::Colour mute       { 0xffff4d5e };
+inline juce::Colour solo       { 0xffffc23f };
+inline juce::Colour good       { 0xff3ee08f };
+inline juce::Colour warn       { 0xffffa53d };
+inline juce::Colour learn      { 0xffffd400 };
 
 // Each kind of effect block has its own colour (denoiser: good; plugins: the channel's colour).
-inline const juce::Colour fxEq         { 0xff35d0f4 };
-inline const juce::Colour fxGate       { 0xffffc23f };
-inline const juce::Colour fxComp       { 0xffff8f4d };
-inline const juce::Colour fxLimiter    { 0xffff6a7d };
-inline const juce::Colour fxCorrection { 0xffa78bfa };
-inline const juce::Colour fxUtility    { 0xffff6ac1 };   // was the phase block's colour
-inline const juce::Colour fxTranspose  { 0xffc77dff };
-inline const juce::Colour fxStems      { 0xff56e0c8 };
-inline const juce::Colour fxHeadphone  { 0xff7c9cff };
-/** Colour of each stem of the Stems effect (vocals, drums, bass, guitar, rest). */
+inline juce::Colour fxEq         { 0xff35d0f4 };
+inline juce::Colour fxGate       { 0xffffc23f };
+inline juce::Colour fxComp       { 0xffff8f4d };
+inline juce::Colour fxLimiter    { 0xffff6a7d };
+inline juce::Colour fxCorrection { 0xffa78bfa };
+inline juce::Colour fxUtility    { 0xffff6ac1 };   // was the phase block's colour
+inline juce::Colour fxTranspose  { 0xffc77dff };
+inline juce::Colour fxStems      { 0xff56e0c8 };
+inline juce::Colour fxHeadphone  { 0xff7c9cff };/** Colour of each stem of the Stems effect (vocals, drums, bass, guitar, rest). */
 inline juce::Colour stemColour (int s)
 {
     static const juce::Colour c[] = { juce::Colour (0xffff6ac1), juce::Colour (0xffffa53d), juce::Colour (0xff8d6cff),
@@ -51,7 +65,7 @@ inline juce::Colour stemColour (int s)
     return c[juce::jlimit (0, 4, s)];
 }
 // Menus (highlight, tick mark): the middle of the logo's cyan -> violet gradient.
-inline const juce::Colour fx { 0xff6cacfa };
+inline juce::Colour fx { 0xff6cacfa };
 
 inline juce::Colour busColour (int b) { return b < kMaxHwBuses ? accentHw : accentVirt; }
 

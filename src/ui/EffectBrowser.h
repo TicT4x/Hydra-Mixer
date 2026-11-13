@@ -88,13 +88,17 @@ private:
     friend class Row;
 };
 
-/** Narrow tab "EFFECTS" at the left edge, next to the effect browser; click folds it out / in. */
+/** Narrow tab next to a fold-out panel ("EFFECTS" at the left edge, "SCENES" at the right); click folds it out / in. */
 class BrowserTab final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     BrowserTab() { setTooltip ("Effect browser: drag effects and presets onto channels (Ctrl+Alt+B)"); setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+    BrowserTab (const juce::String& text, bool atRightEdge, juce::Colour c, const juce::String& tip)
+        : label (text), right (atRightEdge), colour (c)
+    { setTooltip (tip); setMouseCursor (juce::MouseCursor::PointingHandCursor); }
     std::function<void()> onClick;
     void setOpen (bool o) { if (o != open) { open = o; repaint(); } }
+    void setMarkerColour (juce::Colour c) { if (c != colour) { colour = c; repaint(); } }
     void paint (juce::Graphics&) override;
     void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
     void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
@@ -103,5 +107,8 @@ public:
 
 private:
     bool hover = false, open = false;
+    juce::String label { "EFFECTS" };
+    bool right = false;                     // panel at the right edge: the arrows point the other way
+    juce::Colour colour;                    // marker while open (transparent = theme::fx)
 };
 } // namespace hydra

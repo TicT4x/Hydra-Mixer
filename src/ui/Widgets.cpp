@@ -414,6 +414,23 @@ void Fader::frame (double t)
     repaint();
 }
 
+/** Rectangular fader cap of the current look, with its shadow. Light theme: white with an edge and a soft
+    shadow (the dark themes' grey cap looked dirty on white). */
+static void paintFaderCap (juce::Graphics& g, juce::Rectangle<float> cap)
+{
+    const bool l = theme::light();
+    g.setColour (juce::Colours::black.withAlpha (l ? 0.16f : 0.5f));
+    g.fillRoundedRectangle (cap.translated (0.0f, l ? 1.5f : 2.0f).expanded (1.0f), 4.0f);
+    g.setGradientFill (juce::ColourGradient (juce::Colour (l ? 0xffffffff : 0xffe2e6ee), cap.getCentreX(), cap.getY(),
+                                             juce::Colour (l ? 0xffdde2e9 : 0xff9aa3b3), cap.getCentreX(), cap.getBottom(), false));
+    g.fillRoundedRectangle (cap, 3.0f);
+    if (l)
+    {
+        g.setColour (juce::Colour (0xffb9c1cc));
+        g.drawRoundedRectangle (cap.reduced (0.5f), 3.0f, 1.0f);
+    }
+}
+
 void Fader::paint (juce::Graphics& g)
 {
     if (horizontal) { paintHorizontal (g); return; }
@@ -446,10 +463,7 @@ void Fader::paint (juce::Graphics& g)
     {
         // Thumb: light rectangular cap (stands out from the slot in any channel colour) with a centre line in the accent colour
         auto cap = juce::Rectangle<float> (28.0f, 18.0f).withCentre ({ cx, thumbY });
-        g.setColour (juce::Colours::black.withAlpha (0.5f));
-        g.fillRoundedRectangle (cap.translated (0.0f, 2.0f).expanded (1.0f), 4.0f);
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffe2e6ee), cx, cap.getY(), juce::Colour (0xff9aa3b3), cx, cap.getBottom(), false));
-        g.fillRoundedRectangle (cap, 3.0f);
+        paintFaderCap (g, cap);
         g.setColour (accent.darker (0.15f));
         g.fillRect (cap.withSizeKeepingCentre (cap.getWidth() - 2.0f, 3.0f));
         return;
@@ -497,10 +511,7 @@ void Fader::paintHorizontal (juce::Graphics& g)
     if (theme::deep())
     {
         auto cap = juce::Rectangle<float> (18.0f, 24.0f).withCentre ({ thumbX, cy });
-        g.setColour (juce::Colours::black.withAlpha (0.5f));
-        g.fillRoundedRectangle (cap.translated (0.0f, 2.0f).expanded (1.0f), 4.0f);
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffe2e6ee), thumbX, cap.getY(), juce::Colour (0xff9aa3b3), thumbX, cap.getBottom(), false));
-        g.fillRoundedRectangle (cap, 3.0f);
+        paintFaderCap (g, cap);
         g.setColour (accent.darker (0.15f));
         g.fillRect (cap.withSizeKeepingCentre (3.0f, cap.getHeight() - 2.0f));
         return;

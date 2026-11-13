@@ -41,7 +41,7 @@ bool instanceFree (const Engine& e, int ch, Fx f)
 {
     const auto allowed = e.allowedFx (ch);
     if (std::find (allowed.begin(), allowed.end(), f) == allowed.end()) return false;
-    const auto& chain = ch < kMaxInputs ? e.inputs[(size_t) ch].plugins : e.buses[(size_t) (ch - kMaxInputs)].plugins;
+    const auto& chain = e.fxOf (ch).plugins;
     for (int k = 0; k < Engine::maxInstances (f); ++k)
         if (! chain.hasBuiltin (f, k)) return true;
     return false;
@@ -50,8 +50,8 @@ bool instanceFree (const Engine& e, int ch, Fx f)
 std::vector<int> stemsInputs (const Engine& e)
 {
     std::vector<int> v;
-    for (int i = 0; i < kMaxInputs + kMaxBuses; ++i)
-        if ((i < kMaxInputs ? e.isInputActive (i) : e.isBusActive (i - kMaxInputs)) && e.fxOf (i).plugins.hasBuiltin (Fx::stems)) v.push_back (i);
+    for (int i = 0; i < kNumChannels; ++i)
+        if (isFxChannel (i) && e.isChannelActive (i) && e.fxOf (i).plugins.hasBuiltin (Fx::stems)) v.push_back (i);
     return v;
 }
 
@@ -110,7 +110,7 @@ juce::String describe (const juce::var& d)
 
 bool canAdd (const Engine& e, int ch, const juce::var& d)
 {
-    if (ch < 0 || ch >= kMaxInputs + kMaxBuses) return false;
+    if (! isFxChannel (ch)) return false;
     const auto kind = d.getProperty ("hydraFx", {}).toString();
     if (kind == "builtin") return instanceFree (e, ch, fxFromId (d.getProperty ("fx", {}).toString()));
     if (kind == "plugin") return true;
@@ -140,7 +140,7 @@ void add (UiContext& ctx, int ch, const juce::var& d, int index, juce::Component
     // (unless switched off with "don't ask again").
     const auto f = builtinOf (d);
     const bool hw = Engine::isHwOutput (ch);
-    const bool untypical = (f == Fx::correction && ! hw) || (f == Fx::stems && ch >= kMaxInputs);
+    const bool untypical = (f == Fx::correction && ! hw) || (f == Fx::stems && ch >= kMaxInputs && ! isRecTrackChannel (ch));
     juce::StringArray off;
     if (ctx.session != nullptr) off.addTokens (ctx.session->prefs.fxWarnOff, ",", {});
     if (untypical && ! off.contains (fxId (f)))
@@ -177,7 +177,7 @@ static void addNow (UiContext& ctx, int ch, const juce::var& d, int index, juce:
     auto& chain = e.chainFor (ch);
     const int at = index < 0 || index > chain.size() ? chain.size() : index;
     const auto kind = d.getProperty ("hydraFx", {}).toString();
-    const juce::String where = channelCode (ch) + (ch < kMaxInputs ? " " + e.inputs[(size_t) ch].name : " " + e.buses[(size_t) (ch - kMaxInputs)].name);
+    const juce::String where = channelCode (ch) + " " + e.channelName (ch);
     if (! canAdd (e, ch, d))
     {
         dialog::message (near, dialog::Kind::info, describe (d) + " cannot go here",
@@ -197,7 +197,7 @@ static void addNow (UiContext& ctx, int ch, const juce::var& d, int index, juce:
             if (const auto others = stemsInputs (e); ! others.empty())
             {
                 juce::StringArray names;
-                for (int i : others) names.add (channelCode (i) + " (" + (i < kMaxInputs ? e.inputs[(size_t) i].name : e.buses[(size_t) (i - kMaxInputs)].name) + ")");
+                for (int i : others) names.add (channelCode (i) + " (" + (e.channelName (i)) + ")");
                 dialog::confirm (near, dialog::Kind::warning, "The Stem Separator is already in use",
                                  names.joinIntoString (", ") + (others.size() == 1 ? " already separates" : " already separate")
                                  + " with the Stem Separator. Every channel with it needs its own share of the GPU. If the GPU "
@@ -720,19 +720,21 @@ void BrowserTab::paint (juce::Graphics& g)
     g.setColour (hover ? theme::text : theme::textDim);
     if (open)
     {
-        g.setColour (theme::fx);
-        g.fillRoundedRectangle (r.withWidth (3.0f).withX (r.getRight() - 3.0f).reduced (0.0f, 8.0f), 1.5f);
+        g.setColour (colour.isTransparent() ? theme::fx : colour);
+        // The marker sits on the side of the panel.
+        g.fillRoundedRectangle (r.withWidth (3.0f).withX (right ? r.getX() : r.getRight() - 3.0f).reduced (0.0f, 8.0f), 1.5f);
         g.setColour (hover ? theme::text : theme::textDim);
     }
     juce::Path p;
     const float cx = r.getCentreX(), y = r.getY() + 14.0f;
-    if (open) p.addTriangle (cx + 3.0f, y - 4.0f, cx + 3.0f, y + 4.0f, cx - 2.5f, y);   // points left: fold in
-    else      p.addTriangle (cx - 2.5f, y - 4.0f, cx - 2.5f, y + 4.0f, cx + 3.0f, y);   // points right: fold out
+    const bool pointLeft = open != right;   // left panel: open = fold in (left); right panel: closed = fold out (left)
+    if (pointLeft) p.addTriangle (cx + 3.0f, y - 4.0f, cx + 3.0f, y + 4.0f, cx - 2.5f, y);
+    else           p.addTriangle (cx - 2.5f, y - 4.0f, cx - 2.5f, y + 4.0f, cx + 3.0f, y);
     g.fillPath (p);
     juce::Graphics::ScopedSaveState s (g);
     g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi, cx, r.getCentreY()));
     g.setFont (theme::font (11.0f, true));
     const auto rot = juce::Rectangle<float> (r.getHeight(), r.getWidth()).withCentre (r.getCentre());
-    g.drawText ("EFFECTS", rot, juce::Justification::centred);
+    g.drawText (label, rot, juce::Justification::centred);
 }
 } // namespace hydra

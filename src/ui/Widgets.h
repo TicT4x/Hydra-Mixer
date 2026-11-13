@@ -19,7 +19,15 @@ constexpr int busSelectIndex (int bus) noexcept { return kMaxInputs + bus; }
 /** "IN 3", "A2", "B1" for a selection index. */
 inline juce::String channelCode (int selectIndex)
 {
+    if (isRecTrackChannel (selectIndex)) return "TR " + juce::String (selectIndex - kRecTrackBase + 1);
+    if (selectIndex == kMaxInputs + kMaxBuses) return "REC";
     return selectIndex < kMaxInputs ? "IN " + juce::String (selectIndex + 1) : busLabel (selectIndex - kMaxInputs);
+}
+
+/** Colour of a channel (selection index): inputs and recorder tracks the input colour, buses theirs. */
+inline juce::Colour channelColour (int ch)
+{
+    return ch < kMaxInputs || isRecTrackChannel (ch) ? theme::accentIn : theme::busColour (juce::jlimit (0, kMaxBuses - 1, ch - kMaxInputs));
 }
 
 /** Shared UI state handed to every widget. */
@@ -47,6 +55,9 @@ struct UiContext
 
     /** Opens the large EQ editor window for EQ instance k of a channel (same index scheme as 'selected'). */
     std::function<void (int, int)> openEqWindow;
+
+    /** Opens the recorder window (multitrack recording and editing). */
+    std::function<void()> openRecorder;
 
     /** Opens the device selection window of a channel (same index scheme): input source / bus output. */
     std::function<void (int)> openDevicePicker;
@@ -91,8 +102,8 @@ struct UiContext
     /** EQ of a channel (selection index), or nullptr for the recorder. */
     ParamEq* eqFor (int selectIndex) const
     {
-        if (selectIndex < 0 || selectIndex >= kRecorderSelect) return nullptr;
-        return selectIndex < kMaxInputs ? &engine.inputs[(size_t) selectIndex].eq : &engine.buses[(size_t) (selectIndex - kMaxInputs)].eq;
+        if (! isFxChannel (selectIndex)) return nullptr;
+        return &engine.fxOf (selectIndex).eqs[0];
     }
 
     /** Ctrl+Z (undo) / Ctrl+Y, Ctrl+Shift+Z (redo) of the last parameter change anywhere in the mixer.

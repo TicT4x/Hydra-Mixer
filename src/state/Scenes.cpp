@@ -11,7 +11,7 @@ bool same (float a, float b) noexcept { return std::abs (a - b) <= 1.0e-4f * juc
 bool SceneBank::captures (const Param& p)
 {
     // Whether a channel exists is the layout, not a scene setting.
-    return p.persistent && ! p.id.endsWith (".active");
+    return p.persistent && ! p.project && ! p.id.endsWith (".active");
 }
 
 SceneBank::SceneBank (Engine& e) : engine (e)

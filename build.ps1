@@ -43,7 +43,9 @@ function Publish-Build([string]$Folder, [string[]]$Items) {
 $apk = @(Get-Item (Join-Path $root "mobile\android\HydraLink.apk") -ErrorAction SilentlyContinue | ForEach-Object FullName)
 
 if ($Fast) {
-    $build = Join-Path $env:USERPROFILE ".hydra-build\fast-$Config"
+    # A second checkout (git worktree under .hydra-build) gets its own folder, otherwise both reconfigure the same one.
+    $suffix = if ($root -like (Join-Path $env:USERPROFILE ".hydra-build\*")) { "-" + (Split-Path $root -Leaf) } else { "" }
+    $build = Join-Path $env:USERPROFILE ".hydra-build\fast-$Config$suffix"
     $shots = if ($Target -eq "HydraShots") { "ON" } else { "OFF" }   # screenshot tool (tools/Shots.cpp)
     cmake -S $root -B $build -G Ninja "-DCMAKE_BUILD_TYPE=$Config" -DHYDRA_FAST=ON "-DHYDRA_SHOTS=$shots"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

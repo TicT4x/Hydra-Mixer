@@ -16,8 +16,8 @@ namespace
 /** Selection index of a channel's effect side (-1 if none). */
 int channelOf (const Engine& e, const ChannelFx& c)
 {
-    for (int ch = 0; ch < kMaxInputs + kMaxBuses; ++ch)
-        if (&e.fxOf (ch) == &c) return ch;
+    for (int ch = 0; ch < kNumChannels; ++ch)
+        if (isFxChannel (ch) && &e.fxOf (ch) == &c) return ch;
     return -1;
 }
 
@@ -25,7 +25,7 @@ juce::String nameOf (const Engine& e, const ChannelFx& c)
 {
     const int ch = channelOf (e, c);
     if (ch < 0) return {};
-    return ch < kMaxInputs ? e.inputs[(size_t) ch].name : e.buses[(size_t) (ch - kMaxInputs)].name;
+    return e.channelName (ch);
 }
 
 class PluginWindow final : public juce::DocumentWindow
@@ -129,6 +129,16 @@ private:
     behind the blocks), the card a touch lighter, its edge in the colour and the header washed with it. */
 void drawSelectedCard (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c, float corner)
 {
+    if (theme::deep())
+    {
+        // Like the strips (user 13.11.): thicker line on top, glowing into the card; no frame.
+        juce::Path shape;
+        shape.addRoundedRectangle (r, corner);
+        juce::Graphics::ScopedSaveState clip (g);
+        g.reduceClipRegion (shape);
+        theme::drawSelectedTop (g, r, c);
+        return;
+    }
     g.setColour (c.withAlpha (0.07f));
     g.fillRoundedRectangle (r, corner);
     juce::Path shape;
@@ -465,7 +475,7 @@ void showEqMenu (UiContext& ctx, int channel, int k, juce::Component& target)
     const auto dir = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
     m.addItem ("Export EQ...", [e, channel, k, dir]
     {
-        const auto name = channel < kMaxInputs ? e->inputs[(size_t) channel].name : e->buses[(size_t) (channel - kMaxInputs)].name;
+        const auto name = e->channelName (channel);
         chooser = std::make_unique<juce::FileChooser> ("Export EQ", dir.getChildFile (juce::File::createLegalFileName (name + " EQ") + clip::kEqExtension),
                                                        juce::String ("*") + clip::kEqExtension);
         chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [e, channel, k] (const juce::FileChooser& fc)
@@ -491,7 +501,7 @@ void showEqMenu (UiContext& ctx, int channel, int k, juce::Component& target)
     m.addSeparator();
     m.addItem ("Remove all bands", [&ctx, channel, k]
     {
-        auto* eq = channel < kMaxInputs ? &ctx.engine.inputs[(size_t) channel].eqs[(size_t) k] : &ctx.engine.buses[(size_t) (channel - kMaxInputs)].eqs[(size_t) k];
+        auto* eq = &ctx.engine.fxOf (channel).eqs[(size_t) k];
         for (int b = 0; b < ParamEq::kBands; ++b)
             for (auto* p : { eq->bandOn[(size_t) b], eq->enabled[(size_t) b], eq->type[(size_t) b], eq->gain[(size_t) b], eq->freq[(size_t) b], eq->q[(size_t) b] })
                 p->reset();
@@ -1241,8 +1251,8 @@ public:
 std::vector<int> stemsChannels (const Engine& e)
 {
     std::vector<int> v;
-    for (int i = 0; i < kMaxInputs + kMaxBuses; ++i)
-        if ((i < kMaxInputs ? e.isInputActive (i) : e.isBusActive (i - kMaxInputs)) && e.fxOf (i).plugins.hasBuiltin (Fx::stems)) v.push_back (i);
+    for (int i = 0; i < kNumChannels; ++i)
+        if (isFxChannel (i) && e.isChannelActive (i) && e.fxOf (i).plugins.hasBuiltin (Fx::stems)) v.push_back (i);
     return v;
 }
 
@@ -1431,27 +1441,44 @@ struct StemAdvanced
 {
     StemAdvanced (UiContext& c, StemsFx& fx, int k)
         : left (c, *fx.muteL[(size_t) k], "L", theme::mute), right (c, *fx.muteR[(size_t) k], "R", theme::mute),
-          mono (c, *fx.mono[(size_t) k], "MONO", theme::good), pan (c, *fx.pan[(size_t) k], "PAN", theme::stemColour (k))
+          mono (c, *fx.mono[(size_t) k], "MONO", theme::good), pan (c, *fx.pan[(size_t) k], "PAN", theme::stemColour (k)),
+          width (c, *fx.width[(size_t) k], "WIDTH", theme::stemColour (k)), hasWidth (k != stems::vocals)
     {
         const auto name = stems::stemName (k).toLowerCase();
         left.setTooltip ("Mute the left side of the " + name + " (e.g. a part that is only on one side)");
         right.setTooltip ("Mute the right side of the " + name);
         mono.setTooltip ("The " + name + " in mono (both sides summed; with one side muted, the other one in the middle)");
         pan.setTooltip ("Pan of the " + name + " (double-click: centre)");
+        width.setTooltip ("Stereo width of the " + name + ", after MONO: below 100 % narrower, above 100 % wider. Also makes a "
+                          "mono " + name + " wide again (e.g. after muting a part on one side); in mono it sounds the same. "
+                          "Double-click: 100 %");
     }
-    /** Pan and L / R go into the box that opens above the faders, mono next to solo. */
+    /** Pan (and width) and L / R go into the box that opens above the faders, mono next to solo. */
     void addTo (juce::Component& box, juce::Component& switchParent)
     {
         box.addAndMakeVisible (pan);
+        if (hasWidth) box.addAndMakeVisible (width);
         box.addAndMakeVisible (left);
         box.addAndMakeVisible (right);
         switchParent.addChildComponent (mono);
     }
-    void setAlpha (float a) { for (juce::Component* c : { (juce::Component*) &left, (juce::Component*) &right, (juce::Component*) &mono, (juce::Component*) &pan }) c->setAlpha (a); }
-    /** Pan knob on top, L / R below it (buttonWidth wide, centred). */
+    void setAlpha (float a)
+    {
+        for (juce::Component* c : { (juce::Component*) &left, (juce::Component*) &right, (juce::Component*) &mono, (juce::Component*) &pan,
+                                    (juce::Component*) &width })
+            c->setAlpha (a);
+    }
+    /** Pan (+ width) knob on top, L / R below (buttonWidth wide, centred). */
     void setBounds (juce::Rectangle<int> r, int buttonWidth)
     {
-        pan.setBounds (r.removeFromTop (kKnob).withSizeKeepingCentre (juce::jmin (r.getWidth(), 64), kKnob));
+        if (hasWidth)
+        {
+            auto knobs = r.removeFromTop (kKnob).withSizeKeepingCentre (juce::jmin (r.getWidth(), 120), kKnob);
+            pan.setBounds (knobs.removeFromLeft (knobs.getWidth() / 2));
+            width.setBounds (knobs);
+        }
+        else
+            pan.setBounds (r.removeFromTop (kKnob).withSizeKeepingCentre (juce::jmin (r.getWidth(), 64), kKnob));
         r.removeFromTop (4);
         auto lr = r.removeFromTop (22).withSizeKeepingCentre (buttonWidth, 22);
         left.setBounds (lr.removeFromLeft ((lr.getWidth() - 3) / 2));
@@ -1460,7 +1487,8 @@ struct StemAdvanced
     }
     static constexpr int kKnob = 56, kHeight = kKnob + 4 + 22 + 10;
     Toggle left, right, mono;
-    Knob pan;
+    Knob pan, width;
+    bool hasWidth;
 };
 
 constexpr const char* kStemLabels[] = { "VOCALS", "DRUMS", "BASS", "GUITAR", "REST" };
@@ -1775,7 +1803,7 @@ public:
     {
         for (juce::Component* k : std::initializer_list<juce::Component*> { &mode, &on, &info, &latency, &gpu, &mixBox, &advanced, &modelsBox, &fold })
             addAndMakeVisible (k);
-        advanced.setTooltip ("Advanced options per stem: pan, mute its left or right side, mono. Off: they are kept but not used");
+        advanced.setTooltip ("Advanced options per stem: pan, width (instruments), mute its left or right side, mono. Off: they are kept but not used");
         addChildComponent (loading);
         mixBox.onPaint = [this] (juce::Graphics& g) { paintNames (g); };
         mixBox.addChildComponent (advBox);
@@ -2860,13 +2888,13 @@ std::unique_ptr<BuiltUnit> makeBuiltinUnit (UiContext& ctx, int channel, Fx f, i
     auto made = std::make_unique<BuiltUnit>();
     auto& u = *made;
     auto& e = ctx.engine;
-    const bool isInput = channel < kMaxInputs;
+    const bool isInput = channel < kMaxInputs || isRecTrackChannel (channel);
     Section* sec = nullptr;
         switch (f)
         {
             case Fx::eq:
             {
-                auto& eq = isInput ? e.inputs[(size_t) channel].eqs[(size_t) k] : e.buses[(size_t) (channel - kMaxInputs)].eqs[(size_t) k];
+                auto& eq = e.fxOf (channel).eqs[(size_t) k];
                 auto unit = std::make_unique<EqSection> (ctx, eq, colour, channel, k, title);
                 sec = &unit->getSection();
                 u.width = isInput ? 520 : 560;
@@ -2894,9 +2922,9 @@ std::unique_ptr<BuiltUnit> makeBuiltinUnit (UiContext& ctx, int channel, Fx f, i
             {
                 auto channelName = [&ctx, channel]
                 {
-                    return channel < kMaxInputs ? ctx.engine.inputs[(size_t) channel].name : ctx.engine.buses[(size_t) (channel - kMaxInputs)].name;
+                    return ctx.engine.channelName (channel);
                 };
-                auto& comp = isInput ? e.inputs[(size_t) channel].comps[(size_t) k] : e.buses[(size_t) (channel - kMaxInputs)].comps[(size_t) k];
+                auto& comp = e.fxOf (channel).comps[(size_t) k];
                 auto c = std::make_unique<CompUnit> (ctx, comp, channelName, title);
                 sec = &c->section;
                 u.width = 200;
@@ -2905,7 +2933,7 @@ std::unique_ptr<BuiltUnit> makeBuiltinUnit (UiContext& ctx, int channel, Fx f, i
             }
             case Fx::limiter:
             {
-                auto& lim = isInput ? e.inputs[(size_t) channel].limiters[(size_t) k] : e.buses[(size_t) (channel - kMaxInputs)].limiters[(size_t) k];
+                auto& lim = e.fxOf (channel).limiters[(size_t) k];
                 auto l = std::make_unique<LimiterUnit> (ctx, lim, title);
                 sec = &l->section;
                 u.width = 130;
@@ -2916,9 +2944,9 @@ std::unique_ptr<BuiltUnit> makeBuiltinUnit (UiContext& ctx, int channel, Fx f, i
             {
                 auto channelName = [&ctx, channel]
                 {
-                    return channel < kMaxInputs ? ctx.engine.inputs[(size_t) channel].name : ctx.engine.buses[(size_t) (channel - kMaxInputs)].name;
+                    return ctx.engine.channelName (channel);
                 };
-                auto& ut = isInput ? e.inputs[(size_t) channel].utilities[(size_t) k] : e.buses[(size_t) (channel - kMaxInputs)].utilities[(size_t) k];
+                auto& ut = e.fxOf (channel).utilities[(size_t) k];
                 auto p = std::make_unique<UtilityUnit> (ctx, ut, channelName, title);
                 sec = &p->getSection();
                 u.width = 190;
@@ -3002,8 +3030,8 @@ class FxRack final : public juce::Component, public juce::DragAndDropTarget, pri
 public:
     FxRack (UiContext& c, int ch, std::function<void()> scan)
         : ctx (c), channel (ch), chain (c.engine.chainFor (ch)),
-          colour (ch < kMaxInputs ? theme::accentIn : theme::busColour (ch - kMaxInputs)),
-          bypass (ch < kMaxInputs ? *c.engine.inputs[(size_t) ch].fxBypass : *c.engine.buses[(size_t) (ch - kMaxInputs)].fxBypass),
+          colour (channelColour (ch)),
+          bypass (*c.engine.fxOf (ch).fxBypass),
           onScan (std::move (scan))
     {
         view.setViewedComponent (&row, false);
@@ -3247,8 +3275,17 @@ private:
             if (isSelected (u.slot) && u.comp->isVisible())
             {
                 const auto c = u.section != nullptr ? u.section->colour : colour;
+                const auto card = u.comp->getBounds().toFloat().reduced (3.0f);
                 juce::Path p;
-                p.addRoundedRectangle (u.comp->getBounds().toFloat().reduced (3.0f), 6.0f);
+                if (theme::deep())
+                {
+                    // Only the top line glows (outward, above the card); without glow nothing here.
+                    if (! theme::glow) continue;
+                    p.addRectangle (card.withHeight (theme::kSelectedLine).reduced (4.0f, 0.0f));
+                    juce::DropShadow (c.withAlpha (0.42f), 10, {}).drawForPath (g, p);
+                    continue;
+                }
+                p.addRoundedRectangle (card, 6.0f);
                 juce::DropShadow (c.withAlpha (0.45f), 16, {}).drawForPath (g, p);
             }
     }
@@ -3336,7 +3373,7 @@ private:
     // Presets (state/Presets.h)
     juce::String channelName() const
     {
-        return channel < kMaxInputs ? ctx.engine.inputs[(size_t) channel].name : ctx.engine.buses[(size_t) (channel - kMaxInputs)].name;
+        return ctx.engine.channelName (channel);
     }
 
     /** Asks for a name, then saves the clip as a preset (asks before replacing one of the same name). */
@@ -3405,7 +3442,7 @@ private:
         selection.erase (std::remove_if (selection.begin(), selection.end(), [this] (int i) { return i < 0 || i >= chain.size(); }), selection.end());
         seenVersion = chain.getVersion();
         auto& e = ctx.engine;
-        const bool isInput = channel < kMaxInputs;
+        const bool isInput = channel < kMaxInputs || isRecTrackChannel (channel);
         for (int i = 0; i < chain.size(); ++i)
         {
             auto* slot = chain.getSlot (i);
@@ -3978,19 +4015,38 @@ juce::String formatTime (double seconds)
 class WaveformView final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
-    explicit WaveformView (Recorder& r) : rec (r)
+    WaveformView (Recorder& r, Engine& e) : rec (r), engine (e)
     {
-        setTooltip ("Click / drag: jump to that position.  Drag the handles at the edges to trim the start / end.");
         setMouseCursor (juce::MouseCursor::IBeamCursor);
+    }
+
+    /** Double-click: the full view (the recorder window). */
+    std::function<void()> onOpenFull;
+
+    /** Several tracks: the multitrack take being recorded, or the open multitrack recording (the same lanes as the
+        full view, small; editing happens there). */
+    int numLanes() const
+    {
+        if (const int k = rec.getTakeTrackCount(); k > 0) return k;
+        return rec.hasProject() && ! rec.isRecording() ? rec.getNumTracks() : 0;
     }
 
     /** Called ~30x per second: repaints only if the waveform or the position changed. */
     void update()
     {
         const bool recording = rec.isRecording();
-        const auto& wave = recording ? rec.getRecordWaveform() : rec.getPlayWaveform();
+        const int lanes = numLanes();
+        uint32_t v = 0;
+        if (lanes > 0)
+            for (int t = 0; t < lanes; ++t)
+            {
+                v += rec.getTrackWaveform (t).getVersion();
+                if (! recording) v += (uint32_t) (audible (t) ? 0 : 7 * (t + 1));
+            }
+        else
+            v = (recording ? rec.getRecordWaveform() : rec.getPlayWaveform()).getVersion();
+        v += rec.stateVersion.load();
         const double pos = recording ? rec.getRecordSeconds() : rec.isPlaying() ? rec.getPlaySeconds() : rec.getStartSeconds();
-        const auto v = wave.getVersion();
         const int px = juce::roundToInt (pos / juce::jmax (0.001, length()) * getWidth());
         const auto trim = std::make_pair (rec.getTrimIn(), rec.getTrimOut());
         if (v != shownVersion || recording != shownRecording || px != shownPx || rec.getLoadedFile() != shownFile || trim != shownTrim)
@@ -4000,6 +4056,9 @@ public:
             shownRecording = recording;
             shownPx = px;
             shownFile = rec.getLoadedFile();
+            setTooltip (lanes > 0 ? "Click: jump to that position.  Double-click or the expand button: edit the tracks in the full view."
+                                  : "Click / drag: jump to that position.  Drag the handles at the edges to trim the start / end.\n"
+                                    "Double-click or the expand button: the full view (several tracks, editing, export).");
             repaint();
         }
     }
@@ -4015,6 +4074,7 @@ public:
         const auto& wave = recording ? rec.getRecordWaveform() : rec.getPlayWaveform();
         const double len = length();
         const auto colour = recording ? theme::mute : theme::good;
+        const int lanes = numLanes();
 
         // Time ruler
         g.setFont (theme::font (9.5f));
@@ -4028,6 +4088,12 @@ public:
             const int t = (int) s;
             g.drawText (juce::String (t / 60) + ":" + juce::String (t % 60).paddedLeft ('0', 2),
                         juce::Rectangle<float> (x + 2.0f, plot.getBottom(), 40.0f, 12.0f), juce::Justification::centredLeft, false);
+        }
+
+        if (lanes > 0 && len > 0.0)
+        {
+            paintLanes (g, plot, lanes, len, recording);
+            return;
         }
 
         if (wave.getSeconds() <= 0.0 || len <= 0.0)
@@ -4092,9 +4158,73 @@ public:
         }
     }
 
+    /** The tracks one below the other: their clips with the waveform, muted tracks greyed out, the play position. */
+    void paintLanes (juce::Graphics& g, juce::Rectangle<float> plot, int lanes, double len, bool recording)
+    {
+        const float gap = lanes > 6 ? 1.0f : 2.0f;
+        const float laneH = (plot.getHeight() - gap * (float) (lanes - 1)) / (float) lanes;
+        auto xAt = [&] (double s) { return plot.getX() + (float) (s / len) * plot.getWidth(); };
+        const auto& project = rec.getProject();
+        for (int t = 0; t < lanes; ++t)
+        {
+            const juce::Rectangle<float> lane (plot.getX(), plot.getY() + (float) t * (laneH + gap), plot.getWidth(), laneH);
+            const bool on = recording || audible (t);
+            const auto c = recording ? theme::mute : on ? theme::accentIn : theme::textFaint;
+            g.setColour (theme::panel.withAlpha (on ? 0.55f : 0.3f));
+            g.fillRect (lane);
+            auto drawPart = [&] (double start, double offset, double length)
+            {
+                const float x0 = juce::jmax (lane.getX(), xAt (start)), x1 = juce::jmin (lane.getRight(), xAt (start + length));
+                if (x1 <= x0 + 0.5f) return;
+                g.setColour (c.withAlpha (on ? 0.16f : 0.08f));
+                g.fillRect (juce::Rectangle<float> (x0, lane.getY(), x1 - x0, lane.getHeight()));
+                const int cols = juce::jmax (1, (int) (x1 - x0));
+                columns.resize ((size_t) cols);
+                const double f0 = offset + ((double) ((x0 - plot.getX()) / plot.getWidth()) * len - start);
+                const double f1 = offset + ((double) ((x1 - plot.getX()) / plot.getWidth()) * len - start);
+                rec.getTrackWaveform (t).getColumns (f0, f1, columns.data(), cols);
+                const float mid = lane.getCentreY(), half = lane.getHeight() * 0.5f;
+                g.setColour (c.withAlpha (on ? 0.8f : 0.4f));
+                for (int i = 0; i < cols; ++i)
+                {
+                    const float h = juce::jlimit (0.3f, half, std::sqrt (juce::jmin (1.0f, columns[(size_t) i])) * half);
+                    g.fillRect (x0 + (float) i, mid - h, 1.0f, 2.0f * h);
+                }
+            };
+            if (recording) drawPart (0.0, 0.0, rec.getRecordSeconds());
+            else if (t < (int) project.tracks.size())
+                for (auto& clip : project.tracks[(size_t) t].clips) drawPart (clip.start, clip.offset, clip.length);
+        }
+        if (recording) return;
+        if (project.hasLoop())
+        {
+            g.setColour ((rec.loop->isOn() ? theme::good : theme::textFaint).withAlpha (0.5f));
+            g.fillRect (juce::Rectangle<float> (xAt (project.loopStart), plot.getY() - 3.0f, xAt (project.loopEnd) - xAt (project.loopStart), 2.0f));
+        }
+        const float startX = xAt (rec.getStartSeconds());
+        g.setColour (theme::text.withAlpha (0.5f));
+        g.fillRect (startX - 0.5f, plot.getY(), 1.0f, plot.getHeight());
+        if (rec.isPlaying())
+        {
+            g.setColour (theme::text);
+            g.fillRect (xAt (rec.getPlaySeconds()) - 1.0f, plot.getY() - 2.0f, 2.0f, plot.getHeight() + 4.0f);
+        }
+    }
+
+    bool audible (int t) const
+    {
+        const int n = rec.getNumTracks();
+        bool anySolo = false;
+        for (int k = 0; k < n; ++k) anySolo |= engine.recTracks[(size_t) k].solo->isOn();
+        const auto& rt = engine.recTracks[(size_t) juce::jlimit (0, kMaxRecTracks - 1, t)];
+        return anySolo ? rt.solo->isOn() : ! rt.mute->isOn();
+    }
+
+    void mouseDoubleClick (const juce::MouseEvent&) override { if (onOpenFull) onOpenFull(); }
+
     void mouseDown (const juce::MouseEvent& e) override
     {
-        dragHandle = handleAt (e.x);
+        dragHandle = numLanes() > 0 ? -1 : handleAt (e.x);
         if (dragHandle < 0) seekTo (e.x);
     }
 
@@ -4133,7 +4263,7 @@ private:
     /** 0 = in handle, 1 = out handle, -1 = none (grab zone of 8 px; the handles also catch the outer padding). */
     int handleAt (int x) const
     {
-        if (rec.isRecording() || rec.getLoadedFile() == juce::File() || rec.getPlayLengthSeconds() <= 0.0) return -1;
+        if (rec.isRecording() || rec.hasProject() || rec.getLoadedFile() == juce::File() || rec.getPlayLengthSeconds() <= 0.0) return -1;
         const float fx = (float) x, inX = xOf (rec.getTrimIn()), outX = xOf (rec.getTrimOut());
         const float dIn = std::abs (fx - inX) - (fx < inX ? 6.0f : 0.0f), dOut = std::abs (fx - outX) - (fx > outX ? 6.0f : 0.0f);
         if (dIn <= 8.0f && dIn <= dOut) return 0;
@@ -4149,12 +4279,13 @@ private:
 
     void seekTo (int x)
     {
-        if (rec.isRecording() || rec.getLoadedFile() == juce::File()) return;
+        if (rec.isRecording() || (rec.getLoadedFile() == juce::File() && ! rec.hasProject())) return;
         rec.seek (secondsAt (x));
         update();
     }
 
     Recorder& rec;
+    Engine& engine;
     std::vector<float> columns;
     uint32_t shownVersion = 0;
     bool shownRecording = false;
@@ -4164,8 +4295,9 @@ private:
     int dragHandle = -1, hoverHandle = -1;
 };
 
-/** Recorder: left what is recorded (a V bus), in the middle the recording itself (transport, waveform,
-    file), on the right where playback goes (any A / V buses). */
+/** Recorder, compact view (the full view is the recorder window: same recorder, same state, more room):
+    left what is recorded (a V bus, or armed inputs), in the middle the recording itself (transport, waveform or
+    the tracks of a multitrack recording, file), on the right where playback goes (any A / V buses). */
 class RecorderDetail final : public juce::Component
 {
 public:
@@ -4176,13 +4308,15 @@ public:
           playBtn (c, *rec.play, "PLAY", theme::good, Toggle::Icon::playPause),
           stopBtn (c, *rec.stop, "STOP", theme::text, Toggle::Icon::stop),
           loopBtn (c, *rec.loop, "LOOP", theme::good, Toggle::Icon::loop),
+          modeSeg (c, *rec.mode, theme::mute, { "V bus", "Inputs" }),
+          tapSeg (c, *rec.tap, theme::accentIn, { "Pre effects", "Post effects" }),
           level (c, *rec.level, "LEVEL", theme::good),
-          wave (rec)
+          wave (rec, c.engine)
     {
         for (juce::Component* s : std::initializer_list<juce::Component*> { &sourceSec, &takeSec, &outSec }) addAndMakeVisible (s);
-        for (juce::Component* k : std::initializer_list<juce::Component*> { &folderChip, &formatChip }) sourceSec.addAndMakeVisible (k);
+        for (juce::Component* k : std::initializer_list<juce::Component*> { &folderChip, &formatChip, &modeSeg, &tapSeg }) sourceSec.addAndMakeVisible (k);
         for (juce::Component* k : std::initializer_list<juce::Component*> { &recBtn, &playBtn, &stopBtn, &loopBtn, &deleteBtn, &wave, &openChip, &lastChip, &showChip,
-                                                                           &cutChip, &resetTrimChip })
+                                                                           &cutChip, &saveCopyChip, &resetTrimChip, &closeChip })
             takeSec.addAndMakeVisible (k);
         outSec.addAndMakeVisible (level);
         for (int b = 0; b < kMaxBuses; ++b)
@@ -4191,24 +4325,25 @@ public:
             (isHwBus (b) ? hwOuts : virtOuts).push_back (std::make_unique<Toggle> (c, *rec.out[(size_t) b], busLabel (b), theme::busColour (b)));
             outSec.addAndMakeVisible (*(isHwBus (b) ? hwOuts : virtOuts).back());
         }
-        // Record source: the V buses as the same kind of buttons as Play To (one of them is lit).
-        for (int k = 0; k < kMaxVirtBuses; ++k)
-        {
-            const int b = virtBusIndex (k);
-            if (! c.engine.isBusActive (b)) continue;
-            sources.push_back (std::make_unique<Toggle> (c, *rec.source, busLabel (b), theme::busColour (b)));
-            sources.back()->choiceValue = k;
-            sources.back()->setTooltip ("Record " + busLabel (b) + " (" + c.engine.buses[(size_t) b].name + ")");
-            sourceSec.addAndMakeVisible (*sources.back());
-        }
-        for (auto* chip : { &folderChip, &formatChip, &openChip, &lastChip, &showChip, &cutChip, &resetTrimChip })
+        rebuildSources();
+        for (auto* chip : { &folderChip, &formatChip, &openChip, &lastChip, &showChip, &cutChip, &saveCopyChip, &resetTrimChip, &closeChip })
         {
             chip->showArrow = false;
             chip->centred = true;
         }
         formatChip.showArrow = true;
 
-        recBtn.setTooltip ("Record the selected V bus to a WAV file (stop with a second click)");
+        // The same recorder in its full view: several tracks, editing, export (the recorder window).
+        takeSec.enableGear ([this] { openFull(); });
+        takeSec.gear.setTooltip ("Full view: record several inputs as tracks, edit them like in a DAW, export stems (double-click the waveform)");
+        wave.onOpenFull = [this] { openFull(); };
+        modeSeg.setTooltip ("What REC records: a V bus (one stereo file), or the inputs armed below (one track per input)");
+        tapSeg.setTooltip ("Pre effects: the inputs as they come in (after the Gain knob); their effect chains are copied onto the "
+                           "tracks, so you can still change them afterwards.\nPost effects: with the effects of the inputs recorded in.");
+        closeChip.setTooltip ("Close the multitrack recording (it stays in its folder)");
+        closeChip.onClick = [this] { rec.closeProject(); refreshTexts(); };
+
+        recBtn.setTooltip ("Record (V bus: one WAV file; inputs: every armed input its own track). Stop with a second click");
         playBtn.setTooltip ("Play / pause the loaded file on the buses selected under Play To (starts at the marker in the waveform)");
         stopBtn.setTooltip ("Stop recording / playback and go back to the start");
         loopBtn.setTooltip ("Repeat the file");
@@ -4217,6 +4352,14 @@ public:
         cutChip.setTooltip ("Cut the file to the part between the trim handles (the original goes to the Recycle Bin)");
         resetTrimChip.setTooltip ("Move the trim handles back to the start and end");
         cutChip.onClick = [this] { confirmCut(); };
+        saveCopyChip.setTooltip ("Save the part between the trim handles as a new file next to it (the original stays as it is)");
+        saveCopyChip.onClick = [this]
+        {
+            juce::String err;
+            const auto f = rec.saveTrimmedCopy (err);
+            if (f == juce::File()) dialog::message (this, dialog::Kind::warning, "Recorder", err);
+            else dialog::message (this, dialog::Kind::info, "Recorder", "Saved as " + f.getFileName() + " in " + f.getParentDirectory().getFullPathName());
+        };
         resetTrimChip.onClick = [this] { rec.resetTrim(); };
         folderChip.setTooltip ("Folder for new recordings");
         openChip.setTooltip ("Load an audio file for playback (WAV, AIFF, FLAC, Ogg, MP3)");
@@ -4273,16 +4416,43 @@ public:
             area.removeFromTop (4);
         };
 
-        // Source: V bus, what it records, folder / format
+        // Source: V bus or inputs, what it records, folder / format
         auto s = sourceSec.content();
-        group (s, sources, sourceLabel, sourceSec.getPosition());
-        s.removeFromTop (2);
-        sourceInfo = s.removeFromTop (30).translated (sourceSec.getX(), sourceSec.getY());
-        s.removeFromTop (6);
-        auto chips = s.removeFromTop (26);
+        auto chips = s.removeFromBottom (24);
         folderChip.setBounds (chips.removeFromLeft (chips.getWidth() / 2 - 3));
         chips.removeFromLeft (6);
         formatChip.setBounds (chips);
+        s.removeFromBottom (4);
+        modeSeg.setBounds (s.removeFromTop (22));
+        s.removeFromTop (6);
+        sourceLabel = {};
+        sourceInfo = {};
+        if (rec.recordsInputs())
+        {
+            tapSeg.setBounds (s.removeFromBottom (22));
+            s.removeFromBottom (4);
+            // Arm buttons of the inputs (IN 1 ...), as many per row as fit.
+            const int per = juce::jmax (1, (s.getWidth() + 4) / 38);
+            const int rows = ((int) arms.size() + per - 1) / juce::jmax (1, per);
+            const int rowH = juce::jlimit (14, 22, rows > 0 ? (s.getHeight() - (rows - 1) * 3) / rows : 22);
+            for (size_t k = 0; k < arms.size(); k += (size_t) per)
+            {
+                auto row = s.removeFromTop (rowH);
+                s.removeFromTop (3);
+                for (size_t j = k; j < juce::jmin (arms.size(), k + (size_t) per); ++j)
+                {
+                    arms[j]->setBounds (row.removeFromLeft (34));
+                    row.removeFromLeft (4);
+                }
+            }
+            if (arms.empty()) sourceInfo = s.translated (sourceSec.getX(), sourceSec.getY());
+        }
+        else
+        {
+            group (s, sources, sourceLabel, sourceSec.getPosition());
+            sourceLabel = {};   // the mode buttons above say it
+            sourceInfo = s.translated (sourceSec.getX(), sourceSec.getY());
+        }
 
         // Recording: transport + time, waveform, file
         auto t = takeSec.content();
@@ -4297,10 +4467,24 @@ public:
         transport.removeFromLeft (10);
         deleteBtn.setBounds (transport.removeFromLeft (34));
         transport.removeFromLeft (10);
-        cutChip.setBounds (transport.removeFromLeft (64));
-        transport.removeFromLeft (4);
-        resetTrimChip.setBounds (transport.removeFromLeft (58));
-        transport.removeFromLeft (14);
+        const bool multi = rec.hasProject();
+        deleteBtn.setVisible (! multi);
+        for (auto* chip : { &cutChip, &saveCopyChip, &resetTrimChip }) chip->setVisible (! multi);
+        closeChip.setVisible (multi);
+        if (multi)
+        {
+            closeChip.setBounds (transport.removeFromLeft (64));
+            transport.removeFromLeft (14);
+        }
+        else
+        {
+            cutChip.setBounds (transport.removeFromLeft (64));
+            transport.removeFromLeft (4);
+            saveCopyChip.setBounds (transport.removeFromLeft (82));
+            transport.removeFromLeft (4);
+            resetTrimChip.setBounds (transport.removeFromLeft (58));
+            transport.removeFromLeft (14);
+        }
         timeArea = transport.translated (takeSec.getX(), takeSec.getY());
         t.removeFromTop (6);
         auto fileRow = t.removeFromBottom (24);
@@ -4339,9 +4523,8 @@ public:
         g.drawFittedText (sourceText, sourceInfo, juce::Justification::topLeft, 2, 0.85f);
 
         g.setFont (theme::font (10.5f, true));
-        if (! hwLabel.isEmpty())   { g.setColour (theme::accentHw.withAlpha (0.8f));   g.drawText ("HARDWARE (A)", hwLabel, juce::Justification::centredLeft); }
-        if (! virtLabel.isEmpty()) { g.setColour (theme::accentVirt.withAlpha (0.8f)); g.drawText ("VIRTUAL (B)", virtLabel, juce::Justification::centredLeft); }
-        if (! sourceLabel.isEmpty()) { g.setColour (theme::accentVirt.withAlpha (0.8f)); g.drawText ("VIRTUAL (B)", sourceLabel, juce::Justification::centredLeft); }
+        if (! hwLabel.isEmpty())   { g.setColour (theme::accentHw.withAlpha (0.8f));   g.drawText ("HARDWARE (H)", hwLabel, juce::Justification::centredLeft); }
+        if (! virtLabel.isEmpty()) { g.setColour (theme::accentVirt.withAlpha (0.8f)); g.drawText ("VIRTUAL (V)", virtLabel, juce::Justification::centredLeft); }
 
         auto f = fileArea;
         g.setColour (rec.getLoadedFile() != juce::File() ? theme::text : theme::textFaint);
@@ -4365,19 +4548,68 @@ public:
         const auto v = rec.stateVersion.load() + rec.source->getVersion();
         if (v != seenVersion) { seenVersion = v; refreshTexts(); }
         if (time != shownTime) { shownTime = time; repaint (timeArea); }
+        // V bus <-> inputs, inputs added / removed, a multitrack recording opened / closed: other controls.
+        // Never while a mouse button is held (the button under it would vanish mid-click).
+        const auto layout = ctx.engine.getLayoutVersion() + (uint32_t) rec.mode->getVersion() * 7u;
+        if ((layout != shownLayout || rec.hasProject() != shownMulti)
+            && ! juce::ModifierKeys::currentModifiers.isAnyMouseButtonDown())
+        {
+            const bool rebuildNeeded = layout != shownLayout;
+            shownLayout = layout;
+            shownMulti = rec.hasProject();
+            if (rebuildNeeded) rebuildSources();
+            resized();
+            refreshTexts();
+        }
         wave.update();
     }
 
 private:
+    void openFull()
+    {
+        if (ctx.openRecorder) ctx.openRecorder();
+    }
+
+    /** The source buttons: the V buses (one is lit) or an arm button per input. */
+    void rebuildSources()
+    {
+        sources.clear();
+        arms.clear();
+        shownLayout = ctx.engine.getLayoutVersion() + (uint32_t) rec.mode->getVersion() * 7u;
+        shownMulti = rec.hasProject();
+        const bool inputs = rec.recordsInputs();
+        if (! inputs)
+            for (int k = 0; k < kMaxVirtBuses; ++k)
+            {
+                const int b = virtBusIndex (k);
+                if (! ctx.engine.isBusActive (b)) continue;
+                sources.push_back (std::make_unique<Toggle> (ctx, *rec.source, busLabel (b), theme::busColour (b)));
+                sources.back()->choiceValue = k;
+                sources.back()->setTooltip ("Record " + busLabel (b) + " (" + ctx.engine.buses[(size_t) b].name + ")");
+                sourceSec.addAndMakeVisible (*sources.back());
+            }
+        else
+            for (int i = 0; i < kMaxInputs; ++i)
+            {
+                if (! ctx.engine.isInputActive (i)) continue;
+                arms.push_back (std::make_unique<Toggle> (ctx, *rec.arm[(size_t) i], "IN" + juce::String (i + 1), theme::mute));
+                arms.back()->setTooltip ("Arm " + ctx.engine.inputs[(size_t) i].name + ": REC records it as its own track");
+                sourceSec.addAndMakeVisible (*arms.back());
+            }
+        tapSeg.setVisible (inputs);
+    }
+
     void refreshTexts()
     {
         const bool recording = rec.isRecording(), playing = rec.isPlaying();
-        if (recording)    stateText = "Recording " + busLabel (rec.getRecordSourceBus()) + "  ->  " + rec.getRecordingFile().getFileName();
+        if (recording && rec.recordsInputs()) stateText = "Recording inputs  ->  " + rec.getRecordingFile().getFileName();
+        else if (recording) stateText = "Recording " + busLabel (rec.getRecordSourceBus()) + "  ->  " + rec.getRecordingFile().getFileName();
         else if (playing) stateText = "Playing";
         else if (rec.getLastError().isNotEmpty()) stateText = rec.getLastError();
         else              stateText = "Stopped";
 
-        sourceText = sources.empty() ? juce::String ("No virtual output (V bus) in use - add one to record.")
+        sourceText = rec.recordsInputs() ? juce::String ("No input in use.")
+                   : sources.empty() ? juce::String ("No virtual output (V bus) in use - add one to record.")
                                      : "Records " + busLabel (rec.getRecordSourceBus()) + " after its fader and limiter into  "
                                            + rec.getFolder().getFileName();
         folderChip.text = "Folder...";
@@ -4386,7 +4618,7 @@ private:
         const auto file = rec.getLoadedFile();
         deleteBtn.setEnabled (file != juce::File() && ! recording);
         const bool trimmed = rec.isTrimmed() && ! recording;
-        for (auto* chip : { &cutChip, &resetTrimChip })
+        for (auto* chip : { &cutChip, &saveCopyChip, &resetTrimChip })
         {
             chip->setEnabled (trimmed);
             chip->setAlpha (trimmed ? 1.0f : 0.4f);
@@ -4394,6 +4626,11 @@ private:
         cutChip.active = trimmed;
         fileTitle = file != juce::File() ? file.getFileName() : juce::String ("No file loaded");
         fileInfo = file != juce::File() ? file.getParentDirectory().getFullPathName() : juce::String();
+        if (rec.hasProject())
+        {
+            fileTitle = rec.getProjectFolder().getFileName();
+            fileInfo = juce::String (rec.getNumTracks()) + " tracks  -  edit and export them in the full view";
+        }
         if (rec.isTrimmed())
             fileInfo = "keeps " + formatTime (rec.getTrimIn()) + " - " + formatTime (rec.getTrimOut()) + "  ("
                      + formatTime (rec.getTrimOut() - rec.getTrimIn()) + ")  -  Cut writes it";
@@ -4478,13 +4715,17 @@ private:
     Recorder& rec;
     Section sourceSec, takeSec, outSec;
     Toggle recBtn, playBtn, stopBtn, loopBtn;
+    ChoiceSegments modeSeg, tapSeg;
     TrashButton deleteBtn;
     Knob level;
     WaveformView wave;
     Chip folderChip { "Folder...", theme::text }, formatChip { "WAV 24", theme::text };
     Chip openChip { "Open File...", theme::text }, lastChip { "Last Take", theme::text }, showChip { "Show", theme::text };
-    Chip cutChip { "Cut", theme::solo }, resetTrimChip { "Reset", theme::text };
-    std::vector<std::unique_ptr<Toggle>> sources, hwOuts, virtOuts;
+    Chip cutChip { "Cut", theme::solo }, saveCopyChip { "Save copy", theme::text }, resetTrimChip { "Reset", theme::text };
+    Chip closeChip { "Close", theme::text };
+    std::vector<std::unique_ptr<Toggle>> sources, arms, hwOuts, virtOuts;
+    uint32_t shownLayout = 0;
+    bool shownMulti = false;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::Rectangle<int> timeArea, sourceInfo, fileArea, hwLabel, virtLabel, sourceLabel;
     juce::String shownTime, stateText, sourceText, fileTitle, fileInfo;
@@ -4496,6 +4737,14 @@ std::unique_ptr<juce::Component> makeStemsPanel (UiContext& c, ChannelFx& s) { r
 std::unique_ptr<juce::Component> makeUtilityPanel (UiContext& c, UtilityFx& u) { return std::make_unique<UtilityPanel> (c, u); }
 std::unique_ptr<juce::Component> makeTransposePanel (UiContext& c, ChannelFx& s) { return std::make_unique<TransposePanel> (c, s.transpose); }
 std::unique_ptr<juce::Component> makeCompPanel (UiContext& c, CompFx& f) { return std::make_unique<CompPanel> (c, f); }
+std::unique_ptr<juce::Component> makeFxRack (UiContext& c, int channel, std::function<void()> scan)
+{
+    return std::make_unique<FxRack> (c, channel, std::move (scan));
+}
+void updateFxRackMeters (juce::Component* rack)
+{
+    if (auto* r = dynamic_cast<FxRack*> (rack)) r->updateMeters();
+}
 
 //==============================================================================
 EqGraph::EqGraph (UiContext& c, ParamEq& e, juce::Colour col, bool lg) : ctx (c), eq (e), colour (col), large (lg)
@@ -4628,9 +4877,13 @@ void EqGraph::setInputSpectrum (const std::vector<float>& cols)
 void EqGraph::paint (juce::Graphics& g)
 {
     const auto r = getLocalBounds().toFloat();
-    // The graph keeps the Legacy colours in every theme.
-    const juce::Colour graphBg (0xff0d0f13), graphLine (0xff2a313e), graphDim (0xff8b94a5);
-    const auto accent = colour == theme::accentHw ? juce::Colour (0xff8d6cff) : colour;
+    // Dark themes: the graph keeps the Legacy colours (a dark display). Light: a light display (user 13.11.).
+    const bool lightGraph = theme::light();
+    const juce::Colour graphBg (lightGraph ? 0xfff0f2f6 : 0xff0d0f13), graphLine (lightGraph ? 0xffcfd5de : 0xff2a313e),
+                       graphDim (lightGraph ? 0xff7d8798 : 0xff8b94a5), inputGrey (lightGraph ? 0xff7d8798 : 0xff9aa3b5);
+    const auto curveColour = lightGraph ? theme::text : juce::Colour (0xffe8ebf1);
+    const auto numberInk = lightGraph ? theme::text : graphBg;   // dark digits on the light band colours
+    const auto accent = colour == theme::accentHw && ! lightGraph ? juce::Colour (0xff8d6cff) : colour;
     g.setColour (graphBg);
     g.fillRoundedRectangle (r, 6.0f);
 
@@ -4679,9 +4932,9 @@ void EqGraph::paint (juce::Graphics& g)
 
         if (! inputSpectrum.isEmpty())   // before the EQ: grey, behind (where the EQ cuts, grey shows above the colour)
         {
-            g.setColour (juce::Colour (0xff9aa3b5).withAlpha (0.13f));
+            g.setColour (inputGrey.withAlpha (0.13f));
             g.fillPath (inputSpectrum);
-            g.setColour (juce::Colour (0xff9aa3b5).withAlpha (0.45f));
+            g.setColour (inputGrey.withAlpha (0.45f));
             g.strokePath (inputSpectrum, juce::PathStrokeType (1.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
         if (! spectrum.isEmpty())
@@ -4707,7 +4960,7 @@ void EqGraph::paint (juce::Graphics& g)
                 g.strokePath (bandCurves[(size_t) k], juce::PathStrokeType (1.0f));
             }
         }
-        g.setColour (on ? theme::text.withAlpha (0.92f) : theme::textFaint);
+        g.setColour (on ? curveColour.withAlpha (0.92f) : graphDim);
         g.strokePath (curve, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 
@@ -4741,10 +4994,10 @@ void EqGraph::paint (juce::Graphics& g)
         }
         if (k == selected)
         {
-            g.setColour (theme::text);
+            g.setColour (curveColour);
             g.drawEllipse (node.expanded (1.5f), 1.5f);
         }
-        g.setColour (bandEnabled ? graphBg : bc);
+        g.setColour (bandEnabled ? numberInk : bc);
         g.setFont (theme::font (large ? 10.5f : 9.5f, true));
         g.drawText (juce::String (k + 1), node, juce::Justification::centred);
     }
@@ -5048,10 +5301,10 @@ struct EqEditor::BandColumn final : public juce::Component, private ParamPoller:
 
 EqEditor::EqEditor (UiContext& c, int sel, int k)
     : ctx (c), selectIndex (sel), instance (k),
-      eq (sel < kMaxInputs ? c.engine.inputs[(size_t) sel].eqs[(size_t) k] : c.engine.buses[(size_t) (sel - kMaxInputs)].eqs[(size_t) k]),
-      colour (sel < kMaxInputs ? theme::accentIn : theme::busColour (sel - kMaxInputs)),
+      eq (c.engine.fxOf (sel).eqs[(size_t) k]),
+      colour (channelColour (sel)),
       onToggle (c, *eq.on, "EQ ON", theme::fxEq), graph (c, eq, colour, true),
-      tap (sel < kMaxInputs ? c.engine.inputs[(size_t) sel].spectrum : c.engine.buses[(size_t) (sel - kMaxInputs)].spectrum),
+      tap (c.engine.fxOf (sel).spectrum),
       fft (std::make_unique<juce::dsp::FFT> (kFftOrder))
 {
     after.history.assign (kFftSize, 0.0f);
@@ -5064,8 +5317,7 @@ EqEditor::EqEditor (UiContext& c, int sel, int k)
     tap.ring.skip (tap.ring.available()); // stale audio from an earlier view
     tap.users.fetch_add (1);
 
-    title = sel < kMaxInputs ? "IN " + juce::String (sel + 1) + "   " + c.engine.inputs[(size_t) sel].name
-                             : busLabel (sel - kMaxInputs) + "   " + c.engine.buses[(size_t) (sel - kMaxInputs)].name;
+    title = channelCode (sel) + "   " + c.engine.channelName (sel);
     if (k > 0) title << "   -   EQ " << (k + 1);
     addAndMakeVisible (onToggle);
     addAndMakeVisible (graph);
@@ -5289,7 +5541,7 @@ juce::Image renderFxBlock (UiContext& ctx, const juce::var& d, float pixelScale,
     const auto fxIdStr = d.getProperty ("fx", {}).toString();
     int ch = ctx.selected;
     if (ch < 0 || ch >= kRecorderSelect) ch = 0;
-    const auto colour = ch < kMaxInputs ? theme::accentIn : theme::busColour (ch - kMaxInputs);
+    const auto colour = channelColour (ch);
     auto snapshot = [&] (juce::Component& c, int w)
     {
         logicalWidth = w;
@@ -5360,16 +5612,14 @@ void Inspector::showChannel (int sel)
     else
     {
         content = std::make_unique<FxRack> (ctx, sel, scan);
-        auto& p = sel < kMaxInputs ? *ctx.engine.inputs[(size_t) sel].fxBypass : *ctx.engine.buses[(size_t) (sel - kMaxInputs)].fxBypass;
+        auto& p = *ctx.engine.fxOf (sel).fxBypass;
         bypass = std::make_unique<Toggle> (ctx, p, "BYPASS", theme::mute);
         bypass->setTooltip ("Bypass the whole effect chain of this channel (the blocks are dimmed meanwhile)");
         addAndMakeVisible (*bypass);
-        auto& pp = sel < kMaxInputs ? *ctx.engine.inputs[(size_t) sel].fxPost : *ctx.engine.buses[(size_t) (sel - kMaxInputs)].fxPost;
-        post = std::make_unique<Toggle> (ctx, pp, "PRE", sel < kMaxInputs ? theme::accentIn : theme::busColour (sel - kMaxInputs));
+        auto& pp = *ctx.engine.fxOf (sel).fxPost;
+        post = std::make_unique<Toggle> (ctx, pp, "PRE", channelColour (sel));
         post->onText = "POST";
-        post->setTooltip (sel < kMaxInputs
-            ? "PRE: the effect chain runs before the fader and pan (default).\nPOST: after them, so the effects get the level the fader sets. Click to switch."
-            : "PRE: the effect chain runs before mono and the fader (default).\nPOST: after them, e.g. a limiter that also catches a fader above 0 dB. Click to switch.");
+        post->setTooltip ("Sets whether the effect chain runs before the fader (PRE, default) or after it (POST). Click to switch.");
         addAndMakeVisible (*post);
     }
     addAndMakeVisible (*content);
@@ -5380,7 +5630,7 @@ void Inspector::showChannel (int sel)
 juce::String Inspector::shownName() const
 {
     if (current < 0 || current >= kRecorderSelect) return {};
-    return current < kMaxInputs ? ctx.engine.inputs[(size_t) current].name : ctx.engine.buses[(size_t) (current - kMaxInputs)].name;
+    return ctx.engine.channelName (current);
 }
 
 void Inspector::layoutHeader()
@@ -5435,8 +5685,7 @@ void Inspector::paint (juce::Graphics& g)
 bool Inspector::channelIdle() const
 {
     if (current < 0 || current >= kRecorderSelect) return false;
-    return current < kMaxInputs ? ctx.engine.inputs[(size_t) current].fxIdle.load (std::memory_order_relaxed)
-                                : ctx.engine.buses[(size_t) (current - kMaxInputs)].fxIdle.load (std::memory_order_relaxed);
+    return ctx.engine.fxOf (current).fxIdle.load (std::memory_order_relaxed);
 }
 
 void Inspector::resized()

@@ -10,8 +10,8 @@ android {
         applicationId = "de.hydra.link"
         minSdk = 28          // AAudio with usage / content type / input presets (Android 9)
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.8.2"
+        versionCode = 5
+        versionName = "0.8.3"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
         externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_static") } }
     }

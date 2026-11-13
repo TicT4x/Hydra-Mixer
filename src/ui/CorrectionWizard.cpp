@@ -8,6 +8,8 @@ namespace
 {
 // Level check: the expected sweep peak at the microphone should land here (dBFS), as on the Analysis page.
 constexpr float kGreenLo = -18.0f, kGreenHi = -6.0f, kClipDb = -3.0f;
+/** Level step: test signal at least this far above the noise in the pauses (microphone self-noise + room), else "Too noisy". */
+constexpr float kMinSnrDb = 30.0f, kQuietSnrDb = 40.0f;
 constexpr double kBurstS = 2.0, kPauseS = 0.7, kCheckSeconds = 600.0;
 constexpr double kSweepSeconds = 5.0, kDelaySeconds = 5.0;
 constexpr int kOtherDeviceId = 2000, kImportCalId = 1000;
@@ -820,7 +822,7 @@ void CorrectionWizard::setOutput (int selectIndex)
 
 bool CorrectionWizard::holdsOutput() const
 {
-    return step >= Step::level || isRunning();
+    return step == Step::level || step == Step::measure || step == Step::result || step == Step::done || isRunning();
 }
 
 bool CorrectionWizard::isRunning() const
@@ -941,10 +943,11 @@ void CorrectionWizard::next()
     {
         case Step::welcome:    showStep (Step::speakers); break;
         case Step::speakers:   showStep (Step::microphone); break;
-        case Step::microphone: showStep (mode == Mode::validate ? Step::placement : Step::nearField); break;
-        case Step::nearField:  showStep (Step::placement); break;
+        // The level is set before the near field (13.11.): its quiet sweeps then play at the level that was set.
+        case Step::microphone: showStep (Step::placement); break;
         case Step::placement:  showStep (Step::level); break;
-        case Step::level:      showStep (Step::measure); break;
+        case Step::level:      showStep (mode == Mode::validate ? Step::measure : Step::nearField); break;
+        case Step::nearField:  showStep (Step::measure); break;
         case Step::measure:    if (results[0] != nullptr) showStep (Step::result); else analyseAll(); break;
         case Step::result:     if (mode == Mode::validate) refine(); else apply(); break;
         case Step::done:       break;
@@ -962,7 +965,7 @@ void CorrectionWizard::back()
 std::vector<CorrectionWizard::Step> CorrectionWizard::stepList() const
 {
     if (mode == Mode::validate) return { Step::microphone, Step::placement, Step::level, Step::measure, Step::result };
-    return { Step::welcome, Step::speakers, Step::microphone, Step::nearField, Step::placement, Step::level, Step::measure, Step::result };
+    return { Step::welcome, Step::speakers, Step::microphone, Step::placement, Step::level, Step::nearField, Step::measure, Step::result };
 }
 
 void CorrectionWizard::startValidation (const RoomMeasurement& m)
@@ -1336,7 +1339,7 @@ void CorrectionWizard::updateLevelCheck (float peak, const MeasureRun& run)
     {
         levelSeen = true;
         const float db = gainToDb (signalRms * 2.0f);   // on the sweep's peak scale (+6 dB)
-        const bool green = db >= kGreenLo && db <= kGreenHi && gainToDb (clipPeak) < -1.0f;
+        const bool green = db >= kGreenLo && db <= kGreenHi && gainToDb (clipPeak) < -1.0f && snrDb() >= kMinSnrDb;
         greenTicks = green ? greenTicks + 1 : 0;
         const bool good = greenTicks > 30;   // ~1 s in the green range
         if (good != levelGood) { levelGood = good; updateButtons(); }
@@ -2020,7 +2023,7 @@ juce::AttributedString CorrectionWizard::bodyText() const
         case Step::nearField:
             addPara (s, "Optional, about a minute. Hold the microphone 1 - 2 cm in front of the larger driver of the left speaker, "
                         "pointing at it, and click Measure. A quiet sweep plays (its level adjusts itself), then the other speaker "
-                        "plays for a moment. Do the same at the right speaker.\n\n");
+                        "plays for a moment. Do the same at the right speaker, then put the microphone back at the listening position.\n\n");
             addPara (s, "Why?  ", theme::text, true);
             addPara (s, "Up close the speaker drowns out the room: Hydra hears the speaker's own response and can correct it up to "
                         "the highest frequencies, without chasing reflections that only exist at one spot of the room. The travel "
@@ -2310,6 +2313,7 @@ void CorrectionWizard::paint (juce::Graphics& g)
             if (clips || db > kClipDb) { word = "Too loud"; c = theme::mute; }
             else if (db > kGreenHi)    { word = "A little loud"; c = theme::warn; }
             else if (db < kGreenLo)    { word = "Too quiet"; c = theme::warn; }
+            else if (snrDb() < kMinSnrDb) { word = "Too noisy"; c = theme::warn; }
             else                       { word = levelGood ? "Good" : "Good - hold it there"; c = theme::good; }
         }
         auto head = r.removeFromTop (44);
@@ -2341,6 +2345,22 @@ void CorrectionWizard::paint (juce::Graphics& g)
             zone (kGreenLo, kGreenHi, theme::good.withAlpha (0.30f));
             zone (kGreenHi, kClipDb, theme::warn.withAlpha (0.16f));
             zone (kClipDb, 0.0f, theme::mute.withAlpha (0.3f));
+            // Noise in the pauses (microphone self-noise + room): hatched from the left up to its level.
+            if (noiseRms > 0.0f)
+            {
+                const float n = gainToDb (noiseRms * 2.0f);
+                const bool noisy = signalRms > 0.0f && snrDb() < kMinSnrDb;
+                g.setColour ((noisy ? theme::warn : theme::textFaint).withAlpha (noisy ? 0.30f : 0.18f));
+                g.fillRect (meter.withRight (px (n)));
+                g.setColour (noisy ? theme::warn : theme::textDim);
+                g.fillRect (px (n) - 1.0f, meter.getY(), 2.0f, meter.getHeight());
+                if (px (n) - meter.getX() > 46.0f)
+                {
+                    g.setFont (theme::font (11.0f, true));
+                    g.drawText ("NOISE", juce::Rectangle<float> (meter.getX() + 8.0f, meter.getY(), px (n) - meter.getX() - 12.0f, meter.getHeight()),
+                                juce::Justification::centredLeft, false);
+                }
+            }
             const float live = gainToDb (micLevel);
             g.setColour (theme::text.withAlpha (0.25f));
             g.fillRect (meter.withRight (px (live)).reduced (0.0f, 12.0f));
@@ -2373,9 +2393,17 @@ void CorrectionWizard::paint (juce::Graphics& g)
             else                       advice = "Perfect. Continue when you're ready.";
             if (noiseRms > 0.0f)
             {
-                const int snr = juce::roundToInt (db - gainToDb (noiseRms * 2.0f));
-                advice << "\nRoom noise: " << snr << " dB below the test signal" << (snr >= 40 ? " - quiet enough." : " - make the room quieter if you can (fans, computer).");
-                if (snr < 40) ac = theme::warn;
+                const int snr = juce::roundToInt (snrDb());
+                if (snr < kMinSnrDb && ! clips)
+                {
+                    advice = "Too much noise: the test signal is only " + juce::String (snr) + " dB above it (30 dB or more needed). "
+                             "Turn the speakers up rather than the microphone gain and switch off fans. If the noise stays in a "
+                             "quiet room, the microphone or its preamp itself is noisy.";
+                    ac = theme::warn;
+                }
+                else
+                    advice << "\nNoise: " << snr << " dB below the test signal"
+                           << (snr >= kQuietSnrDb ? " - quiet enough." : " - usable, a quieter room gives a cleaner result.");
             }
         }
         else if (checking)

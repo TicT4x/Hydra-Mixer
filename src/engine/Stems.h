@@ -92,11 +92,59 @@ struct Separator
 class Service;
 
 /** How one stem goes into the channel's mix: out L = ll * L + lr * R, out R = rl * L + rr * R
-    (its gain, and with the advanced options: left / right side muted, mono, pan). */
+    (its gain, and with the advanced options: left / right side muted, mono, pan), then its width:
+    the side signal times width; above 1 also a decorrelated copy of the mid (all-pass chain, above ~250 Hz) as side
+    signal, so a mono stem becomes wide again and still sums to the same mono signal. */
 struct StemMix
 {
     float ll = 1.0f, lr = 0.0f, rl = 0.0f, rr = 1.0f;
-    static StemMix gain (float g) noexcept { return { g, 0.0f, 0.0f, g }; }
+    float width = 1.0f;   // 0 = mono .. 1 = unchanged .. 2
+    static StemMix gain (float g) noexcept { return { g, 0.0f, 0.0f, g, 1.0f }; }
+};
+
+/** Pseudo-stereo for StemMix::width > 1: three Schroeder all-passes (3.1 / 4.7 / 7.3 ms, g = 0.5) and a one-pole
+    high-pass (bass stays centred). Allocated by prepare; process does not allocate. */
+class Decorrelator
+{
+public:
+    void prepare (double fs)
+    {
+        static constexpr double ms[3] = { 3.1, 4.7, 7.3 };
+        for (int k = 0; k < 3; ++k)
+        {
+            len[k] = juce::jmax (1, (int) std::lround (ms[k] * 0.001 * fs));
+            buf[k].assign ((size_t) len[k], 0.0f);
+        }
+        hpA = (float) std::exp (-2.0 * juce::MathConstants<double>::pi * 250.0 / fs);
+        clear();
+    }
+    void clear() noexcept
+    {
+        for (auto& b : buf) std::fill (b.begin(), b.end(), 0.0f);
+        pos = { 0, 0, 0 };
+        hpX = hpY = 0.0f;
+    }
+    float process (float x) noexcept
+    {
+        for (int k = 0; k < 3; ++k)
+        {
+            auto& b = buf[k];
+            const float d = b[(size_t) pos[k]];
+            const float y = d - 0.5f * x;
+            b[(size_t) pos[k]] = x + 0.5f * y;
+            if (++pos[k] >= len[k]) pos[k] = 0;
+            x = y;
+        }
+        const float y = hpA * (hpY + x - hpX);
+        hpX = x;
+        hpY = y;
+        return y;
+    }
+
+private:
+    std::array<std::vector<float>, 3> buf;
+    std::array<int, 3> len { 1, 1, 1 }, pos { 0, 0, 0 };
+    float hpA = 0.0f, hpX = 0.0f, hpY = 0.0f;
 };
 
 /** The effect state of one channel. Created / prepared on the message thread, processed on the audio thread, filled by
@@ -170,6 +218,8 @@ private:
     int mode = -1, latencyNow = 0;
     float wetLast = 0.0f;
     std::array<StemMix, numStems> lastMix {};
+    std::array<Decorrelator, numStems> decor;   // width above 100 %
+    std::array<bool, numStems> decorRunning {};
     bool wasReady = false;
     Tuning tuningNow, tuningPending;
     int64_t pendingSince = 0;        // samples the pending tuning has stayed unchanged

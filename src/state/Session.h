@@ -16,11 +16,13 @@ namespace hydra
       - an unreadable session.xml is moved to backups/ instead of being overwritten with defaults
       - if session.xml was changed by someone else since we read it, that version is backed up first
       - import / restore / Voicemeeter import back up the current state first */
+namespace recproject { void attach (Engine&); }   // state/RecorderProject.h
+
 class Session
 {
 public:
     Session (Engine& e, MidiMapper& m, juce::File directory = appDataDir())
-        : scenes (e), engine (e), midi (m), dir (std::move (directory)) {}
+        : scenes (e), engine (e), midi (m), dir (std::move (directory)) { recproject::attach (e); }
 
     /** Scenes (snapshots of all parameters), stored with the session. */
     SceneBank scenes;
@@ -60,7 +62,6 @@ public:
         float fontScale = 1.0f;        // text size factor for all windows
         float stripSplit = -1.0f;      // divider between inputs and hardware outputs (share of the width), < 0 = default
         float stripSplit2 = -1.0f;     // divider between hardware and virtual outputs (share of the width), < 0 = default
-        bool renameDevices = false;    // name software devices in Windows after their channels (DeviceNamer)
         bool vacDirect = true;         // Virtual Audio Cable over Kernel Streaming, cable clock synced (VacStream)
         bool vacHideOwnSide = true;    // hide the cable side Hydra uses in Windows (VacCables::tickHiding)
         bool vacHideUnused = true;     // hide both sides of cables no channel uses (VacCables::tickHiding)
@@ -72,12 +73,14 @@ public:
         bool autoReconnect = true;     // reopen devices that went offline as soon as they are back (Engine::autoReconnect)
         bool adaptiveStrips = true;    // with room to spare the strips grow (up to StripArea::kMaxGrow), groups stay compact and centred
         bool horizontalStrips = false; // channels as rows (fader sideways) instead of vertical strips
-        bool fitWindow = false;        // the window takes the size the channels need each time it appears (and when channels change)
-        bool sidePanel = false;        // side panel (routing matrix) right of the strips while there is room for it
+        bool fitWindow = true;         // the window takes the size the channels need each time it appears (and when channels change)
         juce::String fxWarnOff;        // effects ("correction,stems") whose "made for other channels" note is off
-        bool fxBrowser = false;        // effect browser at the right edge open (else only its narrow tab)
+        bool fxBrowser = false;        // effect browser at the left edge open (else only its narrow tab)
+        bool scenePanel = false;       // scene panel at the right edge open (else only its narrow tab)
         bool stripDividers = true;     // draggable dividers between the groups of strips while they do not fit
-        juce::String theme = "default"; // look of the app (theme::styleFromName)
+        int stripCollapsed = 0;        // groups of strips folded to a narrow summary (bit 0 inputs, 1 hardware, 2 virtual outputs)
+        int stripPinned = 0;           // groups always shown in full, the others scroll (same bits)
+        juce::String theme = "dark";    // look of the app (theme::styleFromName: dark, darker, legacy)
         bool netEnabled = false;       // Hydra Link: audio over the network (engine/NetLink.h); off = no port open
         int netPort = 6980;            // UDP port of Hydra Link (net::kDefaultPort)
         juce::String netName;          // this computer as other Hydras see it (empty = Windows computer name)

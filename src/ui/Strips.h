@@ -166,6 +166,8 @@ public:
     std::function<void()> onScroll;
     /** Right-click on the empty space between / next to the strips (position in getContent()). */
     std::function<void (juce::Point<int>)> onBackgroundMenu;
+    /** Left click on the empty space (position in getContent()): captions of the horizontal rows. */
+    std::function<void (juce::Point<int>)> onBackgroundClick;
     static constexpr int kScrollBar = 10;
 
 private:
@@ -173,17 +175,25 @@ private:
     {
         std::function<void()> moved;
         void visibleAreaChanged (const juce::Rectangle<int>&) override { if (moved) moved(); }
-        void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w) override
-        {
-            ParamControl::notePaneScrolled();   // faders / knobs passing under the mouse stay put meanwhile
-            juce::Viewport::mouseWheelMove (e, w);
-        }
+        /** A mouse wheel notch glides to its place (~0.1 s) instead of jumping; touchpads (smooth wheels) scroll directly. */
+        void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w) override;
+        void glideFrame (double timestamp);
+        void stopGlide() { gliding = false; vblank.reset(); }   // not from inside glideFrame
+        bool gliding = false;
+        juce::Point<float> target, shown;
+        juce::Point<int> lastSet;
+        double lastFrame = 0.0;
+        std::unique_ptr<juce::VBlankAttachment> vblank;   // only while gliding
     };
     struct Content final : juce::Component
     {
-        std::function<void (juce::Point<int>)> onMenu;
+        std::function<void (juce::Point<int>)> onMenu, onClick;
         std::function<void (juce::Graphics&)> onPaint;
-        void mouseDown (const juce::MouseEvent& e) override { if (e.mods.isPopupMenu() && onMenu) onMenu (e.getPosition()); }
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            if (e.mods.isPopupMenu()) { if (onMenu) onMenu (e.getPosition()); }
+            else if (onClick) onClick (e.getPosition());
+        }
         void paint (juce::Graphics& g) override { if (onPaint) onPaint (g); }
     };
     View view;
@@ -248,6 +258,20 @@ public:
     /** Bus selected with SEL / monitored bus, shown next to the Inputs caption. */
     void setSelInfo (int selBus, int monBus);
 
+    /** A click on a group caption (Inputs / Hardware Outputs / Virtual Outputs) selects it: two symbols appear
+        beside it, collapse (the group shrinks to a narrow summary: level, mute, solo of each channel) and pin
+        (the group is always shown in full, the others scroll). Esc, a click elsewhere or on the caption again
+        ends it. Both are stored (<APP stripCollapsed / stripPinned>, bits 0..2), default off. */
+    bool hasCaptionSelection() const noexcept { return captionSel >= 0; }
+    void clearCaptionSelection();
+    void toggleCollapsed (int group);
+    void togglePinned (int group);
+    void selectCaption (int group);   // -1: none
+    void mouseDown (const juce::MouseEvent&) override;
+    bool keyPressed (const juce::KeyPress&) override;
+    void focusLost (FocusChangeType) override { clearCaptionSelection(); }
+    void paintOverChildren (juce::Graphics&) override;
+
     /** Change Order mode: the strips can be dragged to a new place within their group (inputs, hardware
         outputs, virtual outputs); a bar with Done / Discard appears above them. The engine is not touched
         until onReorderDone applies getShownOrder(); rebuild() leaves the mode (and shows the real order). */
@@ -272,6 +296,8 @@ public:
     /** Horizontal rows (Settings > Display): height of a row, of a group caption, comfortable / minimum fader length
         (of the input rows, which have the most controls), room for the value right of the fader. */
     static constexpr int kRowHeight = 62, kRowCaption = 30, kRowGroupGap = 10, kRowFader = 340, kMinRowFader = 160, kRowValue = 54;
+    /** Collapsed group: width of a channel's column (vertical strips); horizontal rows: a channel's cell and a line of cells. */
+    static constexpr int kMiniWidth = 26, kMiniCell = 104, kMiniLine = 34, kToolSize = 22;
 
     std::vector<std::unique_ptr<InputStripView>> inStrips;
     std::vector<std::unique_ptr<BusStripView>> busStrips;   // H buses first, then V buses
@@ -279,14 +305,14 @@ public:
 private:
     struct Section
     {
-        juce::String title;
+        juce::String title, shortTitle;   // shortTitle: collapsed (vertical strips)
         juce::Colour colour;
-        int captionWidth = 0;
+        int captionWidth = 0, shortWidth = 0;
         int x = 0, y = 0, width = 0;   // group of strips in its pane's content (logical units)
         juce::Rectangle<int> caption;  // shown caption in this component (sticky while scrolling); rows: in the content
     };
     static constexpr int kGroups = 3;          // panes, in this order: inputs, hardware outputs, virtual outputs
-    int groupWidth (const Section&, int strips, int stripWidth) const;
+    int groupWidth (int group, int strips, int stripWidth) const;
     int stripCount (int group) const;
     juce::Component* stripAt (int group, int k) const;
     int paneWidthFor (int group, int stripWidth) const;   // logical width of a pane's content
@@ -300,12 +326,30 @@ private:
     bool computeFit (int paneHeight, Fit&);
     bool joined() const;                       // dividers switched off: all strips in panes[0]
     bool rowsMode() const;                     // Settings > Display: horizontal channels (all in panes[0], one row each)
-    StripPane& paneOf (int group) noexcept { return panes[shownJoined || shownRows ? 0 : group]; }
-    const StripPane& paneOf (int group) const noexcept { return panes[shownJoined || shownRows ? 0 : group]; }
+    StripPane& paneOf (int group) noexcept { return panes[paneIndex (group)]; }
+    const StripPane& paneOf (int group) const noexcept { return panes[paneIndex (group)]; }
+    /** Pane a group is in: its own; joined (one scroll bar): shared by neighbours that are not pinned;
+        rows: one pane for the pinned groups (on top, not scrolling), one for the others. */
+    int paneIndex (int group) const noexcept;
+    bool collapsed (int group) const noexcept;   // folded to the summary (never while reordering)
+    bool pinned (int group) const noexcept { return ((shownPinned >> group) & 1) != 0; }
+    int pinMask() const noexcept;
+    int captionTitleWidth (int group) const;     // short title while collapsed (vertical strips)
+    int toolsWidth (int group) const;            // collapse / pin symbols beside the caption
+    void applyCollapsed();                       // strips hidden / summary shown per group
+    void layoutUnits (int paneY, int paneH, bool animated, const Fit* fit);
+    int rowsGroupHeight (int group, int width) const;
+    int rowsPaneHeight (int pane, int width) const;
+    void placeTools (int group, juce::Rectangle<int> captionArea, int titleWidth, bool animated);
+    void placeRowCaption (int group, bool animated);   // horizontal rows: title, symbols and "+" of a group
+    void placeCaptions();                              // captions only, at the current selAnim
+    void startCaptionGlide();                          // the selection box opens / closes (selAnim)
+    void captionFrame (double timestamp);
     void attachStrips();                       // puts strips and drag layers into the pane of their group
     void attachPlusButtons();                  // rows: into the content (they scroll with the captions), else here
     void layoutRows (bool animated);
-    void paintRowCaptions (juce::Graphics&);
+    void paintRowCaptions (juce::Graphics&, int pane);
+    int groupAt (int pane, juce::Point<int> contentPos) const;   // group whose part of a pane's content that is
     int rowsContentHeight() const;
     int rowControlsWidth() const;              // widest row without its fader
     /** Change Order: the trash can of a strip hides it; it is removed when the new order is applied. */
@@ -322,6 +366,22 @@ private:
 
     class DragLayer;
     class ReorderBar;
+    class Summary;
+    class CaptionTool;
+    std::unique_ptr<Summary> summaries[kGroups];
+    std::unique_ptr<CaptionTool> collapseTools[kGroups], pinTools[kGroups];
+    int captionSel = -1, shownPinned = 0;
+    float selAnim[kGroups] {};   // 0..1: how far a group's caption selection is open (glides, captionFrame)
+    bool captionGliding = false;
+    double captionLastFrame = 0.0;
+    std::unique_ptr<juce::VBlankAttachment> captionVBlank;   // only while the selection glides
+    bool captionClick = false;   // this mouse-down selected a caption (the click-elsewhere listener ignores it)
+    struct ClickElsewhere final : juce::MouseListener
+    {
+        StripArea& owner;
+        explicit ClickElsewhere (StripArea& o) : owner (o) {}
+        void mouseDown (const juce::MouseEvent&) override;
+    } clickElsewhere { *this };
     std::unique_ptr<DragLayer> layers[kGroups];
     std::unique_ptr<ReorderBar> reorderBar;
     bool reordering = false;

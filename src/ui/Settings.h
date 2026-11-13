@@ -3,17 +3,19 @@
 
 namespace hydra
 {
-/** Tabbed settings: general, display, audio engine (master clock device), virtual cables, network (Hydra Link), remote (phones / tablets), MIDI, plugins, backup. */
+/** Settings: a list of pages at the left, in groups (Audio: audio engine, virtual cables, plugins; Connections: network
+    = Hydra Link + phones / tablets, MIDI; Application: general, display, backup). Each page is built when first shown. */
 class SettingsPanel final : public juce::Component
 {
 public:
-    enum Tab { general = 0, display, audio, cables, network, remote, midi, plugins, backup };
+    /** In the order of the list; the audio engine always comes first. */
+    enum Tab { audio = 0, cables, plugins, network, midi, general, display, backup };
     explicit SettingsPanel (UiContext& c);
     ~SettingsPanel() override;
     void lookAndFeelChanged() override;   // theme switched: the tabs keep their colour otherwise
     void paint (juce::Graphics&) override;
     void resized() override;
-    void showTab (int i) { tabs.setCurrentTabIndex (i); }
+    void showTab (int i);
     /** Logs in hydra.log how long it took from openedAt (ms counter) until the window was drawn, if that was slow. */
     void measureFirstPaint (double openedAt) { paintFrom = openedAt; }
     void paintOverChildren (juce::Graphics&) override;
@@ -21,10 +23,17 @@ public:
     std::function<void()> onEngineChanged;
     std::function<void()> onSessionReplaced;   // complete settings were loaded from a file
 
+    static constexpr int kNavWidth = 210;
+
 private:
+    class Nav;
+    struct Page { juce::String group, name, subtitle; std::unique_ptr<juce::Component> content; };
     double paintFrom = 0.0;
     UiContext& ctx;
-    juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
+    std::vector<Page> pages;
+    std::unique_ptr<Nav> nav;
+    int current = -1;
+    juce::Rectangle<int> headerArea;   // title and subtitle of the page
 };
 
 /** Live table of all MIDI mappings. */

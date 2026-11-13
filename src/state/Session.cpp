@@ -89,7 +89,7 @@ bool Session::save (const juce::File& f) const
 
     auto* ps = root.createNewChildElement ("PARAMS");
     for (auto& p : engine.params.all())
-        if (p->persistent && p->get() != p->defaultValue)
+        if (p->persistent && ! p->project && p->get() != p->defaultValue)
             ps->setAttribute (p->id.replaceCharacter ('.', '_'), p->get());
 
     for (int i = 0; i < kMaxInputs; ++i)
@@ -127,7 +127,6 @@ bool Session::save (const juce::File& f) const
     app->setAttribute ("fontScale", prefs.fontScale);
     app->setAttribute ("stripSplit", prefs.stripSplit);
     app->setAttribute ("stripSplit2", prefs.stripSplit2);
-    app->setAttribute ("renameDevices", prefs.renameDevices);
     app->setAttribute ("vacDirect", prefs.vacDirect);
     app->setAttribute ("vacHideOwnSide", prefs.vacHideOwnSide);
     app->setAttribute ("vacHideUnused", prefs.vacHideUnused);
@@ -138,12 +137,14 @@ bool Session::save (const juce::File& f) const
     app->setAttribute ("pickerShowAll", prefs.pickerShowAll);
     app->setAttribute ("eqShowInput", prefs.eqShowInput);
     app->setAttribute ("adaptiveStrips", prefs.adaptiveStrips);
-    app->setAttribute ("sidePanel", prefs.sidePanel);
     app->setAttribute ("fxBrowser", prefs.fxBrowser);
+    app->setAttribute ("scenePanel", prefs.scenePanel);
     app->setAttribute ("fxWarnOff", prefs.fxWarnOff);
     app->setAttribute ("horizontalStrips", prefs.horizontalStrips);
     app->setAttribute ("fitWindow", prefs.fitWindow);
     app->setAttribute ("stripDividers", prefs.stripDividers);
+    app->setAttribute ("stripCollapsed", prefs.stripCollapsed);
+    app->setAttribute ("stripPinned", prefs.stripPinned);
     app->setAttribute ("theme", prefs.theme);
     app->setAttribute ("netEnabled", prefs.netEnabled);
     if (prefs.netPort != net::kDefaultPort) app->setAttribute ("netPort", prefs.netPort);
@@ -194,6 +195,7 @@ bool Session::save (const juce::File& f) const
     rec->setAttribute ("folder", engine.recorder.folder.getFullPathName());
     rec->setAttribute ("bits", engine.recorder.bitDepth);
     rec->setAttribute ("file", engine.recorder.getLoadedFile().getFullPathName());
+    if (engine.recorder.hasProject()) rec->setAttribute ("project", engine.recorder.getProjectFile().getFullPathName());
 
     root.addChildElement (midi.toXml().release());
     if (hotkeys != nullptr)
@@ -239,7 +241,6 @@ bool Session::load (const juce::File& f)
         prefs.fontScale = juce::jlimit (0.5f, 2.0f, (float) app->getDoubleAttribute ("fontScale", 1.0));
         prefs.stripSplit = juce::jlimit (-1.0f, 1.0f, (float) app->getDoubleAttribute ("stripSplit", -1.0));
         prefs.stripSplit2 = juce::jlimit (-1.0f, 1.0f, (float) app->getDoubleAttribute ("stripSplit2", -1.0));
-        prefs.renameDevices = app->getBoolAttribute ("renameDevices", false);
         prefs.vacDirect = app->getBoolAttribute ("vacDirect", true);
         prefs.vacHideOwnSide = app->getBoolAttribute ("vacHideOwnSide", true);
         prefs.vacHideUnused = app->getBoolAttribute ("vacHideUnused", true);
@@ -250,13 +251,15 @@ bool Session::load (const juce::File& f)
         prefs.pickerShowAll = app->getBoolAttribute ("pickerShowAll", false);
         prefs.eqShowInput = app->getBoolAttribute ("eqShowInput", false);
         prefs.adaptiveStrips = app->getBoolAttribute ("adaptiveStrips", true);
-        prefs.sidePanel = app->getBoolAttribute ("sidePanel", false);
         prefs.fxBrowser = app->getBoolAttribute ("fxBrowser", false);
+        prefs.scenePanel = app->getBoolAttribute ("scenePanel", false);
         prefs.fxWarnOff = app->getStringAttribute ("fxWarnOff");
         prefs.horizontalStrips = app->getBoolAttribute ("horizontalStrips", false);
-        prefs.fitWindow = app->getBoolAttribute ("fitWindow", false);
+        prefs.fitWindow = app->getBoolAttribute ("fitWindow", true);
         prefs.stripDividers = app->getBoolAttribute ("stripDividers", true);
-        prefs.theme = app->getStringAttribute ("theme", "default");
+        prefs.stripCollapsed = app->getIntAttribute ("stripCollapsed", 0) & 7;
+        prefs.stripPinned = app->getIntAttribute ("stripPinned", 0) & 7;
+        prefs.theme = app->getStringAttribute ("theme", "dark");
         prefs.netEnabled = app->getBoolAttribute ("netEnabled", false);
         prefs.netPort = juce::jlimit (1, 65535, app->getIntAttribute ("netPort", net::kDefaultPort));
         prefs.netName = app->getStringAttribute ("netName");
@@ -311,6 +314,12 @@ bool Session::load (const juce::File& f)
             juce::String err;
             engine.recorder.loadFile (juce::File (file), err);
         }
+        const auto project = rec->getStringAttribute ("project");   // the multitrack recording that was open
+        if (juce::File::isAbsolutePath (project) && juce::File (project).existsAsFile())
+        {
+            juce::String err;
+            engine.recorder.openProject (juce::File (project), err);
+        }
     }
 
     // Version 1 sessions: EQ bands were on by default (and therefore not stored when on).
@@ -318,7 +327,7 @@ bool Session::load (const juce::File& f)
     if (auto* ps = root->getChildByName ("PARAMS"))
         for (auto& p : engine.params.all())
         {
-            if (! p->persistent) continue;
+            if (! p->persistent || p->project) continue;   // recorder tracks: saved with their project
             const auto key = p->id.replaceCharacter ('.', '_');
             float v = p->defaultValue;
             if (ps->hasAttribute (key)) v = (float) ps->getDoubleAttribute (key);

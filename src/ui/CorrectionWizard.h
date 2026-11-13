@@ -9,10 +9,11 @@ namespace hydra
     and a short explanation, in the spirit of SoundID Reference.
 
     Steps: Start (what is needed) -> Speakers (output, left/right separately or together) -> Microphone (input,
-    channel, calibration file) -> Near field (optional: the microphone 1-2 cm in front of each speaker, a quiet sweep
-    with automatic level, then the other speaker from there: the speaker's own response, the system latency and the
-    distance between the speakers) -> Placement (where the microphone goes, how many positions) -> Level (pink noise
-    loop, big gauge, advice) -> Measure (per position a sweep from each speaker, the picture shows where the
+    channel, calibration file) -> Placement (where the microphone goes, how many positions) -> Level (pink noise
+    loop, big gauge, advice, warns when the microphone / room is too noisy) -> Near field (optional: the microphone
+    1-2 cm in front of each speaker, a quiet sweep with automatic level, then the other speaker from there: the
+    speaker's own response, the system latency and the distance between the speakers; then back to the listening
+    position) -> Measure (per position a sweep from each speaker, the picture shows where the
     microphone goes next) -> Result (before / after, strength and range as presets) -> Done (A/B switch).
 
     The measurements end up in the library (RoomLibrary, list on the Correction page); Analysis shows them in
@@ -44,7 +45,7 @@ public:
     /** File name of the measurement of the result step, empty if there is none. */
     juce::String measurementFile() const { return results[0] != nullptr ? results[0]->file.getFileName() : juce::String(); }
 
-    enum class Step { welcome, speakers, microphone, nearField, placement, level, measure, result, done };
+    enum class Step { welcome, speakers, microphone, placement, level, nearField, measure, result, done };
     enum class Mode { calibrate, validate };
 
     /** Validates the output's correction made from `original` (the loaded measurement). */
@@ -80,6 +81,8 @@ private:
     void stopRun();
     void updateLevelCheck (float peak, const MeasureRun&);
     float levelDb() const;
+    /** Level step: test signal over the noise in the pauses (dB), 99 while the noise is not measured yet. */
+    float snrDb() const noexcept { return signalRms > 0.0f && noiseRms > 0.0f ? juce::Decibels::gainToDecibels (signalRms / noiseRms) : 99.0f; }
 
     // Near field: per speaker a quiet sweep at 1-2 cm (level found automatically), then the other speaker from there.
     void startNear (int speaker);

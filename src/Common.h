@@ -32,6 +32,17 @@ constexpr int kMaxDeviceChannels = 32;
 constexpr int kMaxStreamChannels = 32; // channels carried by one asynchronous stream (16 stereo strips / buses)
 constexpr int kMaxScenes = 64;          // scene slots (each has a recall parameter for MIDI / shortcuts)
 
+// Recorder tracks (multitrack recorder, 13.11.): one per recorded input. They are channels with an effect chain like
+// inputs and buses. Channel index scheme (selection index, fxOf, chainFor): 0..15 inputs, 16..31 buses,
+// 32 the recorder itself (kRecorderSelect, no chain), 33..48 recorder tracks.
+constexpr int kMaxRecTracks   = kMaxInputs;
+constexpr int kRecTrackBase   = kMaxInputs + kMaxHwBuses + kMaxVirtBuses + 1;
+constexpr int kNumChannels    = kRecTrackBase + kMaxRecTracks;   // channel indices below this may have a chain
+constexpr bool isRecTrackChannel (int ch) noexcept { return ch >= kRecTrackBase && ch < kNumChannels; }
+constexpr int recTrackChannel (int t) noexcept     { return kRecTrackBase + t; }
+/** Channels that have an effect chain: inputs, buses, recorder tracks (not the recorder itself). */
+constexpr bool isFxChannel (int ch) noexcept { return (ch >= 0 && ch < kRecTrackBase - 1) || isRecTrackChannel (ch); }
+
 constexpr bool isHwBus (int b) noexcept      { return b < kMaxHwBuses; }
 constexpr int hwBusIndex (int a) noexcept    { return a; }                 // A(a+1)
 constexpr int virtBusIndex (int v) noexcept  { return kMaxHwBuses + v; }   // B(v+1)

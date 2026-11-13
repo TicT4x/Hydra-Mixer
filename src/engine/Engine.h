@@ -151,8 +151,9 @@ struct StemsFx
     Param *on {}, *mode {};
     std::array<Param*, stems::numStems> gain {}, mute {}, solo {};
     /** Advanced options (Stems window, "ADVANCED"; applied only while advanced is on): left / right side of a stem
-        muted (e.g. a guitar solo only on the right), mono, pan. */
-    std::array<Param*, stems::numStems> muteL {}, muteR {}, mono {}, pan {};
+        muted (e.g. a guitar solo only on the right), mono, pan, width (after mono: above 100 % it also makes a
+        mono stem wide again, mono-compatible).*/
+    std::array<Param*, stems::numStems> muteL {}, muteR {}, mono {}, pan {}, width {};
     Param* advanced {};
     /** The mix of each stem (gain() plus the advanced options). Any thread. */
     void mixes (stems::StemMix* out) const noexcept;
@@ -292,6 +293,7 @@ struct InputStrip : ChannelFx
     float lastTrim = 1, lastL = 0, lastR = 0;
     std::array<float, kMaxBuses> lastRoute {};   // last applied send gain per bus (0 = not routed)
     std::vector<float> l, r;
+    std::vector<float> recL, recR;   // what the recorder records of this input in this block (while it is armed)
 };
 
 struct Bus : ChannelFx
@@ -318,6 +320,22 @@ struct Bus : ChannelFx
     std::vector<float> l, r;
 };
 
+/** One track of the multitrack recorder (a recorded input). Plays the track's clips of the loaded recorder project
+    through its own strip: gain, effect chain (PRE / POST), mono, pan, fader, mute / solo (among the tracks).
+    The parameters (ids "rt1.*") are project parameters: saved in the project file, not in the session. */
+struct RecTrack : ChannelFx
+{
+    int index = 0;
+    juce::String name;   // shown name = the recorded input's name (and the file name)
+    Meter meter;
+
+    Param *gain {}, *trim {}, *pan {}, *mute {}, *solo {}, *mono {};
+
+    // audio-thread state
+    float lastTrim = 1, lastL = 0, lastR = 0;
+    std::vector<float> l, r;
+};
+
 struct MasterConfig
 {
     juce::String typeName = "Windows Audio (Low Latency Mode)";
@@ -340,6 +358,8 @@ public:
     PluginHost pluginHost;
     std::array<InputStrip, kMaxInputs> inputs;
     std::array<Bus, kMaxBuses> buses;
+    /** Tracks of the multitrack recorder (channels kRecTrackBase + t). Used while a recorder project is loaded. */
+    std::array<RecTrack, kMaxRecTracks> recTracks;
     Recorder recorder;
 
     /** Stems: GPU setting per model (stems.<model>.auto, stems.<model>.gpu in %), the same for every channel. */
@@ -549,10 +569,15 @@ public:
     std::vector<Fx> typicalFx (int channel) const;
     /** How many instances of f a channel can have (correction: 1). */
     static int maxInstances (Fx f) noexcept { return f == Fx::stems || f == Fx::transpose ? 1 : kFxInstances; }
-    PluginChain& chainFor (int channel) noexcept
-    {
-        return channel < kMaxInputs ? inputs[(size_t) channel].plugins : buses[(size_t) (channel - kMaxInputs)].plugins;
-    }
+    PluginChain& chainFor (int channel) noexcept { return fxOf (channel).plugins; }
+    const PluginChain& chainFor (int channel) const noexcept { return fxOf (channel).plugins; }
+
+    /** Parameter id prefix of a channel: "in3.", "bus.A1.", "rt2." (recorder track). */
+    static juce::String channelPrefix (int channel);
+    /** Name of a channel (input, bus or recorder track). */
+    juce::String channelName (int channel) const;
+    /** The channel is in use: an active input / bus slot, or a track of the loaded recorder project. */
+    bool isChannelActive (int channel) const noexcept;
     /** The on switch of instance k of a built-in effect of a channel (nullptr if the channel cannot have it). */
     Param* fxOnParam (int channel, Fx, int k = 0) const;
     /** Id part of instance k's parameters ("eq" / "eq2", "gate" ..., "util" / "util2", "tp"): ids are
@@ -582,7 +607,7 @@ public:
     // (isHwOutput), other channels can use a saved correction.
     Correction* correctionFor (int selectIndex, int k = 0) noexcept
     {
-        return juce::isPositiveAndBelow (selectIndex, kMaxInputs + kMaxBuses) && juce::isPositiveAndBelow (k, kFxInstances)
+        return isFxChannel (selectIndex) && juce::isPositiveAndBelow (k, kFxInstances)
                    ? &fxOf (selectIndex).correctionAt (k) : nullptr;
     }
     static bool isHwOutput (int selectIndex) noexcept
@@ -593,10 +618,12 @@ public:
     /** The effect side of a channel (selection index scheme). */
     ChannelFx& fxOf (int channel) noexcept
     {
+        if (isRecTrackChannel (channel)) return recTracks[(size_t) (channel - kRecTrackBase)];
         return channel < kMaxInputs ? static_cast<ChannelFx&> (inputs[(size_t) channel]) : buses[(size_t) (channel - kMaxInputs)];
     }
     const ChannelFx& fxOf (int channel) const noexcept
     {
+        if (isRecTrackChannel (channel)) return recTracks[(size_t) (channel - kRecTrackBase)];
         return channel < kMaxInputs ? static_cast<const ChannelFx&> (inputs[(size_t) channel]) : buses[(size_t) (channel - kMaxInputs)];
     }
     /** Replaces a channel's correction profile (message thread). Ignored for channels without a correction. */
@@ -679,6 +706,12 @@ private:
     void processStrip (InputStrip& s, const float* srcL, const float* srcR, int n, bool anySolo, bool monoSource, bool timed,
                        const std::array<bool, kMaxBuses>& busOpen) noexcept;
     void processBus (Bus& b, int n, bool timed, bool used) noexcept;
+    /** One recorder track through its strip, in place on t.l / t.r (playback and export). */
+    void processRecTrack (RecTrack& t, int n, bool anySolo, bool timed) noexcept;
+    /** Export thread: the tracks through their strips (Recorder::renderTracks). */
+    void renderTracksOffline (float* const* l, float* const* r, int numTracks, int n, bool withMixer) noexcept;
+    void resetTrackFx (RecTrack&) noexcept;
+    std::atomic<bool> tracksBusy { false };   // the audio thread is processing the recorder tracks
     void updateDropoutLogs();
     void updateOverloadLog();
     void updateSyncDelays();
@@ -721,6 +754,7 @@ private:
     void restartMaster (const juce::String& reason);
     uint64_t masterSeenCallbacks = 0;
     std::vector<float> playL, playR;
+    std::array<float*, kMaxRecTracks> trackL {}, trackR {};
     std::array<float, kMaxBuses> lastPlayRoute {};
 
     std::vector<std::pair<std::unique_ptr<stems::Instance>, uint64_t>> stemsGraveyard;   // freed once the audio thread let go

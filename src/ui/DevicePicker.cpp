@@ -364,7 +364,8 @@ void DevicePicker::buildModel()
     const bool wantHardware = isInput || hwBus || (showEverything && ! virtBus);
     const bool wantSoftware = isInput || ! hwBus || showEverything;
 
-    // Software endpoints (virtual cables, Voicemeeter): listed in their own categories, not among the Windows devices.
+    // Software endpoints (virtual cables, Voicemeeter): not among the Windows devices. Cables have their own category,
+    // Voicemeeter none (user, 13.11.): apps that play into it are picked up with Loopback ("Show all devices").
     const auto cables = findVirtualCables (engine.getDeviceTypes());
     auto isVm = [] (const juce::String& n) { return n.containsIgnoreCase ("Voicemeeter"); };
     auto isSoftwareEndpoint = [&] (const juce::String& n)
@@ -531,7 +532,7 @@ void DevicePicker::buildModel()
                 Device d;
                 d.name = devName;
                 d.stream.kind = IoTarget::Kind::Device; d.stream.typeName = typeName; d.stream.deviceName = devName;
-                // Cables, Voicemeeter: in their own categories (and Hydra's cables never belong here).
+                // Cables have their own category, Voicemeeter is reached with Loopback (Hydra's cables never belong here).
                 if (! showEverything && isSoftwareEndpoint (devName) && ! d.stream.sameStream (cur)) continue;
                 d.options = stereoOptions (d.stream);
                 cat.devices.push_back (std::move (d));
@@ -543,7 +544,7 @@ void DevicePicker::buildModel()
                               "Synchronised to the master clock."
                             : juce::String (isInput ? "Microphones and other inputs Windows knows. " : "Speakers, headphones and other outputs Windows knows. ")
                               + "Other apps can keep using the device; Hydra uses the smallest buffer it allows.\n\n"
-                                "More modes (Exclusive, Shared): Settings > General > Devices.",
+                                "More modes (Exclusive, Shared): Settings > Audio Engine > Devices.",
                      {}, true);
     windowsCategory (kExclusive, "Exclusive (lowest latency)",
                      "Hydra takes the device for itself: the lowest Windows latency, but no other app can use it meanwhile.",
@@ -576,59 +577,29 @@ void DevicePicker::buildModel()
         categories.push_back (std::move (apps));
     }
 
-    // Voicemeeter's virtual devices (VAIO, AUX, VAIO3), if installed: apps that still play to "Voicemeeter Input"
-    // are picked up by loopback, Voicemeeter's own outputs (Out A1 / B1 ...) only deliver sound while it runs.
-    {
-        Category cat;
-        cat.section = "Software";
-        cat.name = "Voicemeeter";
-        cat.hint = isInput ? "Voicemeeter's virtual devices. \"Apps play to\": catches what apps send to a Voicemeeter input "
-                             "(works without Voicemeeter running). \"Voicemeeter output\": only has sound while Voicemeeter runs."
-                           : "Plays into a Voicemeeter virtual input (only heard while Voicemeeter runs).";
-        if (isInput)
-            for (auto& name : listRenderEndpoints())
-                if (isVm (name))
-                {
-                    Device d;
-                    d.name = name;
-                    d.detail = "apps play to it - Hydra listens (loopback)";
-                    d.stream.kind = IoTarget::Kind::Loopback; d.stream.deviceName = name;
-                    d.options = { { "Stereo", d.detail, d.stream } };
-                    cat.devices.push_back (std::move (d));
-                }
-        if (auto* type = engine.findType (kLowLatency))
-            for (auto& name : type->getDeviceNames (isInput))
-                if (isVm (name))
-                {
-                    Device d;
-                    d.name = name;
-                    d.detail = isInput ? "Voicemeeter output" : "Voicemeeter input";
-                    d.stream.kind = IoTarget::Kind::Device; d.stream.typeName = kLowLatency; d.stream.deviceName = name;
-                    d.options = stereoOptions (d.stream);
-                    cat.devices.push_back (std::move (d));
-                }
-        if (! cat.devices.empty()) add (std::move (cat), wantSoftware);   // only when Voicemeeter is installed
-    }
-
+    // Loopback: only with "Show all devices" (user, 13.11.), or while this channel uses it.
     if (isInput)
     {
         Category cat;
         cat.section = "Software";
         cat.name = "Loopback (Playback Device)";
-        cat.hint = "Records everything Windows plays on a playback device.";
+        cat.hint = "Records everything Windows plays on a playback device, e.g. what apps send to a Voicemeeter input "
+                   "(works without Voicemeeter running).";
         cat.empty = "No playback device found.";
         for (auto& name : listRenderEndpoints())
         {
             Device d;
             d.name = name;
             d.stream.kind = IoTarget::Kind::Loopback; d.stream.deviceName = name;
-            // Listening to a cable's or Voicemeeter's input: that is what their own categories do.
-            if (! showEverything && isSoftwareEndpoint (name) && ! d.stream.sameStream (cur)) continue;
+            // Listening to a cable's input: that is what the Virtual Cable category does (Voicemeeter stays listed here).
+            if (! showEverything && ! isVm (name) && isSoftwareEndpoint (name) && ! d.stream.sameStream (cur)) continue;
+            d.detail = isVm (name) ? "what apps play into Voicemeeter" : juce::String();
             d.options = { { "Stereo", "what this device plays", d.stream } };
             cat.devices.push_back (std::move (d));
         }
-        categories.push_back (std::move (cat));
+        add (std::move (cat), showEverything);
     }
+
 
     //--- Network (Hydra Link): streams this computer hears / Hydras it can send to.
     {

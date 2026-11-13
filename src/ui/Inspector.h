@@ -134,6 +134,9 @@ std::unique_ptr<juce::Component> makeStemsPanel (UiContext&, ChannelFx&);
 std::unique_ptr<juce::Component> makeUtilityPanel (UiContext&, UtilityFx&);
 std::unique_ptr<juce::Component> makeTransposePanel (UiContext&, ChannelFx&);
 std::unique_ptr<juce::Component> makeCompPanel (UiContext&, CompFx&);
+/** The effect chain of a channel as in the inspector (the recorder window shows it for its tracks). */
+std::unique_ptr<juce::Component> makeFxRack (UiContext&, int channel, std::function<void()> scanPlugins);
+void updateFxRackMeters (juce::Component* rack);
 /** Picture of the block an entry of the effect browser becomes (fxdrag description), as it looks in the chain;
     pixels = logical size x pixelScale. logicalWidth: its width in the chain. Null if it cannot be drawn. */
 juce::Image renderFxBlock (UiContext&, const juce::var& drag, float pixelScale, int& logicalWidth);
