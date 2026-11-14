@@ -24,7 +24,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    enum Column { denoiser, eq, gate, comp, utility, transpose, stems, correction, plugins, limiter, rest, numColumns };
+    enum Column { denoiser, voice, eq, gate, comp, saturation, utility, transpose, stems, correction, plugins, limiter, rest, numColumns };
 
     struct Row
     {

@@ -47,6 +47,11 @@ static void saveMoreFx (const Engine& engine, juce::XmlElement& e, int ch)
             hp->setAttribute ("instance", k);
             e.addChildElement (hp.release());
         }
+        if (auto m = engine.eqMatchToXml (ch, k))
+        {
+            m->setAttribute ("instance", k);
+            e.addChildElement (m.release());
+        }
         if (k == 0) continue;
         const auto& p = engine.fxOf (ch).correctionAt (k).getProfile();
         if (p.isEmpty()) continue;
@@ -64,6 +69,10 @@ static void loadMoreFx (Engine& engine, const juce::XmlElement& e, int ch)
         for (auto* x : e.getChildWithTagNameIterator ("HPCORR"))
             if (x->getIntAttribute ("instance", 0) == k) hp = x;
         engine.headphoneFromXml (ch, k, hp);
+        const juce::XmlElement* em = nullptr;
+        for (auto* x : e.getChildWithTagNameIterator ("EQMATCH"))
+            if (x->getIntAttribute ("instance", 0) == k) em = x;
+        engine.eqMatchFromXml (ch, k, em);
         if (k == 0) continue;
         const juce::XmlElement* corr = nullptr;
         for (auto* x : e.getChildWithTagNameIterator ("FXCORRECTION"))

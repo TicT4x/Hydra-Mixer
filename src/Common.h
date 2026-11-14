@@ -87,4 +87,12 @@ inline float gainToDb (float g) noexcept
 {
     return g > 1.0e-6f ? 20.0f * std::log10 (g) : -120.0f;
 }
+/** "IN 3", "H2", "V1", "TR 1" for a selection index (channel). */
+inline juce::String channelCode (int selectIndex)
+{
+    if (isRecTrackChannel (selectIndex)) return "TR " + juce::String (selectIndex - kRecTrackBase + 1);
+    if (selectIndex == kMaxInputs + kMaxBuses) return "REC";
+    return selectIndex < kMaxInputs ? "IN " + juce::String (selectIndex + 1) : busLabel (selectIndex - kMaxInputs);
+}
+
 } // namespace hydra

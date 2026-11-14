@@ -138,6 +138,8 @@ void addFxData (const Engine& e, int ch, Fx f, int k, juce::XmlElement& slot)
 {
     if (f == Fx::headphone)
         if (auto hp = e.headphoneToXml (ch, k)) slot.addChildElement (hp.release());
+    if (f == Fx::eq)
+        if (auto m = e.eqMatchToXml (ch, k)) slot.addChildElement (m.release());
     if (f == Fx::correction)
         if (const auto& p = e.fxOf (ch).correctionAt (k).getProfile(); ! p.isEmpty()) slot.addChildElement (p.toXml().release());
 }
@@ -148,6 +150,8 @@ void applyFxData (Engine& e, int ch, Fx f, int k, const juce::XmlElement* slot)
 {
     if (f == Fx::headphone)
         e.headphoneFromXml (ch, k, slot != nullptr ? slot->getChildByName ("HPCORR") : nullptr);
+    if (f == Fx::eq)
+        e.eqMatchFromXml (ch, k, slot != nullptr ? slot->getChildByName ("EQMATCH") : nullptr);
     if (f == Fx::correction && slot != nullptr)
         if (auto* c = slot->getChildByName ("CORRECTION")) e.setCorrection (ch, CorrectionProfile::fromXml (c), k);
 }
@@ -165,15 +169,18 @@ void applyChainData (Engine& e, int ch, const juce::XmlElement* chainXml)
     for (int k = 0; k < kFxInstances; ++k)
     {
         const juce::XmlElement* hp = nullptr;
+        const juce::XmlElement* eq = nullptr;
         if (chainXml != nullptr)
             for (auto* slot : chainXml->getChildWithTagNameIterator ("SLOT"))
             {
                 const auto f = fxFromId (slot->getStringAttribute ("builtin"));
                 if (! slot->hasAttribute ("builtin") || slot->getIntAttribute ("instance", 0) != k) continue;
                 if (f == Fx::headphone) hp = slot;
+                if (f == Fx::eq) eq = slot;
                 if (f == Fx::correction) applyFxData (e, ch, f, k, slot);
             }
         applyFxData (e, ch, Fx::headphone, k, hp);
+        applyFxData (e, ch, Fx::eq, k, eq);
     }
 }
 } // namespace

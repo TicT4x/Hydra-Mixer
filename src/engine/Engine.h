@@ -6,6 +6,8 @@
 #include "core/Correction.h"
 #include "core/HeadphoneEq.h"
 #include "core/Utility.h"
+#include "core/VoiceFx.h"
+#include "core/MatchEq.h"
 #include "IoStreams.h"
 #include "Stems.h"
 #include "Transpose.h"
@@ -67,7 +69,7 @@ struct SpectrumTap
     never reset: the view takes differences between two readings. Single writer (audio thread). */
 struct DspTimes
 {
-    enum Stage { denoiser, eq, gate, comp, plugins, limiter, utility, transpose, stems, correction, other, numStages };
+    enum Stage { denoiser, eq, gate, comp, plugins, limiter, utility, transpose, stems, correction, voice, saturation, other, numStages };
     std::array<std::atomic<uint64_t>, numStages> ticks {};
     void add (Stage s, int64_t t) noexcept
     {
@@ -145,6 +147,39 @@ struct UtilityFx
     }
 };
 
+/** Saturation (core/VoiceFx.h): soft harmonic saturation, level-matched. */
+struct SaturationFx
+{
+    Param *on {}, *drive {}, *warmth {}, *mix {}, *output {};
+    dsp::Saturator dsp;
+    dsp::SaturatorSettings settings() const noexcept { return { drive->get(), warmth->get() * 0.01f, mix->get() * 0.01f, output->get() }; }
+};
+
+/** Studio Voice (core/VoiceFx.h): one knob (amount) and a profile run a whole vocal chain; Engine::convertVoice
+    replaces it with the real blocks (EQ, Gate, Compressor(s), Saturation, Limiter) at their current settings.
+    Once per channel. "Learn my mic" (Engine::startVoiceLearn): ~8 s of speech are analysed (match::Analyzer), the
+    spectrum is kept in mic (params, so it is saved with the session), and the EQ is fitted from it toward the speech
+    reference plus the profile's character (Engine::updateVoices, again when the profile changes). */
+struct VoiceFx
+{
+    Param *on {}, *amount {}, *profile {};
+    Param *learned {};                               // mic holds a learned spectrum
+    std::array<Param*, match::kBands> mic {};        // the voice through this microphone (normalised dB)
+    dsp::StudioVoice dsp;
+    int profileIndex() const noexcept { return juce::roundToInt (profile->get()); }
+    float amountNorm() const noexcept { return amount->get() * 0.01f; }
+
+    // Learning (message thread, except the ring and the flag the audio thread writes / reads).
+    enum class Learn { idle, listening, done, failed };
+    std::atomic<bool> listening { false };           // audio thread pushes the channel's input into ring
+    SpscAudioRing ring;                              // allocated when learning starts
+    match::Analyzer analyzer;
+    Learn learnState = Learn::idle;
+    juce::String learnMessage;                       // "Speak normally ...", "No voice heard ..."
+    float learnProgress = 0.0f;                      // 0..1 of the speech needed
+    uint64_t fittedKey = ~(uint64_t) 0;              // what the current match was fitted for
+};
+
 /** Stems (engine/Stems.h): one per input. Its state exists only while the effect is in the chain. */
 struct StemsFx
 {
@@ -220,6 +255,10 @@ struct ChannelFx
     Correction& correctionAt (int k) noexcept             { return k <= 0 ? correction : moreCorrections[(size_t) juce::jmin (k, kFxInstances - 1) - 1]; }
     const Correction& correctionAt (int k) const noexcept { return k <= 0 ? correction : moreCorrections[(size_t) juce::jmin (k, kFxInstances - 1) - 1]; }
     std::array<HeadphoneFx, kFxInstances> headphones;   // headphone correction (instances like the other effects)
+    std::array<VoiceFx, kFxInstances> voices;           // Studio Voice
+    std::array<SaturationFx, kFxInstances> saturations;
+    /** A Match EQ learning its reference from this channel: its ring, written after this channel's chain. */
+    std::atomic<SpscAudioRing*> refTap { nullptr };
     Param *fxBypass {};
     Param *fxPost {};   // effect chain after the fader (and pan) instead of before (Inspector: PRE / POST)
 
@@ -568,7 +607,7 @@ public:
         the correction. */
     std::vector<Fx> typicalFx (int channel) const;
     /** How many instances of f a channel can have (correction: 1). */
-    static int maxInstances (Fx f) noexcept { return f == Fx::stems || f == Fx::transpose ? 1 : kFxInstances; }
+    static int maxInstances (Fx f) noexcept { return f == Fx::stems || f == Fx::transpose || f == Fx::voice ? 1 : kFxInstances; }
     PluginChain& chainFor (int channel) noexcept { return fxOf (channel).plugins; }
     const PluginChain& chainFor (int channel) const noexcept { return fxOf (channel).plugins; }
 
@@ -591,6 +630,25 @@ public:
     /** Removes instance k of a built-in effect from the chain; its settings go back to their defaults and it is
         switched off. */
     void removeBuiltin (int channel, Fx, int k = 0);
+    /** Replaces Studio Voice instance k with the real effects it runs (EQ with high pass and cuts, Gate, Compressor, a second fast Compressor for Radio and Singing, EQ with the boosts, Saturation,
+        Limiter) at its current settings, in its place in the chain, so it can be fine-tuned. The measured values
+        (noise floor, leveling) are frozen at this moment. Stages that do nothing at the current amount are left out.
+        Returns an empty string, or why it could not (e.g. no free instance of an effect: then nothing changes). */
+    juce::String convertVoice (int channel, int k);
+    /** Studio Voice "Learn my mic": listens to the channel until about 8 s of speech were heard (gives up after 40 s),
+        then keeps the spectrum and fits the EQ. Message thread. cancel stops listening, forget drops what was learned. */
+    void startVoiceLearn (int channel);
+    void cancelVoiceLearn (int channel);
+    void forgetVoiceLearn (int channel);
+    /** Learning and fitting of all Studio Voices (Engine timer; tests call it directly). */
+    void updateVoices();
+    /** Match function of the EQs (ParamEq::matchData): designs a new filter when the curve changed, switches it off
+        when the match is off or incomplete, frees old filters. Engine timer; the EQ window calls it more often while
+        its knobs move. */
+    void updateEqMatches();
+    /** Session / clipboard: EQMATCH element with the captured spectra of EQ instance k (nullptr if there are none). */
+    std::unique_ptr<juce::XmlElement> eqMatchToXml (int channel, int k) const;
+    void eqMatchFromXml (int channel, int k, const juce::XmlElement* eqmatch);
     /** Inserts the built-in effects that are switched on but not in the chain, removes ones the channel cannot have. */
     void ensureBuiltins();
     /** Creates the RNNoise state of a denoiser instance that does not have one yet (message thread). */

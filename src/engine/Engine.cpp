@@ -1,5 +1,6 @@
 #include "Engine.h"
 #include "VacStream.h"
+#include "core/HiResFir.h"
 #include "state/VacControl.h"
 
 #include <algorithm>
@@ -285,6 +286,13 @@ void Engine::createFxParams (ChannelFx& c, const juce::String& p, const juce::St
         const auto lp = p + fxPart (Fx::limiter, k) + ".";
         lim.on      = &params.addToggle (lp + "on", lbl ("Limiter") + "On");
         lim.ceiling = &params.add (lp + "ceiling", lbl ("Limiter") + "Ceiling", ParamType::Continuous, linRange (-30, 0, 0.1f), 0.0f, " dB");
+        auto& sa = c.saturations[(size_t) k];
+        const auto saP = p + fxPart (Fx::saturation, k) + ".";
+        sa.on     = &params.addToggle (saP + "on", lbl ("Saturation") + "On");
+        sa.drive  = &params.add (saP + "drive", lbl ("Saturation") + "Drive", ParamType::Continuous, linRange (0, 24, 0.1f), 6.0f, " dB");
+        sa.warmth = &params.add (saP + "warmth", lbl ("Saturation") + "Warmth", ParamType::Continuous, linRange (0, 100, 1.0f), 30.0f, " %");
+        sa.mix    = &params.add (saP + "mix", lbl ("Saturation") + "Mix", ParamType::Continuous, linRange (0, 100, 1.0f), 50.0f, " %");
+        sa.output = &params.add (saP + "output", lbl ("Saturation") + "Output", ParamType::Continuous, linRange (-12, 12, 0.1f), 0.0f, " dB");
     }
     {
         // Stems: ids "in1.stems.on", "in1.stems.mode", "in1.stems.vocals" (gain), "in1.stems.vocals.mute" ...
@@ -347,6 +355,18 @@ void Engine::createFxParams (ChannelFx& c, const juce::String& p, const juce::St
         h.gain     = &params.add (hp + "gain", hn + "Gain", ParamType::Continuous, linRange (-12, 12, 0.1f), 0.0f, " dB");
         h.autoGain = &params.addToggle (hp + "auto", hn + "Auto Makeup");
         h.dsp.on = h.on;
+    }
+    {
+        // Studio Voice: once per channel ("in1.voice.*"); mic1..26 = the learned spectrum of the microphone.
+        auto& v = c.voices[0];
+        const auto vp = p + fxPart (Fx::voice, 0) + ".";
+        v.on      = &params.addToggle (vp + "on", n + "Studio Voice On");
+        v.amount  = &params.add (vp + "amount", n + "Studio Voice Amount", ParamType::Continuous, linRange (0, 100, 1.0f), 50.0f, " %");
+        v.profile = &params.addChoice (vp + "profile", n + "Studio Voice Profile", dsp::StudioVoice::profileNames(), dsp::StudioVoice::podcast);
+        v.learned = &params.addToggle (vp + "learned", n + "Studio Voice Mic Learned");
+        for (int b = 0; b < match::kBands; ++b)
+            v.mic[(size_t) b] = &params.add (vp + "mic" + juce::String (b + 1), n + "Studio Voice Mic " + juce::String (juce::roundToInt (match::bandFreq (b))) + " Hz",
+                                             ParamType::Continuous, linRange (-60, 40, 0.01f), 0.0f, " dB");
     }
     c.fxBypass = &params.addToggle (p + "fx.bypass", n + "FX Bypass");
     c.fxPost   = &params.addToggle (p + "fx.post", n + "FX Post-Fader");
@@ -517,7 +537,7 @@ std::vector<Param*> Engine::removeInput (int i)
     s.name = "Input " + juce::String (i + 1);
     s.source = {};
     s.plugins.clear();
-    for (int k = 0; k < kFxInstances; ++k) { setCorrection (i, {}, k); setHeadphone (i, k, {}, {}); }
+    for (int k = 0; k < kFxInstances; ++k) { setCorrection (i, {}, k); setHeadphone (i, k, {}, {}); eqMatchFromXml (i, k, nullptr); }
     rebuildGraph();
     sendChangeMessage();
     return reset;
@@ -539,7 +559,7 @@ std::vector<Param*> Engine::removeBus (int b)
     bus.icon = {};
     bus.output = {};
     bus.plugins.clear();
-    for (int k = 0; k < kFxInstances; ++k) { setCorrection (kMaxInputs + b, {}, k); setHeadphone (kMaxInputs + b, k, {}, {}); }
+    for (int k = 0; k < kFxInstances; ++k) { setCorrection (kMaxInputs + b, {}, k); setHeadphone (kMaxInputs + b, k, {}, {}); eqMatchFromXml (kMaxInputs + b, k, nullptr); }
     if (selOwner == b) selOwner = -1;
     rebuildGraph();
     sendChangeMessage();
@@ -637,12 +657,13 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
         std::array<IoTarget, kMaxInputs> sources;
         std::array<std::vector<std::unique_ptr<PluginSlot>>, kMaxInputs> chains;
         std::array<std::array<CorrectionProfile, kFxInstances>, kMaxInputs> corrections;
-        std::array<std::array<std::unique_ptr<juce::XmlElement>, kFxInstances>, kMaxInputs> headphones;
+        std::array<std::array<std::unique_ptr<juce::XmlElement>, kFxInstances>, kMaxInputs> headphones, eqMatches;
         for (int i : used)
         {
             for (int k = 0; k < kFxInstances; ++k)
             {
                 headphones[(size_t) i][(size_t) k] = headphoneToXml (i, k);
+                eqMatches[(size_t) i][(size_t) k] = eqMatchToXml (i, k);
                 corrections[(size_t) i][(size_t) k] = inputs[(size_t) i].correctionAt (k).getProfile();
             }
             names[(size_t) i] = inputs[(size_t) i].name;
@@ -659,6 +680,7 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
             {
                 setCorrection (dest[(size_t) i], corrections[(size_t) i][(size_t) k], k);
                 headphoneFromXml (dest[(size_t) i], k, headphones[(size_t) i][(size_t) k].get());
+                eqMatchFromXml (dest[(size_t) i], k, eqMatches[(size_t) i][(size_t) k].get());
             }
         }
     }
@@ -668,12 +690,13 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
         std::array<IoTarget, kMaxBuses> outputs;
         std::array<std::vector<std::unique_ptr<PluginSlot>>, kMaxBuses> chains;
         std::array<std::array<CorrectionProfile, kFxInstances>, kMaxBuses> corrections;
-        std::array<std::array<std::unique_ptr<juce::XmlElement>, kFxInstances>, kMaxBuses> headphones;
+        std::array<std::array<std::unique_ptr<juce::XmlElement>, kFxInstances>, kMaxBuses> headphones, eqMatches;
         for (int b : used)
         {
             for (int k = 0; k < kFxInstances; ++k)
             {
                 headphones[(size_t) b][(size_t) k] = headphoneToXml (kMaxInputs + b, k);
+                eqMatches[(size_t) b][(size_t) k] = eqMatchToXml (kMaxInputs + b, k);
                 corrections[(size_t) b][(size_t) k] = buses[(size_t) b].correctionAt (k).getProfile();
             }
             names[(size_t) b] = buses[(size_t) b].name;
@@ -692,6 +715,7 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
             {
                 setCorrection (kMaxInputs + dest[(size_t) b], corrections[(size_t) b][(size_t) k], k);
                 headphoneFromXml (kMaxInputs + dest[(size_t) b], k, headphones[(size_t) b][(size_t) k].get());
+                eqMatchFromXml (kMaxInputs + dest[(size_t) b], k, eqMatches[(size_t) b][(size_t) k].get());
             }
         }
         // Choices that name a bus follow it.
@@ -1107,22 +1131,26 @@ std::vector<Fx> Engine::allowedFx (int ch) const
 {
     // Every effect everywhere, in the usual order of the channel's kind (where ensureBuiltins inserts them).
     if (ch < kMaxInputs || isRecTrackChannel (ch))
-        return { Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::correction, Fx::headphone, Fx::limiter };
-    return { Fx::correction, Fx::headphone, Fx::stems, Fx::transpose, Fx::denoiser, Fx::gate, Fx::utility, Fx::eq, Fx::comp, Fx::limiter };
+        return { Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::voice, Fx::eq, Fx::gate, Fx::comp, Fx::saturation,
+                 Fx::correction, Fx::headphone, Fx::limiter };
+    return { Fx::correction, Fx::headphone, Fx::stems, Fx::transpose, Fx::denoiser, Fx::gate, Fx::utility, Fx::voice, Fx::eq,
+             Fx::comp, Fx::saturation, Fx::limiter };
 }
 
 std::vector<Fx> Engine::typicalFx (int ch) const
 {
-    if (ch < kMaxInputs || isRecTrackChannel (ch)) return { Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::limiter };
-    if (isHwBus (ch - kMaxInputs)) return { Fx::correction, Fx::headphone, Fx::utility, Fx::eq, Fx::comp, Fx::limiter };
-    return { Fx::utility, Fx::eq, Fx::comp, Fx::limiter };
+    if (ch < kMaxInputs || isRecTrackChannel (ch))
+        return { Fx::voice, Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::saturation, Fx::limiter };
+    if (isHwBus (ch - kMaxInputs)) return { Fx::correction, Fx::headphone, Fx::utility, Fx::eq, Fx::comp, Fx::saturation, Fx::limiter };
+    return { Fx::utility, Fx::eq, Fx::comp, Fx::saturation, Fx::limiter };
 }
 
 juce::String Engine::fxPart (Fx f, int k)
 {
     const juce::String base = f == Fx::denoiser ? "dn" : f == Fx::eq ? "eq" : f == Fx::gate ? "gate" : f == Fx::comp ? "comp"
                             : f == Fx::limiter ? "lim" : f == Fx::utility ? "util" : f == Fx::stems ? "stems"
-                            : f == Fx::transpose ? "tp" : f == Fx::headphone ? "hp" : "corr";
+                            : f == Fx::transpose ? "tp" : f == Fx::headphone ? "hp" : f == Fx::voice ? "voice"
+                            : f == Fx::saturation ? "sat" : "corr";
     return k == 0 ? base : base + juce::String (k + 1);
 }
 
@@ -1143,6 +1171,8 @@ Param* Engine::fxOnParam (int ch, Fx f, int k) const
         case Fx::transpose:  return c.transpose.on;
         case Fx::correction: return c.correctionAt (k).on;
         case Fx::headphone:  return c.headphones[i].on;
+        case Fx::voice:      return c.voices[i].on;
+        case Fx::saturation: return c.saturations[i].on;
         default:             return nullptr;
     }
 }
@@ -1205,7 +1235,302 @@ void Engine::removeBuiltin (int ch, Fx f, int k)
     if (auto* on = fxOnParam (ch, f, k)) on->set (0.0f);   // e.g. the first limiter is on by default
     if (f == Fx::correction) setCorrection (ch, {}, k);
     if (f == Fx::headphone) setHeadphone (ch, k, {}, {});
+    if (f == Fx::eq) eqMatchFromXml (ch, k, nullptr);
     if (f == Fx::stems) releaseStems (fxOf (ch));
+}
+
+juce::String Engine::convertVoice (int ch, int k)
+{
+    if (! isFxChannel (ch) || ! juce::isPositiveAndBelow (k, kFxInstances)) return "No Studio Voice here";
+    auto& c = fxOf (ch);
+    auto& chain = chainFor (ch);
+    const int at = chain.indexOf (Fx::voice, k);
+    if (at < 0) return "Studio Voice is not in the chain";
+    auto& v = c.voices[(size_t) k];
+    const bool wasOn = v.on->isOn();
+    const float t = v.amountNorm();
+    const auto d = v.dsp.current (v.profileIndex(), t);
+
+    // The stages that change something at this amount, in the order Studio Voice runs them
+    // (which: 0 = the first compressor, 1 = the second).
+    struct Stage { Fx f; int which; };
+    std::vector<Stage> stages;
+    if (t > 0.0f)
+    {
+        stages.push_back ({ Fx::eq, 0 });
+        if (d.gate.rangeDb < -0.05f) stages.push_back ({ Fx::gate, 0 });
+        stages.push_back ({ Fx::comp, 0 });
+        if (d.comp2On) stages.push_back ({ Fx::comp, 1 });
+        if (d.sat.driveDb > 0.05f) stages.push_back ({ Fx::saturation, 0 });
+        stages.push_back ({ Fx::limiter, 0 });
+    }
+    for (const auto& st : stages)
+    {
+        int freeCount = 0, need = 0;
+        for (int i = 0; i < maxInstances (st.f); ++i) if (! chain.hasBuiltin (st.f, i)) ++freeCount;
+        for (const auto& g : stages) if (g.f == st.f) ++need;
+        if (freeCount < need)
+            return "Not enough free " + fxName (st.f) + " blocks (a chain can have " + juce::String (maxInstances (st.f))
+                 + ", Studio Voice needs " + juce::String (need) + "): remove one first";
+    }
+
+    removeBuiltin (ch, Fx::voice, k);
+    int index = at;
+    for (const auto& st : stages)
+    {
+        const auto f = st.f;
+        const int i = addBuiltin (ch, f, index++);
+        if (i < 0) continue;
+        const auto u = (size_t) i;
+        switch (f)
+        {
+            case Fx::eq:
+            {
+                auto& eq = c.eqs[u];
+                for (int b = 0; b < d.numBands && b < ParamEq::kBands; ++b)
+                {
+                    const auto& band = d.bands[(size_t) b];
+                    if (ParamEq::typeUsesGain (band.type) && std::abs (band.gainDb) < 0.05f) continue;
+                    eq.bandOn[(size_t) b]->set (1.0f);
+                    eq.enabled[(size_t) b]->set (1.0f);
+                    eq.type[(size_t) b]->set ((float) band.type);
+                    eq.gain[(size_t) b]->set (band.gainDb);
+                    eq.freq[(size_t) b]->set (band.freq);
+                    eq.q[(size_t) b]->set (band.q);
+                }
+                break;
+            }
+            case Fx::gate:
+            {
+                auto& g = c.gates[u];
+                g.thr->set (d.gate.thresholdDb);
+                g.range->set (d.gate.rangeDb);
+                g.attack->set (d.gate.attackMs);
+                g.hold->set (d.gate.holdMs);
+                g.release->set (d.gate.releaseMs);
+                break;
+            }
+            case Fx::comp:
+            {
+                auto& cp = c.comps[u];
+                const auto& cs = st.which == 0 ? d.comp : d.comp2;
+                cp.input->set (cs.inputDb);
+                cp.thr->set (cs.thresholdDb);
+                cp.ratio->set (cs.ratio);
+                cp.knee->set (cs.kneeDb);
+                cp.attack->set (cs.attackMs);
+                cp.release->set (cs.releaseMs);
+                cp.makeup->set (cs.makeupDb);
+                cp.autoGain->set (0.0f);
+                break;
+            }
+            case Fx::saturation:
+            {
+                auto& sa = c.saturations[u];
+                sa.drive->set (d.sat.driveDb);
+                sa.warmth->set (d.sat.warmth * 100.0f);
+                sa.mix->set (d.sat.mix * 100.0f);
+                sa.output->set (d.sat.outputDb);
+                break;
+            }
+            case Fx::limiter:
+                c.limiters[u].ceiling->set (d.ceilingDb);
+                break;
+            default: break;
+        }
+        if (! wasOn)
+            if (auto* on = fxOnParam (ch, f, i)) on->set (0.0f);
+    }
+    return {};
+}
+
+void Engine::startVoiceLearn (int ch)
+{
+    if (! isFxChannel (ch)) return;
+    auto& v = fxOf (ch).voices[0];
+    // The ring is allocated once (the audio thread never writes to it before that); later it is only drained.
+    const int need = (int) (sampleRate * 2.0);   // drained 10x per second
+    if (! v.listening.load() && v.ring.getCapacity() < need) v.ring.allocate (2, need);
+    else if (const int n = v.ring.available(); n > 0)
+    {
+        std::vector<float> tmp ((size_t) n * 2);
+        float* dst[2] = { tmp.data(), tmp.data() + n };
+        v.ring.read (dst, 2, n);
+    }
+    v.analyzer.reset (sampleRate);
+    v.learnState = VoiceFx::Learn::listening;
+    v.learnProgress = 0.0f;
+    v.learnMessage = "Speak normally ...";
+    v.listening.store (true, std::memory_order_release);
+}
+
+void Engine::cancelVoiceLearn (int ch)
+{
+    if (! isFxChannel (ch)) return;
+    auto& v = fxOf (ch).voices[0];
+    v.listening.store (false, std::memory_order_release);
+    v.learnState = VoiceFx::Learn::idle;
+    v.learnMessage = {};
+}
+
+void Engine::forgetVoiceLearn (int ch)
+{
+    if (! isFxChannel (ch)) return;
+    cancelVoiceLearn (ch);
+    auto& v = fxOf (ch).voices[0];
+    v.learned->set (0.0f);
+    for (auto* m : v.mic) m->reset();
+}
+
+void Engine::updateVoices()
+{
+    constexpr double kNeedSeconds = 8.0, kGiveUpSeconds = 40.0;
+    for (int ch = 0; ch < kNumChannels; ++ch)
+    {
+        if (! isFxChannel (ch)) continue;
+        auto& v = fxOf (ch).voices[0];
+        if (v.learned == nullptr) continue;
+        if (v.learnState == VoiceFx::Learn::listening)
+        {
+            std::vector<float> l, r;
+            if (const int n = v.ring.available(); n > 0)
+            {
+                l.resize ((size_t) n); r.resize ((size_t) n);
+                float* dst[2] = { l.data(), r.data() };
+                v.ring.read (dst, 2, n);
+                for (int i = 0; i < n; ++i) l[(size_t) i] = 0.5f * (l[(size_t) i] + r[(size_t) i]);
+                v.analyzer.feed (l.data(), n);
+            }
+            const double speech = v.analyzer.activeSeconds();
+            v.learnProgress = (float) juce::jlimit (0.0, 1.0, speech / kNeedSeconds);
+            match::Curve c;
+            if (speech >= kNeedSeconds && v.analyzer.result (c, kNeedSeconds))
+            {
+                v.listening.store (false, std::memory_order_release);
+                for (int b = 0; b < match::kBands; ++b) v.mic[(size_t) b]->set (c[(size_t) b]);
+                v.learned->set (1.0f);
+                v.learnState = VoiceFx::Learn::done;
+                v.learnMessage = "Learned: EQ matched to this mic";
+            }
+            else if (v.analyzer.totalSeconds() >= kGiveUpSeconds)
+            {
+                v.listening.store (false, std::memory_order_release);
+                v.learnState = VoiceFx::Learn::failed;
+                v.learnMessage = speech < 0.5 ? "No voice heard: is the channel muted or the mic off?" : "Not enough speech heard: try again and keep talking";
+            }
+        }
+        // Fit the EQ again when the learned spectrum or the profile changed.
+        uint64_t key = 0;
+        if (v.learned->isOn())
+        {
+            key = (uint64_t) v.profileIndex() + 1;
+            for (auto* m : v.mic) key = key * 1000003ull + m->getVersion();
+        }
+        if (key == v.fittedKey) continue;
+        v.fittedKey = key;
+        dsp::StudioVoice::Match m;
+        if (key != 0)
+        {
+            match::Curve from;
+            for (int b = 0; b < match::kBands; ++b) from[(size_t) b] = v.mic[(size_t) b]->get();
+            // The mic is matched to the reference voice (limited, 75 %), the profile's character comes on top in full.
+            const auto character = dsp::StudioVoice::character (v.profileIndex(), sampleRate);
+            const auto bands = match::fit (from, match::speechReference(), dsp::VoiceDesign::kMaxMatch, 0.75f, sampleRate, &character);
+            for (const auto& b : bands)
+                if (m.n < dsp::VoiceDesign::kMaxMatch) m.bands[(size_t) m.n++] = { b.type, b.freq, b.q, b.gainDb };
+        }
+        v.dsp.setMatch (m);
+    }
+}
+
+//==============================================================================
+void Engine::updateEqMatches()
+{
+    for (int ch = 0; ch < kNumChannels; ++ch)
+    {
+        if (! isFxChannel (ch)) continue;
+        for (auto& eq : fxOf (ch).eqs)
+        {
+            if (eq.on == nullptr) continue;
+            auto* fir = eq.fir.load (std::memory_order_acquire);
+            if (fir != nullptr) fir->collect();
+            const bool want = eq.matchActive();
+            if (! want && fir == nullptr) continue;
+            const uint64_t key = want ? eq.matchKey() * 31ull + (uint64_t) sampleRate : 1;
+            if (key == eq.firKey) continue;
+            eq.firKey = key;
+            if (! want) { fir->setFilter (nullptr); continue; }
+            if (fir == nullptr)
+            {
+                fir = new dsp::HiResFir();
+                eq.fir.store (fir, std::memory_order_release);
+            }
+            const auto* c0 = eq.matchCurve (0);
+            const auto* c1 = eq.matchCurve (1);
+            const int md = eq.matchModeIndex();   // linked (default): one design, the same on both channels
+            std::function<double (double)> second;
+            if (md != ParamEq::stereo) second = [c1] (double f) { return match::fineAt (*c1, f); };
+            fir->setFilter (dsp::HiResFir::design ([c0] (double f) { return match::fineAt (*c0, f); }, sampleRate, second, md == ParamEq::midSide));
+        }
+    }
+}
+
+namespace
+{
+juce::String curveToText (const std::vector<float>& c)
+{
+    juce::String t;
+    t.preallocateBytes (c.size() * 6);
+    for (size_t i = 0; i < c.size(); ++i) t << (i > 0 ? " " : "") << juce::String (c[i], 2);
+    return t;
+}
+
+std::vector<float> curveFromText (const juce::String& text)
+{
+    auto parts = juce::StringArray::fromTokens (text, " ", {});
+    std::vector<float> c;
+    if (parts.size() != match::kFinePoints) return c;
+    c.reserve ((size_t) parts.size());
+    for (auto& s : parts) c.push_back (s.getFloatValue());
+    return c;
+}
+} // namespace
+
+std::unique_ptr<juce::XmlElement> Engine::eqMatchToXml (int ch, int k) const
+{
+    if (! isFxChannel (ch) || ! juce::isPositiveAndBelow (k, kFxInstances)) return nullptr;
+    const auto& m = fxOf (ch).eqs[(size_t) k].matchData;
+    if (m.empty()) return nullptr;
+    auto x = std::make_unique<juce::XmlElement> ("EQMATCH");
+    if (m.converted) x->setAttribute ("converted", true);
+    if (! m.source.empty())    { x->setAttribute ("source", curveToText (m.source));       x->setAttribute ("sourceName", m.sourceName); }
+    if (! m.reference.empty()) { x->setAttribute ("reference", curveToText (m.reference)); x->setAttribute ("referenceName", m.referenceName); }
+    const std::pair<const char*, const std::vector<float>*> sides[] = { { "sourceL", &m.sourceL }, { "sourceR", &m.sourceR }, { "sourceS", &m.sourceS },
+                                                                        { "referenceL", &m.referenceL }, { "referenceR", &m.referenceR }, { "referenceS", &m.referenceS } };
+    for (auto& [name, curve] : sides)
+        if (! curve->empty()) x->setAttribute (name, curveToText (*curve));
+    return x;
+}
+
+void Engine::eqMatchFromXml (int ch, int k, const juce::XmlElement* x)
+{
+    if (! isFxChannel (ch) || ! juce::isPositiveAndBelow (k, kFxInstances)) return;
+    auto& m = fxOf (ch).eqs[(size_t) k].matchData;
+    const auto version = m.version;
+    m = {};
+    m.version = version + 1;
+    if (x == nullptr) return;
+    m.source = curveFromText (x->getStringAttribute ("source"));
+    m.reference = curveFromText (x->getStringAttribute ("reference"));
+    m.sourceL = curveFromText (x->getStringAttribute ("sourceL"));
+    m.sourceR = curveFromText (x->getStringAttribute ("sourceR"));
+    m.sourceS = curveFromText (x->getStringAttribute ("sourceS"));
+    m.referenceL = curveFromText (x->getStringAttribute ("referenceL"));
+    m.referenceR = curveFromText (x->getStringAttribute ("referenceR"));
+    m.referenceS = curveFromText (x->getStringAttribute ("referenceS"));
+    m.sourceName = x->getStringAttribute ("sourceName");
+    m.referenceName = x->getStringAttribute ("referenceName");
+    m.converted = x->getBoolAttribute ("converted");
 }
 
 void Engine::prepareStems (ChannelFx& s)
@@ -1724,6 +2049,8 @@ void Engine::timerCallback()
         if (isFxChannel (ch))
             for (int k = 0; k < kFxInstances; ++k) fxOf (ch).correctionAt (k).update (sampleRate, now, running);
     updateHeadphones();
+    updateVoices();
+    updateEqMatches();
     measureGraveyard.erase (std::remove_if (measureGraveyard.begin(), measureGraveyard.end(),
                                             [&] (const auto& r) { return now >= r.second || ! running; }),
                             measureGraveyard.end());
@@ -1824,6 +2151,8 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
             if (d.dsp != nullptr) d.dsp->prepare (sampleRate);
             d.wasOn = false;
             s.utilities[(size_t) k].dsp.prepare (sampleRate);
+            s.voices[(size_t) k].dsp.prepare (sampleRate);
+            s.saturations[(size_t) k].dsp.prepare (sampleRate);
         }
         if (s.transpose.dsp != nullptr) s.transpose.dsp->prepare (sampleRate);
         s.transpose.wasOn = false;
@@ -2190,7 +2519,9 @@ bool Engine::fxWatched (const ChannelFx& c) const noexcept
     // a channel's effects running while it is not heard.
     bool watched = c.spectrum.users.load (std::memory_order_relaxed) > 0
                 || c.stems.meterUsers.load (std::memory_order_relaxed) > 0
-                || c.transpose.isListening();
+                || c.transpose.isListening()
+                || c.voices[0].listening.load (std::memory_order_relaxed)
+                || c.refTap.load (std::memory_order_relaxed) != nullptr;
     for (const auto& comp : c.comps) watched |= comp.views.load (std::memory_order_relaxed) > 0;
     return watched;
 }
@@ -2206,6 +2537,7 @@ void Engine::pauseFx (ChannelFx& c) noexcept
         c.gates[(size_t) k].dsp.shownGain.store (1.0f, std::memory_order_relaxed);
         c.comps[(size_t) k].gr.store (0.0f, std::memory_order_relaxed);
         c.comps[(size_t) k].inPeak.store (0.0f, std::memory_order_relaxed);
+        c.voices[(size_t) k].dsp.compGr.store (0.0f, std::memory_order_relaxed);
     }
 }
 
@@ -2285,6 +2617,23 @@ void Engine::runFxChain (ChannelFx& s, float* l, float* r, int n, bool timed, bo
                     s.headphones[i].dsp.process (l, r, n, sampleRate);
                     lap (DspTimes::correction);
                     break;
+                case Fx::voice:
+                {
+                    auto& v = s.voices[i];
+                    if (v.listening.load (std::memory_order_acquire))   // "Learn my mic": the raw input, mono
+                    {
+                        const float* src[2] = { l, r };
+                        v.ring.write (src, 2, n);
+                    }
+                    v.dsp.process (l, r, n, v.profileIndex(), v.on->isOn() ? v.amountNorm() : 0.0f);
+                    lap (DspTimes::voice);
+                    break;
+                }
+                case Fx::saturation:
+                    if (! s.saturations[i].on->isOn()) break;
+                    s.saturations[i].dsp.process (l, r, n, s.saturations[i].settings());
+                    lap (DspTimes::saturation);
+                    break;
                 case Fx::transpose:
                 {
                     auto& t = s.transpose;
@@ -2316,6 +2665,11 @@ void Engine::runFxChain (ChannelFx& s, float* l, float* r, int n, bool timed, bo
                 default: break;
             }
         });
+    if (auto* tap = s.refTap.load (std::memory_order_acquire))   // the Match of an EQ captures this channel as its reference
+    {
+        const float* src[2] = { l, r };
+        tap->write (src, 2, n);
+    }
     if (s.fxBypass->isOn() || chainRan)
     {
         s.stems.wasOn = stemsRan;

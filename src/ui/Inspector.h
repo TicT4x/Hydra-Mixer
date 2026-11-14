@@ -5,6 +5,8 @@ namespace juce::dsp { class FFT; }
 
 namespace hydra
 {
+namespace eqmatch { struct State; class Panel; }
+
 //==============================================================================
 /** Interactive response curve of an 8-band parametric EQ (inputs and buses).
     Only bands that are switched on appear as points. Clicking an empty spot adds a band there,
@@ -22,7 +24,7 @@ public:
     void mouseExit (const juce::MouseEvent&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
-    void mouseUp (const juce::MouseEvent&) override { dragging = false; }
+    void mouseUp (const juce::MouseEvent&) override { dragging = false; if (rangeHandle != 0) { rangeHandle = 0; repaint(); } }
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
@@ -45,7 +47,27 @@ public:
     float freqToX (float f) const;
     float xToFreq (float x) const;
 
+    /** Match mode of the EQ window: draws the captured spectra (at the current smoothing), the "into bands" preview and
+        the two handles that limit the match's range. nullptr = not in match mode (what the match does is always shown). */
+    void setMatch (eqmatch::State*);
+    /** Left / right or mid / side: which side is shown and edited (0 = left / mid, 1 = right / side, 2 = both). */
+    void setViewSide (int s) { if (s != viewSide) { viewSide = s; seen = 0; matchSeen = ~0ull; rebuildCurve(); rebuildMatch(); repaint(); } }
+    int getViewSide() const noexcept { return viewSide; }
+
 private:
+    eqmatch::State* match = nullptr;
+    int viewSide = 2;   // 0 = left / mid, 1 = right / side, 2 = both (L+R)
+    int mainSide() const noexcept  { return viewSide == 2 ? 0 : viewSide; }
+    int otherSide() const noexcept { return viewSide == 2 ? 1 : 1 - viewSide; }
+    bool bothSides() const noexcept { return viewSide == 2; }
+    juce::Path otherCurve, matchFill2;
+    uint64_t matchSeen = 0;
+    juce::Path matchSource, matchReference, matchFill, matchPreview;
+    float matchSpecToY (float db) const;
+    int rangeHandle = 0, rangeHover = 0;   // 1 = low, 2 = high handle
+    int hitRange (juce::Point<float>) const;
+    void rebuildMatch();
+    void setRange (int handle, float x);
     static constexpr float kViewDb = 20.0f;   // EQ curve: +-20 dB over the plot height
     float dbToY (float db) const;
     float yToDb (float y) const;
@@ -87,6 +109,8 @@ public:
     void resized() override;
     int getSelectIndex() const noexcept { return selectIndex; }
     int getInstance() const noexcept { return instance; }
+    /** Match mode: the match panel instead of the bands (the MATCH button). */
+    void showMatch (bool on) { setMatchShown (on); }
 
 private:
     struct BandColumn;
@@ -113,8 +137,20 @@ private:
     Toggle onToggle;
     EqGraph graph;
     Chip menu { "EQ  ...", theme::text };
+    Chip matchChip { "MATCH", theme::text };
+    std::unique_ptr<juce::Component> modeButton, sideSwitch;   // channel mode, side shown (Inspector.cpp)
+    std::unique_ptr<Toggle> deltaToggle;
+    uint32_t shownMode = ~0u;
+    int viewSide = 2;
+    void setViewSide (int);
     InfoButton info;
     std::vector<std::unique_ptr<BandColumn>> bands;
+    eqmatch::State& matchState;
+    std::unique_ptr<eqmatch::Panel> matchPanel;
+    bool matchShown = false, preHeld = false;
+    void setMatchShown (bool);
+    void holdPre (bool);   // the pre-EQ tap runs (grey spectrum or a source capture)
+    bool drainPre();       // reads the pre-EQ tap for a capture only
 
     SpectrumTap& tap;
     std::unique_ptr<juce::dsp::FFT> fft;

@@ -109,6 +109,21 @@ struct StereoBiquad
             z1[k] = s1; z2[k] = s2;
         }
     }
+
+    /** Only channel k (EQ bands on one side: left / right or mid / side). */
+    void processOne (int k, float* x, int n) noexcept
+    {
+        float s1 = z1[k], s2 = z2[k];
+        for (int i = 0; i < n; ++i)
+        {
+            const float in = x[i];
+            const float out = c.b0 * in + s1;
+            s1 = c.b1 * in - c.a1 * out + s2;
+            s2 = c.b2 * in - c.a2 * out;
+            x[i] = out;
+        }
+        z1[k] = s1; z2[k] = s2;
+    }
 };
 
 struct GateSettings

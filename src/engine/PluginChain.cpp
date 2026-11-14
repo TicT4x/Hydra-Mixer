@@ -81,9 +81,10 @@ std::unique_ptr<juce::AudioPluginInstance> PluginHost::create (const juce::Plugi
 //==============================================================================
 namespace
 {
-const char* const kFxIds[]   = { "denoiser", "eq", "gate", "comp", "correction", "limiter", "utility", "stems", "transpose", "hpcorr" };
+const char* const kFxIds[]   = { "denoiser", "eq", "gate", "comp", "correction", "limiter", "utility", "stems", "transpose", "hpcorr",
+                               "voice", "saturation" };
 const char* const kFxNames[] = { "Denoiser", "Equalizer", "Gate", "Compressor", "Speaker Correction", "Limiter", "Utility", "Stem Separator", "Transpose",
-                               "Headphone Correction" };
+                               "Headphone Correction", "Studio Voice", "Saturation" };
 } // namespace
 
 juce::String fxId (Fx f)   { return f == Fx::plugin ? juce::String ("plugin") : juce::String (kFxIds[(int) f]); }
@@ -93,6 +94,7 @@ Fx fxFromId (const juce::String& id)
     for (int i = 0; i < (int) Fx::numBuiltins; ++i)
         if (id == kFxIds[i]) return (Fx) i;
     if (id == "phase") return Fx::utility;   // the phase block became part of Utility (10.11.)
+    // "matcheq" (Match EQ block, 13.11.) is gone: Match is part of the EQ now; such a slot is dropped.
     return Fx::plugin;
 }
 

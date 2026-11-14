@@ -883,14 +883,24 @@ void ChoiceSegments::paint (juce::Graphics& g)
 //==============================================================================
 EqTypeBar::EqTypeBar (UiContext& c, Param& p, juce::Colour a) : ParamControl (c, p), accent (a) {}
 
+namespace
+{
+/** Order of the filter types in the bar (top to bottom): the cuts at the end (user 13.11.). The parameter keeps
+    Voicemeeter's order (ParamEq::BandType). */
+constexpr int kTypeOrder[] = { ParamEq::Bell, ParamEq::Notch, ParamEq::BandPass, ParamEq::LowShelf, ParamEq::HighShelf,
+                               ParamEq::LowCut, ParamEq::HighCut };
+}
+
 void EqTypeBar::press (const juce::MouseEvent& e)
 {
     const int n = (int) param.range.end + 1;
-    param.set ((float) juce::jlimit (0, n - 1, e.y * n / juce::jmax (1, getHeight())));
+    const int row = juce::jlimit (0, n - 1, e.y * n / juce::jmax (1, getHeight()));
+    param.set ((float) (row < (int) std::size (kTypeOrder) ? kTypeOrder[row] : row));
 }
 
 void EqTypeBar::drawIcon (juce::Graphics& g, int type, juce::Rectangle<float> r, juce::Colour c)
 {
+    const float cellBottom = r.getBottom() - r.getHeight() * 0.12f;   // the cuts fall almost to the bottom of the cell
     r = r.reduced (r.getWidth() * 0.18f, r.getHeight() * 0.25f);
     const float x0 = r.getX(), x1 = r.getRight(), y0 = r.getY(), y1 = r.getBottom(), ym = r.getCentreY(), xm = r.getCentreX();
     const float w = r.getWidth();
@@ -914,14 +924,14 @@ void EqTypeBar::drawIcon (juce::Graphics& g, int type, juce::Rectangle<float> r,
             p.cubicTo (xm - w * 0.25f, y1, xm - w * 0.2f, y0, xm, y0);
             p.cubicTo (xm + w * 0.2f, y0, xm + w * 0.25f, y1, x1, y1);
             break;
-        case 3: // high cut (low pass)
+        case 3: // high cut (low pass): flat, then a steep fall at the right
             p.startNewSubPath (x0, y0);
-            p.lineTo (xm, y0);
-            p.cubicTo (x1 - w * 0.3f, y0, x1 - w * 0.25f, y1, x1, y1);
+            p.lineTo (x0 + w * 0.45f, y0);
+            p.cubicTo (x0 + w * 0.68f, y0, x0 + w * 0.78f, y0 + 1.0f, x0 + w * 0.84f, cellBottom);
             break;
-        case 4: // low cut (high pass)
-            p.startNewSubPath (x0, y1);
-            p.cubicTo (x0 + w * 0.25f, y1, x0 + w * 0.3f, y0, xm, y0);
+        case 4: // low cut (high pass): a steep rise at the left, then flat
+            p.startNewSubPath (x1 - w * 0.84f, cellBottom);
+            p.cubicTo (x1 - w * 0.78f, y0 + 1.0f, x1 - w * 0.68f, y0, x1 - w * 0.45f, y0);
             p.lineTo (x1, y0);
             break;
         case 5: // low shelf
@@ -948,12 +958,14 @@ void EqTypeBar::paint (juce::Graphics& g)
     const float h = (float) getHeight() / (float) n;
     for (int i = 0; i < n; ++i)
     {
+        const int type = i < (int) std::size (kTypeOrder) ? kTypeOrder[i] : i;
+        const bool on = type == cur;
         auto cell = juce::Rectangle<float> (0.0f, h * (float) i, (float) getWidth(), h).reduced (2.0f, 1.5f);
-        g.setColour (i == cur ? accent.withAlpha (0.2f) : theme::panel2);
+        g.setColour (on ? accent.withAlpha (0.2f) : theme::panel2);
         g.fillRoundedRectangle (cell, 5.0f);
-        g.setColour (i == cur ? accent : theme::outline);
-        g.drawRoundedRectangle (cell, 5.0f, i == cur ? 1.4f : 1.0f);
-        drawIcon (g, i, cell, i == cur ? accent : theme::textDim);
+        g.setColour (on ? accent : theme::outline);
+        g.drawRoundedRectangle (cell, 5.0f, on ? 1.4f : 1.0f);
+        drawIcon (g, type, cell, on ? accent : theme::textDim);
     }
 }
 

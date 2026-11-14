@@ -46,6 +46,9 @@ void apply (Style s)
     fxTranspose  = pick (0xffc77dff, 0xffa055e6);
     fxStems      = pick (0xff56e0c8, 0xff16a890);
     fxHeadphone  = pick (0xff7c9cff, 0xff4f72ea);
+    fxVoice      = pick (0xffb8f060, 0xff5c9a12);
+    fxSaturation = pick (0xffff5a3c, 0xffd8401f);
+    fxMatch      = pick (0xff5c9dff, 0xff2f6fd6);
     fx           = pick (0xff6cacfa, 0xff3b82e0);
 }
 

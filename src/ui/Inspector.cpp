@@ -4,6 +4,7 @@
 #include "state/CorrectionPool.h"
 #include "EffectBrowser.h"
 #include "HeadphoneView.h"
+#include "EqMatch.h"
 #include "state/Session.h"
 #include <juce_dsp/juce_dsp.h>
 #include <deque>
@@ -211,19 +212,19 @@ struct Section : juce::Component
         titleArea.setRight ((float) titleRight());
         g.setColour (colour);
         g.setFont (titleFont());
-        if (beta)
+        if (tag.isNotEmpty())
         {
             const float tw = juce::GlyphArrangement::getStringWidth (titleFont(), title.toUpperCase());
-            const float textW = juce::jmin (tw, titleArea.getWidth() - kBetaWidth - 6.0f);
+            const float textW = juce::jmin (tw, titleArea.getWidth() - tagWidth() - 6.0f);
             g.drawFittedText (title.toUpperCase(), titleArea.withWidth (textW).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
-            drawBeta (g, juce::Rectangle<float> (titleArea.getX() + textW + 6.0f, titleArea.getCentreY() - 7.0f, kBetaWidth, 14.0f), colour);
+            drawTag (g, juce::Rectangle<float> (titleArea.getX() + textW + 6.0f, titleArea.getCentreY() - 7.0f, tagWidth(), 14.0f), tagColour.isTransparent() ? colour : tagColour, tag);
             return;
         }
         g.drawFittedText (title.toUpperCase(), titleArea.toNearestInt(), juce::Justification::centredLeft, 1, 1.0f);
     }
 
-    static constexpr float kBetaWidth = 34.0f;
-    static void drawBeta (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c)
+    float tagWidth() const { return juce::GlyphArrangement::getStringWidth (theme::font (9.0f, true), tag) + 12.0f; }
+    static void drawTag (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c, const juce::String& text)
     {
         g.setColour (c.withAlpha (0.16f));
         g.fillRoundedRectangle (r, 4.0f);
@@ -231,14 +232,14 @@ struct Section : juce::Component
         g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, 1.0f);
         g.setColour (c);
         g.setFont (theme::font (9.0f, true));
-        g.drawText ("BETA", r, juce::Justification::centred);
+        g.drawText (text, r, juce::Justification::centred);
     }
 
     /** Narrowest width at which the title fits next to the header controls. */
     int minimumWidth() const
     {
         const int text = juce::GlyphArrangement::getStringWidthInt (titleFont(), title.toUpperCase());
-        return 13 + (chained ? 16 : 0) + text + (beta ? (int) kBetaWidth + 6 : 0) + 4 + (gear.isVisible() ? 28 : 0) + headerExtra + 44 + (chained ? 26 : 0) + 10 + 4;
+        return 13 + (chained ? 16 : 0) + text + (tag.isNotEmpty() ? (int) tagWidth() + 6 : 0) + 4 + (gear.isVisible() ? 28 : 0) + headerExtra + 44 + (chained ? 26 : 0) + 10 + 4;
     }
 
     /** Right-click on the section (not on a control): the block menu. */
@@ -274,7 +275,8 @@ struct Section : juce::Component
 
     juce::String title;
     juce::Colour colour;
-    bool beta = false;   // a small "BETA" tag after the title
+    juce::String tag;          // a small tag after the title ("BETA" for Stems, "MATCH" for an EQ with a match)
+    juce::Colour tagColour;    // transparent = the section's colour
     juce::Rectangle<int> subCard;   // optional framed area behind some controls
     juce::Colour subCardColour;
     ExpandButton gear;
@@ -285,6 +287,16 @@ struct Section : juce::Component
     bool selected = false;   // selected in the chain (FxRack): drawSelectedCard
     int headerExtra = 0;
 };
+
+/** A menu entry that opens a submenu (its presets) and can still be clicked itself (adds the effect with its defaults). */
+void addClickableSubMenu (juce::PopupMenu& m, const juce::String& name, juce::PopupMenu sub, std::function<void()> action)
+{
+    juce::PopupMenu::Item item (name);
+    item.itemID = -1;   // non-zero: the item can be triggered although it has a submenu
+    item.subMenu = std::make_unique<juce::PopupMenu> (std::move (sub));
+    item.action = std::move (action);
+    m.addItem (std::move (item));
+}
 
 void rowLayout (juce::Rectangle<int> r, const std::vector<juce::Component*>& comps, int gap = 4)
 {
@@ -531,6 +543,11 @@ public:
         menu.setTooltip ("Import or export this EQ, remove all bands");
         menu.onClick = [this, selectIndex, instance] { showEqMenu (ctx, selectIndex, instance, menu); };
         graph.onBandSelected = [this] (int b) { bindBand (b); };
+        smoothKnob.setTooltip ("Match: how much the difference is smoothed (0 = every detail)");
+        amountKnob.setTooltip ("Match: how far this channel is moved toward the reference");
+        matchToggle.setTooltip ("Switch the match on / off. Open the large window to capture or to turn it into bands");
+        for (juce::Component* c : std::initializer_list<juce::Component*> { &smoothKnob, &amountKnob, &matchToggle })
+            section.addChildComponent (c);
         bindBand (0);
         for (int k = 0; k < ParamEq::kBands; ++k) // show the first band in use
             if (eq.bandOn[(size_t) k]->isOn()) { graph.setSelectedBand (k); break; }
@@ -563,6 +580,9 @@ public:
         auto group = col.withSizeKeepingCentre (col.getWidth(), juce::jmin (col.getHeight(), knobsH + gap + footH));
         auto foot = group.removeFromBottom (footH).withSizeKeepingCentre (juce::jmin (col.getWidth(), 138), footH);
         group.removeFromBottom (gap);
+        // Match mode: SMOOTH / AMOUNT and the match's switch in the card instead of the band.
+        matchToggle.setBounds (foot);
+        rowLayout (group.withSizeKeepingCentre (juce::jmin (group.getWidth(), 120), group.getHeight()), { &smoothKnob, &amountKnob }, 4);
         bandRemove.setBounds (foot.removeFromRight (26));
         foot.removeFromRight (4);
         bandToggle->setBounds (foot);
@@ -571,7 +591,7 @@ public:
 
     void paintOverChildren (juce::Graphics& g) override
     {
-        if (eq.bandOn[(size_t) graph.getSelectedBand()]->isOn()) return;
+        if (shownMatch || eq.bandOn[(size_t) graph.getSelectedBand()]->isOn()) return;
         g.setColour (theme::textDim);
         g.setFont (theme::font (11.5f));
         g.drawFittedText ("Click the curve\nto add a band", section.subCard, juce::Justification::centred, 2);
@@ -615,12 +635,32 @@ private:
             typeVersion = t->getVersion();
             gainKnob->setAlpha (ParamEq::typeUsesGain (juce::roundToInt (t->get())) ? 1.0f : 0.35f);
         }
-        const bool used = eq.bandOn[(size_t) graph.getSelectedBand()]->isOn();
-        if ((used ? 1 : 0) == shownUsed) return;
+        const bool matching = eq.matchMode();
+        {
+            // Tag after the title: the channel mode (if not stereo), MATCH, DELTA.
+            juce::StringArray tags;
+            if (eq.modeIndex() == ParamEq::leftRight) tags.add ("L/R");
+            if (eq.modeIndex() == ParamEq::midSide) tags.add ("M/S");
+            if (matching) tags.add ("MATCH");
+            if (eq.delta->isOn()) tags.add ("DELTA");
+            const auto tag = tags.joinIntoString ("  ");
+            if (tag != section.tag)
+            {
+                section.tag = tag;
+                section.tagColour = eq.delta->isOn() ? theme::warn : juce::Colour();
+                section.repaint();
+            }
+        }
+        const bool used = eq.bandOn[(size_t) graph.getSelectedBand()]->isOn() && ! matching;
+        if ((used ? 1 : 0) == shownUsed && matching == shownMatch) return;
         shownUsed = used ? 1 : 0;
+        shownMatch = matching;
         for (juce::Component* c : std::initializer_list<juce::Component*> { typeBar.get(), (juce::Component*) bandToggle.get(), &bandRemove,
                                     (juce::Component*) gainKnob.get(), (juce::Component*) freqKnob.get(), (juce::Component*) qKnob.get() })
             c->setVisible (used);
+        for (juce::Component* c : std::initializer_list<juce::Component*> { &smoothKnob, &amountKnob, &matchToggle }) c->setVisible (matching);
+        section.subCardColour = matching ? theme::fxMatch.withAlpha (0.35f) : theme::bandColour (graph.getSelectedBand()).withAlpha (0.35f);
+        section.repaint();
         repaint();
     }
 
@@ -636,8 +676,11 @@ private:
     std::unique_ptr<Toggle> bandToggle;
     TrashButton bandRemove;
     std::unique_ptr<Knob> gainKnob, freqKnob, qKnob;
+    Knob smoothKnob { ctx, *eq.matchSmooth, "SMOOTH", theme::fxMatch }, amountKnob { ctx, *eq.matchAmount, "AMOUNT", theme::fxMatch };
+    Toggle matchToggle { ctx, *eq.matchOn, "MATCH ON", theme::fxMatch };
     uint32_t typeVersion = 0;
     int shownUsed = -1;
+    bool shownMatch = false;
 };
 
 //==============================================================================
@@ -2490,6 +2533,192 @@ private:
 };
 
 //==============================================================================
+/** Small text button inside a block (e.g. Studio Voice: split into effects). */
+class BlockButton final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    BlockButton (juce::String t, juce::Colour c) : text (std::move (t)), colour (c) { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
+    std::function<void()> onClick, onMenu;
+    void setText (const juce::String& t) { if (t != text) { text = t; repaint(); } }
+    /** >= 0: a bar in the colour fills the button that far (progress); lit: tinted like a switched-on toggle. */
+    void setProgress (float p) { if (std::abs (p - progress) > 0.004f) { progress = p; repaint(); } }
+    void setLit (bool l) { if (l != lit) { lit = l; repaint(); } }
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (0.5f);
+        g.setColour (hover ? colour.withAlpha (0.22f) : lit ? colour.withAlpha (0.14f) : theme::raised);
+        g.fillRoundedRectangle (r, 5.0f);
+        if (progress >= 0.0f)
+        {
+            g.setColour (colour.withAlpha (0.35f));
+            g.fillRoundedRectangle (r.withWidth (r.getWidth() * juce::jlimit (0.0f, 1.0f, progress)), 5.0f);
+        }
+        g.setColour (hover || lit || progress >= 0.0f ? colour : theme::outline);
+        g.drawRoundedRectangle (r, 5.0f, 1.0f);
+        g.setColour (hover || progress >= 0.0f ? theme::text : lit ? colour : theme::textDim);
+        g.setFont (theme::font (10.0f, true));
+        g.drawFittedText (text, getLocalBounds().reduced (4, 0), juce::Justification::centred, 1, 0.8f);
+    }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (! e.mouseWasClicked()) return;
+        if (e.mods.isPopupMenu()) { if (onMenu) onMenu(); return; }
+        if (onClick) onClick();
+    }
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
+
+private:
+    juce::String text;
+    juce::Colour colour;
+    float progress = -1.0f;
+    bool hover = false, lit = false;
+};
+
+/** Studio Voice: a profile, one AMOUNT knob, what it does right now (leveling, compression), "Learn my mic"
+    (Engine::startVoiceLearn) and a button that turns it into the real effects (Engine::convertVoice). */
+class VoiceUnit final : public juce::Component, private juce::Timer
+{
+public:
+    VoiceUnit (UiContext& c, int channel, int instance, const juce::String& title)
+        : engine (c.engine), ch (channel), fx (c.engine.fxOf (channel).voices[(size_t) instance]), section (title, theme::fxVoice),
+          on (c, *fx.on, "ON", theme::fxVoice), amount (c, *fx.amount, "AMOUNT", theme::fxVoice),
+          profile (c, *fx.profile, theme::fxVoice, { "PODCAST", "RADIO", "STREAM", "SINGING" }),
+          learn ("LEARN MY MIC", theme::fxVoice), split ("SPLIT", theme::fxVoice)
+    {
+        addAndMakeVisible (section);
+        for (juce::Component* x : std::initializer_list<juce::Component*> { &on, &amount, &profile, &learn, &split }) section.addAndMakeVisible (x);
+        learn.setTooltip ("Talk normally for about 10 seconds: Studio Voice hears how your microphone sounds and sets the EQ so "
+                          "your voice gets the sound of the profile (like a match EQ). Click again to learn anew, right-click to forget it");
+        learn.onClick = [this]
+        {
+            if (fx.learnState == VoiceFx::Learn::listening) engine.cancelVoiceLearn (ch);
+            else engine.startVoiceLearn (ch);
+            timerCallback();
+        };
+        learn.onMenu = [this]
+        {
+            juce::PopupMenu m;
+            m.addItem (fx.learnState == VoiceFx::Learn::listening ? "Stop listening" : "Learn my mic", [this] { learn.onClick(); });
+            m.addItem ("Forget the learned mic (use the profile's fixed EQ)", fx.learned->isOn(), false, [this] { engine.forgetVoiceLearn (ch); timerCallback(); });
+            m.showMenuAsync (juce::PopupMenu::Options().withMousePosition());
+        };
+        amount.alwaysShowValue = true;
+        amount.setTooltip ("How much studio sound: 0 % = untouched. EQ, gate, compression, leveling and saturation "
+                           "all follow this one knob");
+        juce::String tip = "The kind of sound:";
+        for (int p = 0; p < dsp::StudioVoice::numProfiles; ++p)
+            tip << "\n" << dsp::StudioVoice::profileNames()[p] << ": " << dsp::StudioVoice::profileHint (p);
+        profile.setTooltip (tip);
+        split.setTooltip ("Replace Studio Voice with the effects it runs (EQ, Gate, Compressor, Saturation, Limiter) "
+                          "at their current settings, to fine-tune them. Sounds the same; the automatic leveling is frozen at its current value");
+        split.onClick = [&e = c.engine, ch = channel, k = instance, safe = juce::Component::SafePointer<VoiceUnit> (this)]
+        {
+            juce::MessageManager::callAsync ([&e, ch, k, safe]
+            {
+                const auto err = e.convertVoice (ch, k);
+                if (err.isNotEmpty())
+                    dialog::message (safe != nullptr ? safe->getTopLevelComponent() : nullptr, dialog::Kind::info, "Studio Voice not split", err);
+            });
+        };
+        startTimerHz (12);
+    }
+    Section& getSection() noexcept { return section; }
+
+    void resized() override
+    {
+        section.setBounds (getLocalBounds());
+        on.setBounds (section.headerSlot());
+        auto cc = section.content();
+        profile.setBounds (cc.removeFromTop (20));
+        {
+            auto row = cc.removeFromBottom (20);
+            split.setBounds (row.removeFromRight (juce::jmin (70, row.getWidth() / 3)));
+            row.removeFromRight (6);
+            learn.setBounds (row);
+        }
+        cc.removeFromBottom (4);
+        infoArea = cc.removeFromBottom (14);
+        cc.removeFromTop (2);
+        amount.setBounds (cc.withSizeKeepingCentre (90, juce::jmin (cc.getHeight(), 80)));
+    }
+
+    void paintOverChildren (juce::Graphics& g) override
+    {
+        if (infoArea.isEmpty()) return;
+        g.setFont (theme::font (9.5f));
+        g.setColour (theme::textFaint);
+        g.drawFittedText (info, infoArea + section.getPosition(), juce::Justification::centred, 1, 0.75f);
+    }
+
+private:
+    void timerCallback() override
+    {
+        // Live values, written only when they change visibly (one decimal for leveling, whole dB otherwise).
+        // Learn button and its message (a result stays 4 s in the info line).
+        const bool listening = fx.learnState == VoiceFx::Learn::listening;
+        if (fx.learnState != shownState) { shownState = fx.learnState; messageUntil = juce::Time::getMillisecondCounter() + 4000; }
+        learn.setText (listening ? "LISTENING ... " + juce::String (juce::roundToInt (fx.learnProgress * 100.0f)) + " %"
+                                 : fx.learned->isOn() ? "MIC LEARNED" : "LEARN MY MIC");
+        learn.setProgress (listening ? fx.learnProgress : -1.0f);
+        learn.setLit (! listening && fx.learned->isOn());
+        juce::String t;
+        if (listening) t = "Talk normally until the bar is full";
+        else if ((fx.learnState == VoiceFx::Learn::done || fx.learnState == VoiceFx::Learn::failed)
+                 && juce::Time::getMillisecondCounter() < messageUntil) t = fx.learnMessage;
+        else if (! fx.on->isOn() || fx.amount->get() <= 0.0f) t = "off";
+        else
+        {
+            const float lvl = fx.dsp.levelGain.load(), gr = fx.dsp.compGr.load();
+            auto db = [] (float v) { return (v >= 0.05f ? "+" : v <= -0.05f ? "-" : "") + juce::String (std::abs (v), 1) + " dB"; };
+            t << "LEVEL " << db (lvl) << "    COMP " << db (-gr);
+        }
+        if (t != info) { info = t; repaint (infoArea + section.getPosition()); }
+    }
+
+    Engine& engine;
+    int ch;
+    VoiceFx& fx;
+    Section section;
+    Toggle on;
+    Knob amount;
+    ChoiceSegments profile;
+    BlockButton learn, split;
+    VoiceFx::Learn shownState = VoiceFx::Learn::idle;
+    juce::uint32 messageUntil = 0;
+    juce::Rectangle<int> infoArea;
+    juce::String info;
+};
+
+class SaturationUnit final : public juce::Component
+{
+public:
+    SaturationUnit (UiContext& c, SaturationFx& f, const juce::String& title)
+        : section (title, theme::fxSaturation),
+          on (c, *f.on, "ON", theme::fxSaturation), drive (c, *f.drive, "DRIVE", theme::fxSaturation),
+          warmth (c, *f.warmth, "WARMTH", theme::fxSaturation), mix (c, *f.mix, "MIX", theme::fxSaturation),
+          output (c, *f.output, "OUTPUT", theme::fxSaturation)
+    {
+        addAndMakeVisible (section);
+        for (juce::Component* x : std::initializer_list<juce::Component*> { &on, &drive, &warmth, &mix, &output }) section.addAndMakeVisible (x);
+        drive.setTooltip ("How hard the signal is driven into the soft curve: more = denser and more harmonics. Quiet parts keep their level");
+        warmth.setTooltip ("0 % = symmetric (odd harmonics, brighter), more = asymmetric like tape or tubes (even harmonics, warmer)");
+        mix.setTooltip ("Blend of the dry and the saturated signal");
+    }
+    void resized() override
+    {
+        section.setBounds (getLocalBounds());
+        on.setBounds (section.headerSlot());
+        auto cc = section.content();
+        rowLayout (cc.withSizeKeepingCentre (cc.getWidth(), 70), { &drive, &warmth, &mix, &output });
+    }
+
+    Section section;
+    Toggle on;
+    Knob drive, warmth, mix, output;
+};
+
+//==============================================================================
 /** What Transpose's listener is doing / found, for the block and the window. */
 struct TransposeStatus
 {
@@ -2966,7 +3195,7 @@ std::unique_ptr<BuiltUnit> makeBuiltinUnit (UiContext& ctx, int channel, Fx f, i
             {
                 auto st = std::make_unique<StemsUnit> (ctx, e.fxOf (channel), title);
                 sec = &st->getSection();
-                sec->beta = true;
+                sec->tag = "BETA";
                 u.tick = [p = st.get()] { p->tick(); };
                 u.width = 300;
                 u.comp = std::move (st);
@@ -2986,6 +3215,22 @@ std::unique_ptr<BuiltUnit> makeBuiltinUnit (UiContext& ctx, int channel, Fx f, i
                 sec = &c->getSection();
                 u.width = 290;
                 u.comp = std::move (c);
+                break;
+            }
+            case Fx::voice:
+            {
+                auto v = std::make_unique<VoiceUnit> (ctx, channel, k, title);
+                sec = &v->getSection();
+                u.width = 270;
+                u.comp = std::move (v);
+                break;
+            }
+            case Fx::saturation:
+            {
+                auto s = std::make_unique<SaturationUnit> (ctx, e.fxOf (channel).saturations[(size_t) k], title);
+                sec = &s->section;
+                u.width = 250;
+                u.comp = std::move (s);
                 break;
             }
             default: break;
@@ -3630,10 +3875,9 @@ private:
                 continue;
             }
             juce::PopupMenu sub;
-            sub.addItem ("Default", add);
-            sub.addSeparator();
+            sub.addSectionHeader ("Presets");
             for (auto& p : ps) sub.addItem (p.name, insertPreset (p));
-            m.addSubMenu (label, sub);
+            addClickableSubMenu (m, label, std::move (sub), add);
         }
         m.addSeparator();
         m.addSectionHeader ("VST3 plugins");
@@ -3669,10 +3913,9 @@ private:
                 continue;
             }
             juce::PopupMenu sub;
-            sub.addItem ("Default", create);
-            sub.addSeparator();
+            sub.addSectionHeader ("Presets");
             for (auto& p : ps) sub.addItem (p.name, insertPreset (p));
-            vendorMenu.addSubMenu (d.name, sub);
+            addClickableSubMenu (vendorMenu, d.name, std::move (sub), create);
         }
         for (auto& [vendor, sub] : byVendor)
             m.addSubMenu (vendor, sub);
@@ -3747,6 +3990,15 @@ private:
             else if (auto* on = ctx.engine.fxOnParam (channel, s->builtin, s->fxInstance)) on->set (isOn ? 0.0f : 1.0f);
         });
         m.addSubMenu ("Insert after this", addMenu (i + 1));
+        if (! slot->isPlugin() && slot->builtin == Fx::voice)
+            m.addItem ("Split into effects (to fine-tune)", [this, k = slot->fxInstance]
+            {
+                later ([k] (FxRack& r)
+                {
+                    const auto err = r.ctx.engine.convertVoice (r.channel, k);
+                    if (err.isNotEmpty()) dialog::message (&r, dialog::Kind::info, "Studio Voice not split", err);
+                });
+            });
         m.addSeparator();
         const auto name = blockName (i);
         m.addItem ("Save as preset...", [this, i, name]
@@ -4761,6 +5013,7 @@ void EqGraph::resized()
     const auto r = getLocalBounds().toFloat();
     plot = large ? r.withTrimmedLeft (36.0f).withTrimmedRight (40.0f).withTrimmedTop (10.0f).withTrimmedBottom (22.0f) : r;
     rebuildCurve();
+    rebuildMatch();
 }
 
 float EqGraph::freqToX (float f) const { return plot.getX() + plot.getWidth() * std::log (f / 20.0f) / std::log (1000.0f); }
@@ -4790,7 +5043,111 @@ void EqGraph::setSelectedBand (int b)
 
 void EqGraph::pollParams()
 {
-    if (const auto sum = eq.versionSum(); sum != seen) { seen = sum; rebuildCurve(); repaint(); }
+    if (const auto sum = eq.versionSum(); sum != seen) { seen = sum; rebuildCurve(); rebuildMatch(); repaint(); }
+    if (match != nullptr)
+        if (const auto sig = (uint64_t) match->previewVersion * 1000003ull + (uint64_t) match->capture; sig != matchSeen)
+        { matchSeen = sig; rebuildMatch(); repaint(); }
+}
+
+//------------------------------------------------------------------------------ Match overlay
+float EqGraph::matchSpecToY (float db) const
+{
+    // Captured spectra (normalised: 0 dB = the mids): +21 .. -39 dB over the plot.
+    return plot.getY() + plot.getHeight() * (21.0f - juce::jlimit (-45.0f, 25.0f, db)) / 60.0f;
+}
+
+void EqGraph::setMatch (eqmatch::State* s)
+{
+    match = s;
+    rangeHandle = rangeHover = 0;
+    matchSeen = ~0ull;
+    rebuildMatch();
+    repaint();
+}
+
+void EqGraph::rebuildMatch()
+{
+    matchSource.clear();
+    matchReference.clear();
+    matchFill.clear();
+    matchFill2.clear();
+    matchPreview.clear();
+    if (plot.getWidth() < 2.0f) return;
+    // What the match does (also outside match mode, so the curve shows where it comes from); both sides in the L+R view.
+    auto fill = [&] (juce::Path& p, int side)
+    {
+        const auto* c = eq.matchCurve (side);
+        if (c == nullptr || ! (eq.matchOn->isOn() || match != nullptr)) return;
+        const float y0 = dbToY (0.0f);
+        p.startNewSubPath (plot.getX(), y0);
+        for (float x = plot.getX(); x <= plot.getRight() + 0.5f; x += 1.0f)
+            p.lineTo (x, dbToY (juce::jlimit (-19.5f, 19.5f, (float) match::fineAt (*c, xToFreq (x)))));
+        p.lineTo (plot.getRight(), y0);
+        p.closeSubPath();
+    };
+    fill (matchFill, mainSide());
+    if (bothSides()) fill (matchFill2, 1);
+    if (match == nullptr) return;
+    const double width = match::smoothingOctaves (eq.matchSmooth->get() * 0.01f);
+    auto line = [&] (const std::vector<float>& curve)
+    {
+        juce::Path p;
+        const auto shown = match::smoothFine (curve, width);
+        bool first = true;
+        for (float x = plot.getX(); x <= plot.getRight() + 0.5f; x += 1.0f)
+        {
+            const float y = matchSpecToY ((float) match::fineAt (shown, xToFreq (x)));
+            if (first) p.startNewSubPath (x, y); else p.lineTo (x, y);
+            first = false;
+        }
+        return p;
+    };
+    if (const auto& r = eq.matchSpectrum (true, viewSide); ! r.empty()) matchReference = line (r);
+    if (const auto& s = eq.matchSpectrum (false, viewSide); ! s.empty()) matchSource = line (s);
+    if (match->converting && ! match->preview.empty())
+    {
+        const double sr = 48000.0;
+        bool first = true;
+        for (float x = plot.getX(); x <= plot.getRight() + 0.5f; x += 2.0f)
+        {
+            const double f = xToFreq (x);
+            double db = 0.0;
+            for (size_t i = 0; i < match->preview.size(); ++i)
+            {
+                const int side = i < match->previewSides.size() ? match->previewSides[i] : ParamEq::both;
+                if (side == ParamEq::both || side == mainSide() + 1)
+                {
+                    const auto& b = match->preview[i];
+                    db += ParamEq::bandDb (b.type, sr, b.freq, b.q, b.gainDb, f);
+                }
+            }
+            const float y = dbToY (juce::jlimit (-19.5f, 19.5f, (float) db));
+            if (first) matchPreview.startNewSubPath (x, y); else matchPreview.lineTo (x, y);
+            first = false;
+        }
+    }
+}
+
+int EqGraph::hitRange (juce::Point<float> p) const
+{
+    if (match == nullptr) return 0;
+    int best = 0;
+    float bestD = 1.0e9f;
+    for (int h = 1; h <= 2; ++h)
+    {
+        const float x = freqToX ((h == 1 ? eq.matchLow : eq.matchHigh)->get());
+        const float dx = std::abs (p.x - x);
+        const bool inTab = p.y >= plot.getY() - 4.0f && p.y <= plot.getY() + 28.0f && dx <= 8.0f;
+        if ((inTab || (dx <= 3.0f && plot.contains (p))) && dx < bestD) { bestD = dx; best = h; }
+    }
+    return best;
+}
+
+void EqGraph::setRange (int handle, float x)
+{
+    const float f = xToFreq (juce::jlimit (plot.getX(), plot.getRight(), x));
+    if (handle == 1) eq.matchLow->set (juce::jlimit (20.0f, juce::jmax (20.0f, eq.matchHigh->get() / 1.5f), f));
+    else             eq.matchHigh->set (juce::jlimit (juce::jmin (20000.0f, eq.matchLow->get() * 1.5f), 20000.0f, f));
 }
 
 float EqGraph::curveDbAt (float f) const
@@ -4798,37 +5155,50 @@ float EqGraph::curveDbAt (float f) const
     const double sr = 48000.0;
     double total = 0.0;
     for (int k = 0; k < ParamEq::kBands; ++k)
-        if (eq.bandOn[(size_t) k]->isOn() && eq.bandActive (k))
-            total += eq.coeffs (k, sr).magnitudeDb (f, sr);
+        if (eq.bandOn[(size_t) k]->isOn() && eq.bandActive (k) && eq.bandOnSide (k, mainSide()))
+            total += eq.bandDb (k, f, sr);
+    if (eq.matchActive())
+        if (const auto* c = eq.matchCurve (mainSide())) total += match::fineAt (*c, f);
     return (float) juce::jlimit (-40.0, 40.0, total);
 }
 
 void EqGraph::rebuildCurve()
 {
     curve.clear();
+    otherCurve.clear();
     for (auto& p : bandCurves) p.clear();
     if (plot.getWidth() < 2.0f) return;
+    const bool split = eq.modeIndex() != ParamEq::stereo;
 
     const double sr = 48000.0;
-    dsp::BiquadCoeffs cs[ParamEq::kBands];
+    dsp::BiquadCoeffs cs[ParamEq::kBands], cs2[ParamEq::kBands];
+    int nsec[ParamEq::kBands] {};
     bool used[ParamEq::kBands];
     for (int k = 0; k < ParamEq::kBands; ++k)
     {
         used[k] = eq.bandOn[(size_t) k]->isOn();
-        if (used[k]) cs[k] = eq.coeffs (k, sr);
+        if (used[k] || (split && eq.bandOn[(size_t) k]->isOn()))
+            nsec[k] = ParamEq::sections ((int) eq.type[(size_t) k]->get(), sr, eq.freq[(size_t) k]->get(), eq.q[(size_t) k]->get(),
+                                         eq.gain[(size_t) k]->get(), cs[k], cs2[k]);
     }
 
     const float y0 = dbToY (0.0f);
     bool first = true;
+    const std::vector<float>* matched = eq.matchActive() ? eq.matchCurve (mainSide()) : nullptr;
+    const std::vector<float>* matchedOther = split && eq.matchActive() ? eq.matchCurve (otherSide()) : nullptr;
+    bool firstOther = true;
     for (float x = plot.getX(); x <= plot.getRight() + 0.5f; x += 2.0f)
     {
         const float f = xToFreq (x);
-        double total = 0.0;
+        double total = matched != nullptr ? match::fineAt (*matched, f) : 0.0;
+        double other = matchedOther != nullptr ? match::fineAt (*matchedOther, f) : 0.0;
         for (int k = 0; k < ParamEq::kBands; ++k)
         {
             if (! used[k]) continue;
-            const double db = cs[k].magnitudeDb (f, sr);
-            if (eq.bandActive (k)) total += db;
+            const double db = cs[k].magnitudeDb (f, sr) + (nsec[k] > 1 ? cs2[k].magnitudeDb (f, sr) : 0.0);
+            if (split && eq.bandActive (k) && eq.bandOnSide (k, otherSide())) other += db;
+            if (eq.bandActive (k) && eq.bandOnSide (k, mainSide())) total += db;
+            if (! eq.bandOnSide (k, viewSide)) continue;   // the other side's band: only in its (dashed) curve
             const float y = dbToY ((float) juce::jlimit (-40.0, 40.0, db));
             if (first) { bandCurves[(size_t) k].startNewSubPath (x, y0); }
             bandCurves[(size_t) k].lineTo (x, y);
@@ -4837,9 +5207,15 @@ void EqGraph::rebuildCurve()
         if (first) curve.startNewSubPath (x, y);
         else       curve.lineTo (x, y);
         first = false;
+        if (split)
+        {
+            const float yo = dbToY ((float) juce::jlimit (-40.0, 40.0, other));
+            if (firstOther) otherCurve.startNewSubPath (x, yo); else otherCurve.lineTo (x, yo);
+            firstOther = false;
+        }
     }
     for (int k = 0; k < ParamEq::kBands; ++k)
-        if (used[k])
+        if (used[k] && ! bandCurves[(size_t) k].isEmpty())
         {
             bandCurves[(size_t) k].lineTo (plot.getRight(), y0);
             bandCurves[(size_t) k].closeSubPath();
@@ -4930,6 +5306,34 @@ void EqGraph::paint (juce::Graphics& g)
         juce::Graphics::ScopedSaveState clip (g);
         g.reduceClipRegion (plot.getSmallestIntegerContainer());
 
+        // Match EQ: the captured spectra (reference orange, this channel blue), behind everything else
+        auto filled = [&] (const juce::Path& line, juce::Colour c)
+        {
+            if (line.isEmpty()) return;
+            const auto b = line.getBounds();
+            juce::Path area (line);
+            area.lineTo (b.getRight(), plot.getBottom());
+            area.lineTo (b.getX(), plot.getBottom());
+            area.closeSubPath();
+            g.setColour (c.withAlpha (0.05f));
+            g.fillPath (area);
+            g.setColour (c.withAlpha (0.9f));
+            g.strokePath (line, juce::PathStrokeType (1.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        };
+        filled (matchReference, eqmatch::kReferenceColour);
+        filled (matchSource, eqmatch::kSourceColour);
+        if (! matchFill.isEmpty())   // what the match does (a filter of this EQ until it is turned into bands)
+        {
+            const bool live = eq.matchOn->isOn() && eq.on->isOn();
+            g.setColour (live ? curveColour.withAlpha (0.13f) : graphDim.withAlpha (0.10f));
+            g.fillPath (matchFill);
+            if (! matchFill2.isEmpty())   // L+R view: the second side's match
+            {
+                g.setColour ((live ? juce::Colour (0xffc99cff) : graphDim).withAlpha (live ? 0.13f : 0.10f));
+                g.fillPath (matchFill2);
+            }
+        }
+
         if (! inputSpectrum.isEmpty())   // before the EQ: grey, behind (where the EQ cuts, grey shows above the colour)
         {
             g.setColour (inputGrey.withAlpha (0.13f));
@@ -4961,7 +5365,70 @@ void EqGraph::paint (juce::Graphics& g)
             }
         }
         g.setColour (on ? curveColour.withAlpha (0.92f) : graphDim);
+        const juce::Colour secondColour (lightGraph ? 0xff8a4fd6 : 0xffc99cff);
+        if (! otherCurve.isEmpty() && bothSides())   // L+R view: the second side's curve in its own colour
+        {
+            g.setColour (on ? secondColour.withAlpha (0.92f) : graphDim);
+            g.strokePath (otherCurve, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+        else if (! otherCurve.isEmpty())   // one side shown: the other side's curve thin, dashed and dim
+        {
+            juce::Path dashed;
+            const float dash[2] = { 4.0f, 4.0f };
+            juce::PathStrokeType (1.2f).createDashedStroke (dashed, otherCurve, dash, 2);
+            g.setColour (graphDim.withAlpha (0.8f));
+            g.fillPath (dashed);
+        }
+        if (large && eq.modeIndex() != ParamEq::stereo)   // legend: which line is which side
+        {
+            const bool ms = eq.modeIndex() == ParamEq::midSide;
+            auto lg = juce::Rectangle<float> (plot.getX() + 10.0f, plot.getY() + 8.0f, 200.0f, 14.0f);
+            auto item = [&] (const juce::String& name, juce::Colour c, bool dashedLine)
+            {
+                auto sw = lg.removeFromLeft (18.0f);
+                g.setColour (c);
+                if (dashedLine) for (float x = sw.getX(); x < sw.getRight(); x += 6.0f) g.fillRect (x, sw.getCentreY() - 0.75f, 3.0f, 1.5f);
+                else g.fillRect (sw.getX(), sw.getCentreY() - 1.0f, sw.getWidth(), 2.0f);
+                lg.removeFromLeft (5.0f);
+                g.setFont (theme::font (10.5f, true));
+                g.drawText (name, lg.removeFromLeft (46.0f), juce::Justification::centredLeft);
+            };
+            const juce::String n0 = ms ? "MID" : "LEFT", n1 = ms ? "SIDE" : "RIGHT";
+            if (bothSides()) { item (n0, curveColour, false); item (n1, secondColour, false); }
+            else { item (mainSide() == 0 ? n0 : n1, curveColour, false); item (mainSide() == 0 ? n1 : n0, graphDim, true); }
+        }
+        g.setColour (on ? curveColour.withAlpha (0.92f) : graphDim);
         g.strokePath (curve, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+        if (! matchPreview.isEmpty())   // "into bands": what the bands would do (dashed)
+        {
+            juce::Path dashed;
+            const float dash[2] = { 5.0f, 4.0f };
+            juce::PathStrokeType (1.8f).createDashedStroke (dashed, matchPreview, dash, 2);
+            g.setColour (lightGraph ? juce::Colour (0xff1c2330).withAlpha (0.85f) : juce::Colours::white.withAlpha (0.85f));
+            g.fillPath (dashed);
+        }
+    }
+
+    if (match != nullptr)   // the frequency range of the match: shaded outside, a handle at each end
+    {
+        const float xl = freqToX (eq.matchLow->get()), xh = freqToX (eq.matchHigh->get());
+        g.setColour (graphBg.withAlpha (0.55f));
+        g.fillRect (juce::Rectangle<float> (plot.getX(), plot.getY(), juce::jmax (0.0f, xl - plot.getX()), plot.getHeight()));
+        g.fillRect (juce::Rectangle<float> (xh, plot.getY(), juce::jmax (0.0f, plot.getRight() - xh), plot.getHeight()));
+        for (int h = 1; h <= 2; ++h)
+        {
+            const float x = h == 1 ? xl : xh;
+            const bool lit = rangeHover == h || rangeHandle == h;
+            g.setColour (curveColour.withAlpha (lit ? 0.9f : 0.45f));
+            g.fillRect (x - 0.5f, plot.getY(), 1.0f, plot.getHeight());
+            const auto tab = juce::Rectangle<float> (x - 6.0f, plot.getY(), 12.0f, 24.0f);
+            g.setColour (lightGraph ? juce::Colour (0xffffffff) : juce::Colour (0xff1c2129));
+            g.fillRoundedRectangle (tab, 4.0f);
+            g.setColour (curveColour.withAlpha (lit ? 0.95f : 0.6f));
+            g.drawRoundedRectangle (tab.reduced (0.5f), 4.0f, 1.2f);
+            g.fillRect (x - 0.5f, plot.getY() + 7.0f, 1.0f, 10.0f);
+        }
     }
 
     // Points: only the bands in use
@@ -4975,6 +5442,21 @@ void EqGraph::paint (juce::Graphics& g)
         const bool bandEnabled = eq.enabled[(size_t) k]->isOn();
         const auto bc = eq.on->isOn() ? theme::bandColour (k) : graphDim;
         auto node = juce::Rectangle<float> (p.x - rad, p.y - rad, rad * 2.0f, rad * 2.0f);
+        const int side = eq.bandSide (k);
+        if (! eq.bandOnSide (k, viewSide))   // a band of the other side: a small dim ring, not editable here
+        {
+            g.setColour (bc.withAlpha (0.35f));
+            g.drawEllipse (node.reduced (rad * 0.35f), 1.2f);
+            continue;
+        }
+        if (side != ParamEq::both)   // a band of one side only: its letter next to it
+        {
+            const bool ms = eq.modeIndex() == ParamEq::midSide;
+            g.setColour (bc.withAlpha (0.9f));
+            g.setFont (theme::font (large ? 9.5f : 8.5f, true));
+            g.drawText (side == ParamEq::first ? (ms ? "M" : "L") : (ms ? "S" : "R"),
+                        juce::Rectangle<float> (node.getRight() + 1.0f, node.getY() - 8.0f, 12.0f, 10.0f), juce::Justification::centredLeft);
+        }
         if (k == selected || k == hovered)
         {
             g.setColour (bc.withAlpha (k == selected ? 0.3f : 0.18f));
@@ -5012,7 +5494,7 @@ void EqGraph::paint (juce::Graphics& g)
         g.setFont (theme::font (large ? 10.5f : 9.5f, true));
         g.drawText (juce::String (ghostBand + 1), node, juce::Justification::centred);
     }
-    if (! any && ghostBand < 0)
+    if (! any && ghostBand < 0 && match == nullptr && ! eq.matchMode())
     {
         g.setColour (theme::textFaint);
         g.setFont (theme::font (large ? 13.0f : 11.0f));
@@ -5026,7 +5508,7 @@ int EqGraph::hitBand (juce::Point<float> p) const
     float bestD = large ? 18.0f : 16.0f;
     for (int k = 0; k < ParamEq::kBands; ++k)
     {
-        if (! eq.bandOn[(size_t) k]->isOn()) continue;
+        if (! eq.bandOn[(size_t) k]->isOn() || ! eq.bandOnSide (k, viewSide)) continue;
         const float d = nodePos (k).getDistanceFrom (p);
         if (d < bestD) { bestD = d; best = k; }
     }
@@ -5044,6 +5526,8 @@ int EqGraph::addBand (float f, float gainDb)
         eq.freq[i]->set (f);
         eq.gain[i]->set (std::round (gainDb * 10.0f) / 10.0f);
         eq.enabled[i]->set (1.0f);
+        // Left / right or mid / side: a new band works on the side shown.
+        eq.chan[i]->set ((float) (eq.modeIndex() == ParamEq::stereo || bothSides() ? ParamEq::both : viewSide + 1));
         eq.bandOn[i]->set (1.0f);
         if (! eq.on->isOn()) eq.on->set (1.0f);
         return k;
@@ -5055,7 +5539,7 @@ void EqGraph::removeBand (int k)
 {
     const auto i = (size_t) k;
     eq.bandOn[i]->set (0.0f);
-    for (auto* p : { eq.type[i], eq.gain[i], eq.freq[i], eq.q[i], eq.enabled[i] }) p->reset();
+    for (auto* p : { eq.type[i], eq.gain[i], eq.freq[i], eq.q[i], eq.enabled[i], eq.chan[i] }) p->reset();
     if (hovered == k) hovered = -1;
     if (selected == k)
         for (int j = 0; j < ParamEq::kBands; ++j)
@@ -5098,12 +5582,22 @@ void EqGraph::mouseMove (const juce::MouseEvent& e)
 {
     const int k = hitBand (e.position);
     if (k != hovered) { hovered = k; repaint(); }
+    if (match != nullptr)
+    {
+        const int h = k < 0 ? hitRange (e.position) : 0;
+        if (h != rangeHover)
+        {
+            rangeHover = h;
+            setMouseCursor (h != 0 ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
+            repaint();
+        }
+    }
 
     // Ghost point where a click would add the next free band: only near the curve, stuck to it
     // at the mouse's horizontal position.
     int freeBand = -1;
     juce::Point<float> pos;
-    if (k < 0 && plot.contains (e.position))
+    if (k < 0 && rangeHover == 0 && plot.contains (e.position))
     {
         pos = { e.position.x, dbToY (juce::jlimit (-18.0f, 18.0f, curveDbAt (xToFreq (e.position.x)))) };
         if (std::abs (pos.y - e.position.y) <= (large ? 14.0f : 11.0f))
@@ -5115,6 +5609,7 @@ void EqGraph::mouseMove (const juce::MouseEvent& e)
 
 void EqGraph::mouseExit (const juce::MouseEvent&)
 {
+    if (rangeHover != 0 && rangeHandle == 0) { rangeHover = 0; setMouseCursor (juce::MouseCursor::NormalCursor); repaint(); }
     if (hovered >= 0) { hovered = -1; repaint(); }
     setGhost (-1, {});
 }
@@ -5130,6 +5625,8 @@ void EqGraph::mouseDown (const juce::MouseEvent& e)
         if (k >= 0) { setSelectedBand (k); showBandMenu (k); }
         return;
     }
+    if (k < 0 && ! e.mods.isPopupMenu())
+        if (const int h = hitRange (e.position); h > 0) { rangeHandle = h; repaint(); return; }
     if (k < 0)
     {
         if (! plot.contains (e.position)) return;
@@ -5146,6 +5643,7 @@ void EqGraph::mouseDown (const juce::MouseEvent& e)
 
 void EqGraph::mouseDrag (const juce::MouseEvent& e)
 {
+    if (rangeHandle != 0) { setRange (rangeHandle, e.position.x); return; }
     if (! dragging) return;
     const auto k = (size_t) selected;
     eq.freq[k]->set (xToFreq (juce::jlimit (plot.getX(), plot.getRight(), e.position.x)));
@@ -5189,6 +5687,20 @@ struct EqEditor::BandColumn final : public juce::Component, private ParamPoller:
     {
         for (juce::Component* c : std::initializer_list<juce::Component*> { &typeBar, &removeChip, &gain, &freq, &q, &enabled })
             addAndMakeVisible (c);
+        addChildComponent (sideChip);
+        sideChip.centred = true;
+        sideChip.showArrow = false;
+        sideChip.setTooltip ("The side this band works on (Left / Right or Mid / Side mode)");
+        sideChip.onClick = [this]
+        {
+            const bool ms = owner.eq.modeIndex() == ParamEq::midSide;
+            const int cur = owner.eq.bandSide (band);
+            juce::PopupMenu m;
+            m.addItem (ms ? "Mid and side" : "Left and right", true, cur == ParamEq::both, [this] { owner.eq.chan[(size_t) band]->set ((float) ParamEq::both); });
+            m.addItem (ms ? "Mid only" : "Left only", true, cur == ParamEq::first, [this] { owner.eq.chan[(size_t) band]->set ((float) ParamEq::first); });
+            m.addItem (ms ? "Side only" : "Right only", true, cur == ParamEq::second, [this] { owner.eq.chan[(size_t) band]->set ((float) ParamEq::second); });
+            m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&sideChip));
+        };
         for (auto* kn : { &gain, &freq, &q }) kn->alwaysShowValue = true;
         enabled.setTooltip ("Switch this band on or off (off keeps its settings)");
         removeChip.showArrow = false;
@@ -5222,10 +5734,21 @@ struct EqEditor::BandColumn final : public juce::Component, private ParamPoller:
     {
         const auto k = (size_t) band;
         const auto v = owner.eq.type[k]->getVersion() + owner.eq.gain[k]->getVersion() + owner.eq.freq[k]->getVersion()
-                     + owner.eq.q[k]->getVersion() + owner.eq.bandOn[k]->getVersion() + owner.eq.enabled[k]->getVersion();
+                     + owner.eq.q[k]->getVersion() + owner.eq.bandOn[k]->getVersion() + owner.eq.enabled[k]->getVersion()
+                     + owner.eq.chan[k]->getVersion() + owner.eq.mode->getVersion();
         if (v == seen) return;
         seen = v;
         const bool use = inUse();
+        const int md = owner.eq.modeIndex();
+        sideChip.setVisible (use && md != ParamEq::stereo);
+        {
+            const bool ms = md == ParamEq::midSide;
+            const int side = owner.eq.bandSide (band);
+            sideChip.text = side == ParamEq::both ? (ms ? "M+S" : "L+R") : side == ParamEq::first ? (ms ? "M" : "L") : (ms ? "S" : "R");
+            sideChip.active = side != ParamEq::both;
+            sideChip.repaint();
+        }
+        if (sideChip.isVisible() != shownSide) { shownSide = sideChip.isVisible(); resized(); }
         for (juce::Component* c : std::initializer_list<juce::Component*> { &typeBar, &removeChip, &gain, &freq, &q, &enabled })
             c->setVisible (use);
         if ((use ? 1 : 0) != shownUse)
@@ -5267,7 +5790,8 @@ struct EqEditor::BandColumn final : public juce::Component, private ParamPoller:
         }
         g.setColour (theme::textDim);
         g.setFont (theme::font (11.5f));
-        g.drawText (owner.eq.type[(size_t) band]->toText(), head.withTrimmedLeft (58).withTrimmedRight (110), juce::Justification::centredLeft);
+        if (! sideChip.isVisible())
+            g.drawText (owner.eq.type[(size_t) band]->toText(), head.withTrimmedLeft (58).withTrimmedRight (110), juce::Justification::centredLeft);
     }
 
     void resized() override
@@ -5277,6 +5801,11 @@ struct EqEditor::BandColumn final : public juce::Component, private ParamPoller:
         removeChip.setBounds (head.removeFromRight (30));
         head.removeFromRight (4);
         enabled.setBounds (head.removeFromRight (42));
+        if (sideChip.isVisible())   // right after the band's name
+        {
+            const int nameW = juce::GlyphArrangement::getStringWidthInt (theme::font (12.5f, true), "BAND " + juce::String (band + 1));
+            sideChip.setBounds (head.getX() + 18 + nameW + 8, head.getY(), 38, head.getHeight());
+        }
         r.removeFromTop (8);
         typeBar.setBounds (r.removeFromLeft (36));
         r.removeFromLeft (8);
@@ -5295,15 +5824,150 @@ struct EqEditor::BandColumn final : public juce::Component, private ParamPoller:
     TrashButton removeChip;
     Knob gain, freq, q;
     Toggle enabled;
+    Chip sideChip { "L+R", theme::fxEq };
     uint64_t seen = ~0ull;
     int shownUse = -1;
+    bool shownSide = false;
 };
+
+namespace
+{
+/** Stereo symbol of a channel mode: two overlapping rings (stereo), a ring with arrows (mid / side), two rings apart
+    (left / right). */
+void drawModeIcon (juce::Graphics& g, juce::Rectangle<float> r, int mode, juce::Colour c)
+{
+    g.setColour (c);
+    const float d = r.getHeight() * 0.72f, cy = r.getCentreY();
+    if (mode == ParamEq::stereo)
+    {
+        g.drawEllipse (r.getCentreX() - d * 0.85f, cy - d * 0.5f, d, d, 1.3f);
+        g.drawEllipse (r.getCentreX() - d * 0.15f, cy - d * 0.5f, d, d, 1.3f);
+    }
+    else if (mode == ParamEq::leftRight)
+    {
+        g.drawEllipse (r.getCentreX() - d * 1.08f, cy - d * 0.45f, d * 0.9f, d * 0.9f, 1.3f);
+        g.drawEllipse (r.getCentreX() + d * 0.18f, cy - d * 0.45f, d * 0.9f, d * 0.9f, 1.3f);
+    }
+    else
+    {
+        g.drawEllipse (r.getCentreX() - d * 0.4f, cy - d * 0.4f, d * 0.8f, d * 0.8f, 1.3f);
+        juce::Path a;
+        const float x0 = r.getCentreX() - d * 1.05f, x1 = r.getCentreX() + d * 1.05f, h = d * 0.22f;
+        a.startNewSubPath (x0 + h, cy - h); a.lineTo (x0, cy); a.lineTo (x0 + h, cy + h);
+        a.startNewSubPath (x1 - h, cy - h); a.lineTo (x1, cy); a.lineTo (x1 - h, cy + h);
+        g.strokePath (a, juce::PathStrokeType (1.3f));
+    }
+}
+
+const char* sideLetter (int mode, int side) { return mode == ParamEq::midSide ? (side == 0 ? "M" : "S") : (side == 0 ? "L" : "R"); }
+
+/** The EQ's channel mode (Stereo / Left-Right / Mid-Side): the stereo symbol with the mode's name and a menu. */
+class EqModeButton final : public juce::Component, public juce::SettableTooltipClient, private ParamPoller::Client
+{
+public:
+    explicit EqModeButton (ParamEq& e) : eq (e)
+    {
+        setTooltip ("Channel mode of this EQ. Stereo: every band and the match work on both channels. Left / Right or "
+                    "Mid / Side: each band (and the match) can work on one side; switch the side shown with the button next to it");
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        ParamPoller::attach (this);
+    }
+    ~EqModeButton() override { ParamPoller::detach (this); }
+    void pollParams() override { if (eq.mode->getVersion() != seen) { seen = eq.mode->getVersion(); repaint(); } }
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override  { hover = false; repaint(); }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (! e.mouseWasClicked()) return;
+        juce::PopupMenu m;
+        const char* names[] = { "Stereo", "Left / Right", "Mid / Side" };
+        const int cur = eq.modeIndex();
+        for (int i = 0; i < 3; ++i)
+            m.addItem (names[i], true, i == cur, [this, i] { eq.mode->set ((float) i); });
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this));
+    }
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (0.5f);
+        g.setColour (hover ? theme::panel2.brighter (0.08f) : theme::panel2);
+        g.fillRoundedRectangle (r, 5.0f);
+        g.setColour (theme::outline);
+        g.drawRoundedRectangle (r, 5.0f, 1.0f);
+        auto inner = r.reduced (8.0f, 4.0f);
+        drawModeIcon (g, inner.removeFromLeft (24.0f), eq.modeIndex(), theme::text);
+        inner.removeFromLeft (6.0f);
+        auto arrow = inner.removeFromRight (10.0f);
+        juce::Path p;
+        p.addTriangle (arrow.getX(), arrow.getCentreY() - 2.0f, arrow.getRight(), arrow.getCentreY() - 2.0f, arrow.getCentreX(), arrow.getCentreY() + 3.0f);
+        g.setColour (theme::textDim);
+        g.fillPath (p);
+        const char* names[] = { "STEREO", "LEFT / RIGHT", "MID / SIDE" };
+        g.setColour (theme::text);
+        g.setFont (theme::font (11.0f, true));
+        g.drawText (names[eq.modeIndex()], inner, juce::Justification::centredLeft);
+    }
+
+private:
+    ParamEq& eq;
+    uint32_t seen = 0;
+    bool hover = false;
+};
+
+/** Which side is shown and edited in Left / Right or Mid / Side mode: two segments "L | R" or "M | S". */
+class EqSideSwitch final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    explicit EqSideSwitch (ParamEq& e) : eq (e)
+    {
+        setTooltip ("The side shown and edited. L+R (M+S): both sides at once, new bands work on both, both curves are shown. "
+                    "L or R alone: new bands go to that side, the other side's curve is dashed. "
+                    "A capture always records both sides, and the match always works on both");
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    }
+    std::function<void (int)> onChange;
+    int side = 2;
+    // Segments left to right: first side, both (L+R), second side; 'side' uses 0 / 1 / 2 = first / second / both.
+    static int segmentSide (int seg) { return seg == 0 ? 0 : seg == 1 ? 2 : 1; }
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        const int s = segmentSide (juce::jlimit (0, 2, e.x * 3 / juce::jmax (1, getWidth())));
+        if (s != side) { side = s; repaint(); if (onChange) onChange (s); }
+    }
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (0.5f);
+        g.setColour (theme::panel2);
+        g.fillRoundedRectangle (r, 5.0f);
+        g.setColour (theme::outline);
+        g.drawRoundedRectangle (r, 5.0f, 1.0f);
+        const int mode = eq.modeIndex();
+        for (int i = 0; i < 3; ++i)
+        {
+            const int s = segmentSide (i);
+            auto seg = r.withWidth (r.getWidth() / 3.0f).translated (i * r.getWidth() / 3.0f, 0.0f).reduced (2.0f);
+            if (s == side)
+            {
+                g.setColour (theme::fxEq.withAlpha (0.85f));
+                g.fillRoundedRectangle (seg, 4.0f);
+            }
+            g.setColour (s == side ? theme::bg : theme::textDim);
+            g.setFont (theme::font (11.5f, true));
+            const juce::String text = s == 2 ? juce::String (sideLetter (mode, 0)) + "+" + sideLetter (mode, 1) : juce::String (sideLetter (mode, s));
+            g.drawText (text, seg, juce::Justification::centred);
+        }
+    }
+
+private:
+    ParamEq& eq;
+};
+} // namespace
 
 EqEditor::EqEditor (UiContext& c, int sel, int k)
     : ctx (c), selectIndex (sel), instance (k),
       eq (c.engine.fxOf (sel).eqs[(size_t) k]),
       colour (channelColour (sel)),
       onToggle (c, *eq.on, "EQ ON", theme::fxEq), graph (c, eq, colour, true),
+      matchState (eqmatch::stateFor (sel, k)),
       tap (c.engine.fxOf (sel).spectrum),
       fft (std::make_unique<juce::dsp::FFT> (kFftOrder))
 {
@@ -5331,7 +5995,24 @@ EqEditor::EqEditor (UiContext& c, int sel, int k)
                   "Double-click a point: remove it.  Right-click: type, switch off, remove.\n"
                   "Click a value under a knob to type it (e.g. 2.5k, -3).  Ctrl+Z / Ctrl+Y: undo / redo.\n\n"
                   "Background: live spectrum after the EQ (dBFS scale on the right). \"Show input\" adds the spectrum "
-                  "before the EQ in grey behind it, so you see what the EQ changes.");
+                  "before the EQ in grey behind it, so you see what the EQ changes.\n\n"
+                  "MATCH: capture how this channel sounds and what it should sound like; the difference becomes "
+                  "ordinary bands of this EQ that you can keep editing.");
+    modeButton = std::make_unique<EqModeButton> (eq);
+    auto sw = std::make_unique<EqSideSwitch> (eq);
+    sw->onChange = [this] (int s) { setViewSide (s); };
+    sideSwitch = std::move (sw);
+    deltaToggle = std::make_unique<Toggle> (ctx, *eq.delta, "DELTA", theme::warn);
+    deltaToggle->setTooltip ("Delta: hear only what this EQ changes (output minus input), e.g. what the match adds or takes away");
+    addAndMakeVisible (*modeButton);
+    addChildComponent (*sideSwitch);
+    addAndMakeVisible (*deltaToggle);
+    addAndMakeVisible (matchChip);
+    matchChip.centred = true;
+    matchChip.showArrow = false;
+    matchChip.setTooltip ("Match: make this channel sound like a reference (another channel, this channel at another time, "
+                          "an audio file, standard speech). Works at high resolution; on request it becomes normal bands");
+    matchChip.onClick = [this] { setMatchShown (! matchShown); };
     showInput.setTooltip ("Grey spectrum of the signal before this EQ, behind the coloured one (after the EQ)");
     showInput.onClick = [this]
     {
@@ -5351,10 +6032,73 @@ EqEditor::EqEditor (UiContext& c, int sel, int k)
     for (int k = 0; k < ParamEq::kBands; ++k) // start on the first band in use
         if (eq.bandOn[(size_t) k]->isOn()) { graph.setSelectedBand (k); break; }
     setSize (1240, 820);
+    // An EQ that works as a match opens with it (also when a capture or "into bands" is still running).
+    setViewSide (matchState.viewSide);
+    if (eq.matchMode() || matchState.capture != eqmatch::State::Capture::idle || matchState.converting) setMatchShown (true);
+}
+
+void EqEditor::setViewSide (int s)
+{
+    viewSide = juce::jlimit (0, 2, s);
+    if (auto* sw = dynamic_cast<EqSideSwitch*> (sideSwitch.get())) { sw->side = viewSide; sw->repaint(); }
+    graph.setViewSide (viewSide);
+    matchState.viewSide = viewSide;
+    if (matchPanel != nullptr) matchPanel->repaint();
+    for (auto& b : bands) b->repaint();
+}
+
+void EqEditor::setMatchShown (bool on)
+{
+    if (on == matchShown) return;
+    matchShown = on;
+    matchChip.active = on;
+    if (on)
+    {
+        matchPanel = std::make_unique<eqmatch::Panel> (ctx, matchState, eq);
+        matchPanel->onConverted = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<EqEditor> (this)]
+                                                                            { if (safe != nullptr) safe->setMatchShown (false); }); };
+        addAndMakeVisible (*matchPanel);
+        graph.setMatch (&matchState);
+    }
+    else
+    {
+        graph.setMatch (nullptr);
+        matchPanel.reset();   // stops a capture that is running
+        holdPre (false);
+    }
+    matchChip.repaint();
+    resized();
+}
+
+void EqEditor::holdPre (bool hold)
+{
+    if (hold == preHeld) return;
+    preHeld = hold;
+    if (hold)
+    {
+        tap.preRing.skip (tap.preRing.available());
+        tap.preUsers.fetch_add (1);
+    }
+    else tap.preUsers.fetch_sub (1);
+}
+
+bool EqEditor::drainPre()
+{
+    auto* const* ch = readBuf.getArrayOfWritePointers();
+    for (;;)
+    {
+        const int got = tap.preRing.read (ch, 2, readBuf.getNumSamples());
+        if (got <= 0) break;
+        matchState.feedPre (ch[0], ch[1], got);
+    }
+    return true;
 }
 
 EqEditor::~EqEditor()
 {
+    matchPanel.reset();
+    holdPre (false);
+    graph.setMatch (nullptr);
     setShowInput (false);
     tap.users.fetch_sub (1);
 }
@@ -5382,7 +6126,20 @@ void EqEditor::analyse (double t)
     if (t - lastFrame < 1.0 / 66.0) return; // high-refresh displays: stay at ~60 Hz
     const float dt = lastFrame > 0.0 ? (float) juce::jlimit (0.0, 0.2, t - lastFrame) : 1.0f / 60.0f;
     lastFrame = t;
-    if (inputShown && runAnalyzer (before, tap.preRing, dt)) graph.setInputSpectrum (before.columns);
+    if (const auto mc = eq.matchActive() ? theme::fxMatch : theme::text; matchChip.colour != mc) { matchChip.colour = mc; matchChip.repaint(); }
+    if (eq.mode->getVersion() != shownMode)   // channel mode changed: the side switch appears / goes, its letters change
+    {
+        shownMode = eq.mode->getVersion();
+        const bool split = eq.modeIndex() != ParamEq::stereo;
+        if (! split) setViewSide (2);   // back to stereo: the next split mode starts with both sides (L+R)
+        sideSwitch->setVisible (split);
+        sideSwitch->repaint();
+        for (auto& b : bands) b->repaint();
+        resized();
+    }
+    holdPre (matchPanel != nullptr && matchPanel->wantsPre());   // a capture of this channel reads the signal before the EQ
+    if (inputShown) { if (runAnalyzer (before, tap.preRing, dt)) graph.setInputSpectrum (before.columns); }
+    else if (preHeld) drainPre();
     if (runAnalyzer (after, tap.ring, dt)) graph.setSpectrum (after.columns);
 }
 
@@ -5396,6 +6153,7 @@ bool EqEditor::runAnalyzer (Analyzer& a, SpscAudioRing& ring, float dt)
         auto* const* ch = readBuf.getArrayOfWritePointers();
         const int got = ring.read (ch, 2, readBuf.getNumSamples());
         if (got <= 0) break;
+        if (preHeld && &ring == &tap.preRing) matchState.feedPre (ch[0], ch[1], got);
         for (int i = 0; i < got; ++i)
         {
             history[(size_t) historyPos] = 0.5f * (ch[0][i] + ch[1][i]);
@@ -5491,11 +6249,32 @@ void EqEditor::resized()
     info.setBounds (head.removeFromRight (InfoButton::kSize).withSizeKeepingCentre (InfoButton::kSize, InfoButton::kSize));
     head.removeFromRight (14);
     showInput.setBounds (head.removeFromRight (110).withSizeKeepingCentre (110, 24));
+    head.removeFromRight (8);
+    matchChip.setBounds (head.removeFromRight (78).withSizeKeepingCentre (78, 26));
+    head.removeFromRight (8);
+    deltaToggle->setBounds (head.removeFromRight (70).withSizeKeepingCentre (70, 26));
+    head.removeFromRight (14);
+    sideSwitch->setVisible (eq.modeIndex() != ParamEq::stereo);
+    if (sideSwitch->isVisible())
+    {
+        sideSwitch->setBounds (head.removeFromRight (104).withSizeKeepingCentre (104, 26));
+        head.removeFromRight (6);
+    }
+    modeButton->setBounds (head.removeFromRight (138).withSizeKeepingCentre (138, 26));
     layoutBands();
 }
 
 void EqEditor::layoutBands()
 {
+    if (matchPanel != nullptr)   // match mode: the panel instead of the bands, the curve takes the rest
+    {
+        auto r = getLocalBounds().reduced (14, 0).withTrimmedTop (44).withTrimmedBottom (12);
+        for (auto& b : bands) { animator.forget (*b); b->setVisible (false); }
+        matchPanel->setBounds (r.removeFromBottom (eqmatch::Panel::kHeight));
+        r.removeFromBottom (10);
+        animator.moveTo (graph, r);
+        return;
+    }
     // Only the bands in use get a column (16 would not fit), plus one "+ Add band" column while a band is free.
     // As many side by side as fit (at most 8), further rows below; the curve takes the rest. They glide there.
     auto r = getLocalBounds().reduced (14, 0).withTrimmedTop (44);

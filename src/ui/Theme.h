@@ -57,7 +57,11 @@ inline juce::Colour fxCorrection { 0xffa78bfa };
 inline juce::Colour fxUtility    { 0xffff6ac1 };   // was the phase block's colour
 inline juce::Colour fxTranspose  { 0xffc77dff };
 inline juce::Colour fxStems      { 0xff56e0c8 };
-inline juce::Colour fxHeadphone  { 0xff7c9cff };/** Colour of each stem of the Stems effect (vocals, drums, bass, guitar, rest). */
+inline juce::Colour fxHeadphone  { 0xff7c9cff };
+inline juce::Colour fxVoice      { 0xffb8f060 };   // Studio Voice
+inline juce::Colour fxSaturation { 0xffff5a3c };
+inline juce::Colour fxMatch      { 0xff5c9dff };   // Match EQ
+/** Colour of each stem of the Stems effect (vocals, drums, bass, guitar, rest). */
 inline juce::Colour stemColour (int s)
 {
     static const juce::Colour c[] = { juce::Colour (0xffff6ac1), juce::Colour (0xffffa53d), juce::Colour (0xff8d6cff),

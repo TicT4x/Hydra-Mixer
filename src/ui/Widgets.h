@@ -16,13 +16,6 @@ constexpr int kRecorderSelect = kMaxInputs + kMaxBuses;
 /** Selection index scheme: 0..kMaxInputs-1 = inputs, then the buses (A1..A8, B1..B8), then the recorder. */
 constexpr int busSelectIndex (int bus) noexcept { return kMaxInputs + bus; }
 
-/** "IN 3", "A2", "B1" for a selection index. */
-inline juce::String channelCode (int selectIndex)
-{
-    if (isRecTrackChannel (selectIndex)) return "TR " + juce::String (selectIndex - kRecTrackBase + 1);
-    if (selectIndex == kMaxInputs + kMaxBuses) return "REC";
-    return selectIndex < kMaxInputs ? "IN " + juce::String (selectIndex + 1) : busLabel (selectIndex - kMaxInputs);
-}
 
 /** Colour of a channel (selection index): inputs and recorder tracks the input colour, buses theirs. */
 inline juce::Colour channelColour (int ch)

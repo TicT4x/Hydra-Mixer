@@ -7,9 +7,9 @@ namespace
 /** Below this a switched-off stage counts as measuring noise (added to the rest instead of shown). */
 constexpr double kNoise = 0.02;
 
-const std::array<juce::String, DspView::numColumns> kColumnNames { "Denoiser", "EQ", "Gate", "Comp", "Utility", "Transpose", "Stems",
+const std::array<juce::String, DspView::numColumns> kColumnNames { "Denoiser", "Studio Voice", "EQ", "Gate", "Comp", "Saturation", "Utility", "Transpose", "Stems",
                                                                    "Correction", "Plugins", "Limiter", "Rest" };
-const std::array<juce::Colour, DspView::numColumns> kColumnColours { theme::good, theme::accentIn, theme::solo, theme::accentHw,
+const std::array<juce::Colour, DspView::numColumns> kColumnColours { theme::good, theme::fxVoice, theme::accentIn, theme::solo, theme::accentHw, theme::fxSaturation,
                                                                      theme::fxUtility, theme::fxTranspose, theme::fxStems, theme::fxCorrection,
                                                                      theme::warn, theme::accentVirt, theme::textDim };
 
@@ -310,9 +310,11 @@ void DspView::measure()
         double other = st (DspTimes::other);
         const int ch = i;
         stage (r, denoiser, used (ch, Fx::denoiser), st (DspTimes::denoiser), other);
+        stage (r, voice, used (ch, Fx::voice), st (DspTimes::voice), other);
         stage (r, eq, used (ch, Fx::eq), st (DspTimes::eq), other);
         stage (r, gate, used (ch, Fx::gate), st (DspTimes::gate), other);
         stage (r, comp, used (ch, Fx::comp), st (DspTimes::comp), other);
+        stage (r, saturation, used (ch, Fx::saturation), st (DspTimes::saturation), other);
         stage (r, utility, used (ch, Fx::utility), st (DspTimes::utility), other);
         stage (r, transpose, used (ch, Fx::transpose), st (DspTimes::transpose), other);
         stage (r, stems, used (ch, Fx::stems), st (DspTimes::stems), other);
@@ -338,8 +340,10 @@ void DspView::measure()
         const int ch = busSelectIndex (b);
         stage (r, correction, used (ch, Fx::correction) || used (ch, Fx::headphone), st (DspTimes::correction), other);
         stage (r, utility, used (ch, Fx::utility), st (DspTimes::utility), other);
+        stage (r, voice, used (ch, Fx::voice), st (DspTimes::voice), other);
         stage (r, eq, used (ch, Fx::eq), st (DspTimes::eq), other);
         stage (r, comp, used (ch, Fx::comp), st (DspTimes::comp), other);
+        stage (r, saturation, used (ch, Fx::saturation), st (DspTimes::saturation), other);
         other += pluginsOf (r, bus.plugins, st (DspTimes::plugins), *bus.fxBypass);
         stage (r, limiter, used (ch, Fx::limiter), st (DspTimes::limiter), other);
         r.present[rest] = true;
