@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(HydraMixer VERSION 0.8.3 LANGUAGES C CXX)
+project(HydraMixer VERSION 0.8.4 LANGUAGES C CXX)
 # Pre-release part of the version ("beta.1"), empty for a normal release. A release with a suffix must be marked
 # as pre-release on GitHub: only users with "Include beta versions" get it as an update (state/Updater.h).
 set(HYDRA_VERSION_SUFFIX "")

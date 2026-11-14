@@ -143,7 +143,9 @@ double wantedDb (const Curve& from, const Curve& to, double f, float strength, c
     const double s = juce::jlimit (0.0f, 1.0f, strength);
     auto raw = [&] (double ff)
     {
-        const double d = (at (to, ff) - at (from, ff)) * s;
+        double d = at (to, ff) - at (from, ff);
+        if (ff < lim.bassHz && d < 0.0) d = juce::jmin (0.0, d + lim.bassSlackDb);
+        d *= s;
         return ff < lim.bassHz ? juce::jlimit (-lim.bassDb, lim.bassDb, d) : juce::jlimit (-lim.cutDb, lim.boostDb, d);
     };
     // The range: nothing outside; inside the correction fades in over taperOct (0 = a hard edge).

@@ -50,6 +50,9 @@ struct FitLimits
 {
     double lowHz = 70.0, highHz = 14000.0;   // outside: no correction
     double bassHz = 250.0, bassDb = 4.0;     // below bassHz at most +-bassDb
+    double bassSlackDb = 3.0;                // below bassHz up to this much more bass than the reference is left alone (14.11.:
+                                             // the speech reference is a far-field average with little bass; close mics have
+                                             // more, and cutting all of it toward the reference sounded thin)
     double boostDb = 6.0, cutDb = 9.0;
     double smoothOct = 0.0;                  // the wanted curve is averaged over this many octaves (0 = as measured)
     double taperOct = 0.0;                   // the correction fades in over this many octaves inside lowHz / highHz

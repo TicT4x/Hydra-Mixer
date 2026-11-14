@@ -138,7 +138,7 @@ struct VoiceEq
     (measured only while someone speaks), so its threshold can be fixed relative to that target. At amount 0 the
     signal passes untouched; EQ gains, gate range, ratios, leveling and drive all scale with the amount.
 
-    Profiles (sources: mixing / podcast / broadcast guides, see CLAUDE.md): high pass 75-100 Hz, mud cut 250-400 Hz,
+    Profiles (sources: mixing / podcast / broadcast guides, see CLAUDE.md): high pass 50-80 Hz, warmth shelf, mud cut 300-500 Hz,
     presence 2.5-4 kHz, air shelf 10-12 kHz; compression 2.5:1-4:1, radio with a second fast stage like a limiter. */
 class StudioVoice
 {
@@ -175,24 +175,30 @@ public:
     {
         using B = ParamEq::BandType;
         static const Recipe r[numProfiles] = {
-            // podcast: HPF 80, -3 dB mud at 250, +1.5 warmth at 120, +2.5 presence at 4k, +1.5 air at 10k; 3:1, 10 / 150 ms
-            { 80.0f, {{ { B::LowShelf, 120.0f, 0.7f, 1.5f }, { B::Bell, 250.0f, 1.2f, -3.0f }, { B::Bell, 4000.0f, 1.0f, 2.5f },
+            // More low end since 14.11. (user: "all a bit thin"): the high pass is 24 dB/oct since 13.11., so it sits
+            // lower (it only removes rumble now, below the fundamentals of deep voices), the mud cuts are smaller and
+            // narrower and higher up, and every profile has a warmth shelf.
+            // podcast: HPF 60, +3 warmth shelf at 150, -2 dB mud at 300, +2.5 presence at 4k, +1.5 air at 10k; 3:1, 10 / 150 ms
+            { 60.0f, {{ { B::LowShelf, 150.0f, 0.7f, 3.0f }, { B::Bell, 300.0f, 1.4f, -2.0f }, { B::Bell, 4000.0f, 1.0f, 2.5f },
                         { B::HighShelf, 10000.0f, 0.7f, 1.5f } }}, 4,
               -20.0f, 170.0f,  -4.0f, 3.0f, 6.0f, 10.0f, 150.0f,  false, 0.0f, 1.0f, 1.0f, 50.0f,
               3.0f, 0.3f, 0.2f,  -18.0f, 3.0f, 3.0f },
-            // radio: HPF 75 + lift 100-300 Hz like a broadcast mic (RE20), -3 dB boxiness at 450, broad +3 at 2.8k,
+            // radio: HPF 50 + lift 100-300 Hz like a broadcast mic (RE20, +5), -2.5 dB boxiness at 500, broad +3 at 2.8k,
             // +2 air; 4:1 fast attack / slow release, then a fast 8:1 peak stage; denser saturation, louder target
-            { 75.0f, {{ { B::LowShelf, 160.0f, 0.7f, 4.0f }, { B::Bell, 450.0f, 1.4f, -3.0f }, { B::Bell, 2800.0f, 0.7f, 3.0f },
+            { 50.0f, {{ { B::LowShelf, 180.0f, 0.7f, 5.0f }, { B::Bell, 500.0f, 1.4f, -2.5f }, { B::Bell, 2800.0f, 0.7f, 3.0f },
                         { B::HighShelf, 9000.0f, 0.7f, 2.0f } }}, 4,
               -20.0f, 150.0f,  -8.0f, 4.0f, 4.0f, 5.0f, 250.0f,  true, 4.0f, 8.0f, 1.0f, 60.0f,
               6.0f, 0.5f, 0.35f,  -15.0f, 2.0f, 10.0f },
-            // stream: HPF 100 (keyboard / desk thumps), -3 dB at 300, broad +3 presence at 3k, +1.5 at 8k; 4:1, 5 / 120 ms
-            { 100.0f, {{ { B::Bell, 300.0f, 1.0f, -3.0f }, { B::Bell, 3000.0f, 0.8f, 3.0f }, { B::HighShelf, 8000.0f, 0.7f, 1.5f }, {} }}, 3,
+            // stream: HPF 80 (keyboard / desk thumps), +2 warmth at 150, -2 dB at 350, broad +3 presence at 3k, +1.5 at 8k;
+            // 4:1, 5 / 120 ms
+            { 80.0f, {{ { B::LowShelf, 150.0f, 0.7f, 2.0f }, { B::Bell, 350.0f, 1.2f, -2.0f }, { B::Bell, 3000.0f, 0.8f, 3.0f },
+                        { B::HighShelf, 8000.0f, 0.7f, 1.5f } }}, 4,
               -26.0f, 150.0f,  -5.0f, 4.0f, 6.0f, 5.0f, 120.0f,  false, 0.0f, 1.0f, 1.0f, 50.0f,
               3.0f, 0.2f, 0.2f,  -18.0f, 2.0f, 3.0f },
-            // singing: HPF 80, -2 dB at 300, +1.5 at 3.5k, +3 air shelf at 12k; 2.5:1 slow attack (consonants pass),
-            // 200 ms release, a fast 4:1 stage only for peaks; light gate, slow leveling (keeps the dynamics)
-            { 80.0f, {{ { B::Bell, 300.0f, 1.0f, -2.0f }, { B::Bell, 3500.0f, 1.0f, 1.5f }, { B::HighShelf, 12000.0f, 0.7f, 3.0f }, {} }}, 3,
+            // singing: HPF 65, +2 warmth at 150, -1.5 dB at 350, +1.5 at 3.5k, +3 air shelf at 12k; 2.5:1 slow attack
+            // (consonants pass), 200 ms release, a fast 4:1 stage only for peaks; light gate, slow leveling (keeps the dynamics)
+            { 65.0f, {{ { B::LowShelf, 150.0f, 0.7f, 2.0f }, { B::Bell, 350.0f, 1.2f, -1.5f }, { B::Bell, 3500.0f, 1.0f, 1.5f },
+                        { B::HighShelf, 12000.0f, 0.7f, 3.0f } }}, 4,
               -10.0f, 300.0f,  -3.0f, 2.5f, 10.0f, 20.0f, 200.0f,  true, 6.0f, 4.0f, 2.0f, 80.0f,
               4.0f, 0.4f, 0.3f,  -18.0f, 5.0f, 3.0f },
         };

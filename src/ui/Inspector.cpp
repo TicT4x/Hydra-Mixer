@@ -2670,10 +2670,19 @@ private:
         else if (! fx.on->isOn() || fx.amount->get() <= 0.0f) t = "off";
         else
         {
-            const float lvl = fx.dsp.levelGain.load(), gr = fx.dsp.compGr.load();
-            auto db = [] (float v) { return (v >= 0.05f ? "+" : v <= -0.05f ? "-" : "") + juce::String (std::abs (v), 1) + " dB"; };
-            t << "LEVEL " << db (lvl) << "    COMP " << db (-gr);
+            // Measured values, not settings: the leveling rides the voice slowly and the compression follows every
+            // syllable. Shown as the mean of the last second, written once per second (like DSP Load), so it stays calm.
+            sumLevel += fx.dsp.levelGain.load();
+            sumGr += fx.dsp.compGr.load();
+            if (++ticks >= 12 || shownLevel.isEmpty())
+            {
+                auto db = [] (float v) { return (v >= 0.05f ? "+" : v <= -0.05f ? "-" : "") + juce::String (std::abs (v), 1) + " dB"; };
+                shownLevel = "LEVEL " + db (sumLevel / (float) ticks) + "    COMP " + db (-sumGr / (float) ticks);
+                sumLevel = sumGr = 0.0f; ticks = 0;
+            }
+            t = shownLevel;
         }
+        if (t != shownLevel) { shownLevel.clear(); sumLevel = sumGr = 0.0f; ticks = 0; }
         if (t != info) { info = t; repaint (infoArea + section.getPosition()); }
     }
 
@@ -2689,6 +2698,9 @@ private:
     juce::uint32 messageUntil = 0;
     juce::Rectangle<int> infoArea;
     juce::String info;
+    juce::String shownLevel;           // "LEVEL ... COMP ...", renewed once per second
+    float sumLevel = 0.0f, sumGr = 0.0f;
+    int ticks = 0;
 };
 
 class SaturationUnit final : public juce::Component

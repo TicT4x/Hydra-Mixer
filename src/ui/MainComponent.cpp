@@ -207,6 +207,7 @@ void DspMeter::setLoad (float l, float peak, int overloadsNow, uint64_t overload
     if (std::abs (l - load) <= 0.002f && std::abs (peak - peakLoad) <= 0.01f && overloadsNow == 0) return;
     load = l;
     peakLoad = juce::jmax (l, peak);
+    if (demoMode) { shownLoad = load; shownPeak = peakLoad; }   // offscreen (HydraShots): no VBlank to glide
     repaint();   // the number; the bars glide in frame()
 }
 
@@ -1500,7 +1501,8 @@ void MainComponent::timerCallback()
 {
     const double now = juce::Time::getMillisecondCounterHiRes();
     // Hidden (tray) or minimised: only the work that is not about drawing, 4x per second.
-    const bool showing = isShowing();
+    // demoMode (HydraShots): rendered offscreen, never "showing", but the top bar must still fill in.
+    const bool showing = isShowing() || demoMode;
     if (const int interval = showing ? 33 : 250; getTimerInterval() != interval) startTimer (interval);
     // Channels added / removed elsewhere (settings loaded, Voicemeeter import, ...)
     if (ctx.engine.getLayoutVersion() != shownLayout)
