@@ -20,15 +20,16 @@ struct UiActivity
 /** Finds moments in which the user interface hangs and writes them to hydra.log ("ui: blocked 240 ms in ...").
     Why: lags that only happen "sometimes" (opening the settings ...) cannot be reproduced from Claude's side
     (the app must not be started there); the log says where the time went.
-    A 50 Hz timer on the message thread beats, a low-priority thread looks every 10 ms how long the last beat
-    is ago and notes what the message thread was marked busy with (UiActivity). Costs one atomic store per beat. */
+    A 20 Hz timer on the message thread beats, a low-priority thread looks every 40 ms how long the last beat
+    is ago and notes what the message thread was marked busy with (UiActivity). Costs one atomic store per beat.
+    (Was 50 Hz / 100 Hz: 150 wake-ups per second for a watchdog; a stall of 120 ms is still seen.) */
 class UiWatch final : private juce::Timer, private juce::Thread
 {
 public:
     UiWatch() : juce::Thread ("Hydra UI watch")
     {
         lastBeat.store (now());
-        startTimer (20);
+        startTimer ((int) kBeatMs);
         startThread (juce::Thread::Priority::low);
     }
     ~UiWatch() override
@@ -38,7 +39,7 @@ public:
     }
 
 private:
-    static constexpr double kStallMs = 120.0;
+    static constexpr double kStallMs = 120.0, kBeatMs = 50.0;
     static double now() { return juce::Time::getMillisecondCounterHiRes(); }
 
     void timerCallback() override
@@ -59,7 +60,7 @@ private:
         const char* seen = nullptr;
         while (! threadShouldExit())
         {
-            wait (10);
+            wait (40);
             const double beat = lastBeat.load();
             if (now() - beat > kStallMs)
             {
@@ -70,7 +71,7 @@ private:
             {
                 // Reported by the message thread (it is free again); a second stall before that overwrites it.
                 reportWhat.store (seen);
-                reportMs.store (beat - stallFrom);
+                reportMs.store (juce::jmax (1.0, beat - stallFrom - kBeatMs));   // the gap minus one normal beat
                 stallFrom = 0.0;
             }
         }

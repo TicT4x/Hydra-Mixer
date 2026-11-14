@@ -1,5 +1,6 @@
 #pragma once
 #include "Charts.h"
+#include "VBlank.h"
 #include <deque>
 
 namespace hydra
@@ -60,6 +61,6 @@ private:
     double totalTarget = 0, totalShown = 0, totalLabel = 0, peakLoad = 0, peakShown = 0, peakLabel = 0;
     double lastLabelTime = 0;   // ms
     FrameClock clock;
-    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
+    VBlank vblank { this, [this] (double t) { frame (t); } };
 };
 } // namespace hydra

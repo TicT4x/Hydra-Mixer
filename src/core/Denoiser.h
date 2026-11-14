@@ -59,6 +59,7 @@ public:
 
 private:
     static constexpr int kXover = kBands - 1;
+    static constexpr int kPad = 32;      // kXover rounded up to whole SIMD vectors (the extra band stays silent)
     static constexpr int kChunk = 32;   // audio between two looks at the resampled copy (other sample rates)
 
     struct Channel
@@ -67,9 +68,10 @@ private:
         float fifo[kFrame] {};
         float nativeOut[kFrame] {};
         std::vector<float> delay;
-        float z1[kXover] {}, z2[kXover] {};
-        float w[kXover] {}, wStep[kXover] {};
-        float wLast = 1.0f, wLastStep = 0.0f;
+        // The filterbank in double precision (its low crossovers are biquads with poles close to 1, see BiquadCoeffs).
+        alignas (32) double z1[kPad] {}, z2[kPad] {};
+        alignas (32) double w[kPad] {}, wStep[kPad] {};
+        double wLast = 1.0, wLastStep = 0.0;
         int rampLeft = 0;
         void clear() noexcept;
     };
@@ -82,11 +84,11 @@ private:
     float filterbank (Channel& c, float d) noexcept;
 
     Channel ch[2];
-    float b0[kXover] {}, b1[kXover] {}, b2[kXover] {}, a1[kXover] {}, a2[kXover] {};
+    alignas (32) double b0[kPad] {}, b1[kPad] {}, b2[kPad] {}, a1[kPad] {}, a2[kPad] {};
     double rate = 48000.0;
     int latency[NumModes] {};
     int pos = 0, writePos = 0, mode = Low, delayMask = 0, ramp = 96;
-    float rampInv = 1.0f / 96.0f;
+    double rampInv = 1.0 / 96.0;
     float frameVad = 0.0f;
     std::atomic<float> vad { 0.0f };
 

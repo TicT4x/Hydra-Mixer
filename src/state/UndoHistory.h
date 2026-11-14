@@ -51,5 +51,7 @@ private:
     std::vector<std::pair<size_t, float>> pending; // parameter index, value before the open step
     std::vector<Step> undoStack, redoStack;
     double lastChange = 0;
+    uint32_t scannedAt = 0;                // Param::changeCount() at the last scan
+    bool scannedValid = false;
 };
 } // namespace hydra

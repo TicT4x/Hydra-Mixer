@@ -144,6 +144,9 @@ bool SceneBank::differsFromMixer (int i) const { return countDifferences (i) > 0
 
 void SceneBank::timerCallback()
 {
+    // The triggers are parameters: nothing to look at while no parameter changed.
+    if (const auto count = Param::changeCount(); count == checkedAt) return;
+    else checkedAt = count;
     int wanted = -1;
     for (int k = 0; k < kMaxScenes; ++k)
         if (auto* p = engine.sceneRecall[(size_t) k]; p->isOn())

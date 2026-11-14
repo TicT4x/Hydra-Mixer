@@ -1,5 +1,6 @@
 #pragma once
 #include "Widgets.h"
+#include "VBlank.h"
 #include <map>
 #include <cmath>
 
@@ -117,7 +118,7 @@ private:
     double totalShown = 0.0;
     FrameClock clock;
     bool animating = false;
-    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
+    VBlank vblank { this, [this] (double t) { frame (t); } };
     std::vector<juce::String> order;
     double total = 0.0;
     std::vector<std::pair<juce::Rectangle<int>, int>> rowAreas;   // painted rows -> part index

@@ -108,6 +108,8 @@ struct VoiceEq
     void reset() noexcept { for (auto& f : filters) f.reset(); for (auto& f : filters2) f.reset(); for (auto& c : cache) c[0] = -1.0f; }
     void process (const std::array<VoiceBand, N>& bands, int num, double sr, float* l, float* r, int n) noexcept
     {
+        BiquadLane lanes[2][2 * N];
+        int count = 0;
         for (int k = 0; k < num; ++k)
         {
             const auto& b = bands[(size_t) k];
@@ -120,9 +122,14 @@ struct VoiceEq
                 if (numSections[k] > 1 && was < 2) filters2[k].reset();
                 c[0] = (float) b.type; c[1] = b.gainDb; c[2] = b.freq; c[3] = b.q;
             }
-            filters[k].process (l, r, n);
-            if (numSections[k] > 1) filters2[k].process (l, r, n);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                lanes[ch][count] = { &filters[k].c, &filters[k].z1[ch], &filters[k].z2[ch] };
+                if (numSections[k] > 1) lanes[ch][count + 1] = { &filters2[k].c, &filters2[k].z1[ch], &filters2[k].z2[ch] };
+            }
+            count += numSections[k] > 1 ? 2 : 1;
         }
+        runBiquads (l, r, n, lanes[0], count, lanes[1], count);
     }
 };
 

@@ -1,4 +1,5 @@
 #include "ui/MainComponent.h"
+#include "ui/VBlank.h"
 #include "state/Session.h"
 #include "state/Autostart.h"
 #include "state/CorrectionSync.h"
@@ -43,7 +44,7 @@ public:
         setContentOwned (new MainComponent (e, m, k, s), true);
         setResizable (true, false);
         setResizeLimits (760, 520, 8000, 4000);   // horizontal rows with few channels are compact
-        auto area = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userArea;
+        auto area = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userBounds.getSmallestIntegerContainer();
         centreWithSize (juce::jmin (1840, (int) (area.getWidth() * 0.96)), juce::jmin (1000, (int) (area.getHeight() * 0.92)));
     }
 
@@ -55,7 +56,12 @@ public:
     void visibilityChanged() override
     {
         juce::DocumentWindow::visibilityChanged();
-        if (isVisible()) removeNativeWindowBorder (*this);
+        if (isVisible())
+        {
+            removeNativeWindowBorder (*this);
+            VBlank::refreshAll();   // meters and animations run again at once (they pause while hidden)
+            ParamPoller::wake();
+        }
     }
 
     /** Width so that all channels sit side by side without a scroll bar or a gap (height and position are
@@ -123,7 +129,11 @@ public:
     void minimisationStateChanged (bool isNowMinimised) override
     {
         if (isNowMinimised) { stopGlide(); if (onMinimised) onMinimised(); }
-        else if (onRestored) onRestored();
+        else
+        {
+            juce::MessageManager::callAsync ([] { VBlank::refreshAll(); ParamPoller::wake(); });
+            if (onRestored) onRestored();
+        }
     }
 
     void activeWindowStatusChanged() override
@@ -183,7 +193,7 @@ private:
     bool gliding = false, wasFullScreen = false;
     juce::Rectangle<int> glideFrom, glideTo, lastSet;
     double glideStart = 0.0;
-    juce::VBlankAttachment vblank { this, [this] (double) { glideFrame(); } };
+    VBlank vblank { this, [this] (double) { glideFrame(); } };
 };
 
 /** Notification-area icon: left click shows the mixer, right click opens a menu with Shutdown. */

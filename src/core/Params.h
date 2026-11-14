@@ -47,8 +47,13 @@ public:
             // Stored before the version is published, so a reader that sees the new version sees the mark too.
             externalVersion.store (external ? version.load (std::memory_order_relaxed) + 1 : 0, std::memory_order_relaxed);
             version.fetch_add (1, std::memory_order_release);
+            anyChange.fetch_add (1, std::memory_order_release);   // after the version: who sees this sees the new version
         }
     }
+
+    /** Bumped by every change of any parameter. Passes over all parameters (undo, autosave) skip themselves while it
+        stands still: with ~38,000 parameters each pass touches a few MB that are not in the cache. */
+    static uint32_t changeCount() noexcept { return anyChange.load (std::memory_order_acquire); }
 
     void setNormalised (float n, bool external = false) noexcept { set (range.convertFrom0to1 (juce::jlimit (0.0f, 1.0f, n)), external); }
     void toggle (bool external = false) noexcept                 { set (isOn() ? 0.0f : 1.0f, external); }
@@ -84,6 +89,7 @@ private:
     std::atomic<float> value;
     std::atomic<uint32_t> version { 1 };
     std::atomic<uint32_t> externalVersion { 0 };
+    static inline std::atomic<uint32_t> anyChange { 0 };
 };
 
 class ParamRegistry
@@ -126,17 +132,24 @@ public:
 
     const std::vector<std::unique_ptr<Param>>& all() const noexcept { return params; }
 
-    /** Sum of all versions — cheap way to detect "something changed" for autosave. */
+    /** Sum of all versions: detects "something changed" for autosave. Recomputed only after a change
+        (Param::changeCount); call from one thread (the message thread). */
     uint64_t versionSum() const noexcept
     {
+        const auto count = Param::changeCount();
+        if (sumValid && count == sumAt) return sum;
         uint64_t s = 0;
         for (auto& p : params) s += p->getVersion();
+        sum = s; sumAt = count; sumValid = true;
         return s;
     }
 
 private:
     std::vector<std::unique_ptr<Param>> params;
     std::unordered_map<std::string, Param*> lookup;
+    mutable uint64_t sum = 0;
+    mutable uint32_t sumAt = 0;
+    mutable bool sumValid = false;
 };
 
 /** Message-thread poller: anything that displays parameter state registers here and
@@ -159,14 +172,37 @@ public:
     static void attach (Client* c) { if (auto* p = get()) p->clients.addIfNotAlreadyThere (c); }
     static void detach (Client* c) { if (auto* p = get()) p->clients.removeFirstMatchingValue (c); }
 
+    /** A window became visible again: back to 60 Hz at once (see timerCallback). */
+    static void wake() { if (auto* p = get()) { p->hidden = false; p->startTimerHz (60); p->timerCallback(); } }
+
 private:
     static ParamPoller*& current() { static ParamPoller* p = nullptr; return p; }
     void timerCallback() override
     {
+        // All clients are controls on screen: while no window of the app can be seen (tray, minimised) nobody needs
+        // them up to date, so the poller only checks 4x per second whether a window is back (wake() is faster).
+        const bool nowHidden = ! anyWindowShowing();
+        if (nowHidden != hidden)
+        {
+            hidden = nowHidden;
+            startTimerHz (hidden ? 4 : 60);
+        }
+        if (hidden) return;
         for (int i = clients.size(); --i >= 0;)
             if (auto* c = clients[i])
                 c->pollParams();
     }
+
+    static bool anyWindowShowing()
+    {
+        auto& d = juce::Desktop::getInstance();
+        for (int i = d.getNumComponents(); --i >= 0;)
+            if (auto* c = d.getComponent (i); c != nullptr && c->isShowing())
+                return true;
+        return d.getNumComponents() == 0;   // no window yet (start, tests): keep polling
+    }
+
+    bool hidden = false;
 
     juce::Array<Client*> clients;
 };

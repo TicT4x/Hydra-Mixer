@@ -241,10 +241,13 @@ struct ParamEq
     {
         const int md = modeIndex();
         bool anyMidSide = false;
-        auto run = [&] (int k, int side, float* x)
+        // The sections each channel runs, in band order; all of them in one pass (dsp::runBiquads).
+        dsp::BiquadLane lanes[2][2 * kBands];
+        int count[2] {};
+        auto add = [&] (int k, int ch)
         {
-            filters[k].processOne (side, x, n);
-            if (numSections[k] > 1) filters2[k].processOne (side, x, n);
+            lanes[ch][count[ch]++] = { &filters[k].c, &filters[k].z1[ch], &filters[k].z2[ch] };
+            if (numSections[k] > 1) lanes[ch][count[ch]++] = { &filters2[k].c, &filters2[k].z1[ch], &filters2[k].z2[ch] };
         };
         for (int k = 0; k < kBands; ++k)
         {
@@ -267,19 +270,18 @@ struct ParamEq
                 if (numSections[k] > 1 && was < 2) filters2[k].reset();
                 c[0] = t; c[1] = g; c[2] = f; c[3] = qq;
             }
-            if (side == both)
-            {
-                filters[k].process (l, r, n);
-                if (numSections[k] > 1) filters2[k].process (l, r, n);
-            }
-            else if (md == leftRight) run (k, side - 1, side == first ? l : r);
+            if (side == both) { add (k, 0); add (k, 1); }
+            else if (md == leftRight) add (k, side - 1);
             else anyMidSide = true;
         }
+        dsp::runBiquads (l, r, n, lanes[0], count[0], lanes[1], count[1]);
         if (anyMidSide)
         {
-            for (int i = 0; i < n; ++i) { const float m = 0.5f * (l[i] + r[i]), d = 0.5f * (l[i] - r[i]); l[i] = m; r[i] = d; }
+            count[0] = count[1] = 0;
             for (int k = 0; k < kBands; ++k)
-                if (const int side = bandSide (k); side != both && bandActive (k)) run (k, side - 1, side == first ? l : r);
+                if (const int side = bandSide (k); side != both && bandActive (k)) add (k, side - 1);
+            for (int i = 0; i < n; ++i) { const float m = 0.5f * (l[i] + r[i]), d = 0.5f * (l[i] - r[i]); l[i] = m; r[i] = d; }
+            dsp::runBiquads (l, r, n, lanes[0], count[0], lanes[1], count[1]);
             for (int i = 0; i < n; ++i) { const float m = l[i], d = r[i]; l[i] = m + d; r[i] = m - d; }
         }
         if (fir.load (std::memory_order_acquire) != nullptr) processFir (l, r, n);

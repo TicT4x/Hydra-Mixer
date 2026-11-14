@@ -1,5 +1,6 @@
 #pragma once
 #include "Controls.h"
+#include "VBlank.h"
 #include "engine/Engine.h"
 #include "midi/MidiMapper.h"
 #include "midi/Hotkeys.h"
@@ -197,7 +198,7 @@ private:
     float shown = -1.0f;        // displayed position; glides towards the parameter (MIDI, wheel, reset)
     bool animating = false;
     double lastFrame = 0.0;
-    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
+    VBlank vblank { this, [this] (double t) { frame (t); } };
 };
 
 //==============================================================================

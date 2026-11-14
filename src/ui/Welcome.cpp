@@ -1,4 +1,5 @@
 #include "Welcome.h"
+#include "VBlank.h"
 #include "state/Session.h"
 #include "state/VoicemeeterImport.h"
 #include "state/VacCables.h"
@@ -542,7 +543,7 @@ private:
     juce::Rectangle<int> preview;
     float shown[3] {};
     bool gliding = false;
-    juce::VBlankAttachment vblank { this, [this] (double) { frame(); } };
+    VBlank vblank { this, [this] (double) { frame(); } };
 };
 
 //==============================================================================

@@ -340,8 +340,8 @@ void Correction::update (double sampleRate, uint64_t callbackCount, bool running
 
 void Correction::reset() noexcept
 {
-    for (auto& z : z1) z[0] = z[1] = 0.0f;
-    for (auto& z : z2) z[0] = z[1] = 0.0f;
+    for (auto& z : z1) z[0] = z[1] = 0.0;
+    for (auto& z : z2) z[0] = z[1] = 0.0;
     for (auto& b : delayBuf) std::fill (b.begin(), b.end(), 0.0f);
     delayPos = 0;
     wasOn = false;
@@ -365,25 +365,16 @@ void Correction::process (float* l, float* r, int n, double sampleRate) noexcept
     }
 
     // Each channel through its own bands (the same ones unless the profile is separate).
+    // Both channels and several bands in one pass (dsp::runBiquads).
     float* ch[2] = { l, r };
+    dsp::BiquadLane lanes[2][CorrectionProfile::kMaxBands];
+    for (int s = 0; s < 2; ++s)
+        for (int k = 0; k < c->count[s]; ++k)
+            lanes[s][k] = { &c->c[s][(size_t) k], &z1[k][s], &z2[k][s] };
+    dsp::runBiquads (l, r, n, lanes[0], c->count[0], lanes[1], c->count[1]);
     for (int s = 0; s < 2; ++s)
     {
-        float* x = ch[s];
-        for (int k = 0; k < c->count[s]; ++k)
-        {
-            const auto& q = c->c[s][(size_t) k];
-            float s1 = z1[k][s], s2 = z2[k][s];
-            for (int i = 0; i < n; ++i)
-            {
-                const float in = x[i];
-                const float out = q.b0 * in + s1;
-                s1 = q.b1 * in - q.a1 * out + s2;
-                s2 = q.b2 * in - q.a2 * out;
-                x[i] = out;
-            }
-            z1[k][s] = s1; z2[k][s] = s2;
-        }
-        dsp::applyRamp (x, n, lastPreamp[s], c->preamp[s]);
+        dsp::applyRamp (ch[s], n, lastPreamp[s], c->preamp[s]);
         lastPreamp[s] = c->preamp[s];
     }
 

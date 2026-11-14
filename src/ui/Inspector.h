@@ -1,5 +1,6 @@
 #pragma once
 #include "Widgets.h"
+#include "VBlank.h"
 
 namespace juce::dsp { class FFT; }
 
@@ -160,7 +161,7 @@ private:
     bool inputShown = false;
     juce::AudioBuffer<float> readBuf { 2, 2048 };
     double lastFrame = 0.0;
-    juce::VBlankAttachment vblank { this, [this] (double t) { analyse (t); } };
+    VBlank vblank { this, [this] (double t) { analyse (t); } };
     LayoutAnimator animator { *this, 0.07 };   // the bands rearrange smoothly when the window size changes
 };
 

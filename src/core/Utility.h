@@ -150,14 +150,14 @@ private:
     struct Mono
     {
         BiquadCoeffs c;
-        float z1 = 0, z2 = 0;
-        void reset() noexcept { z1 = z2 = 0.0f; }
+        double z1 = 0, z2 = 0;
+        void reset() noexcept { z1 = z2 = 0.0; }
         float tick (float in) noexcept
         {
-            const float out = c.b0 * in + z1;
+            const double out = c.b0 * in + z1;
             z1 = c.b1 * in - c.a1 * out + z2;
             z2 = c.b2 * in - c.a2 * out;
-            return out;
+            return (float) out;
         }
     };
     double sr = 48000.0;

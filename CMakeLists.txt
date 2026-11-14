@@ -178,7 +178,7 @@ endif()
 if(EXISTS "${CMAKE_SOURCE_DIR}/tests")
 # Offline DSP tests (run: build\<cfg>\HydraTests_artefacts\<cfg>\HydraTests.exe)
 juce_add_console_app(HydraTests PRODUCT_NAME "HydraTests")
-target_sources(HydraTests PRIVATE tests/DenoiserTest.cpp tests/SessionTest.cpp tests/MidiRangeTest.cpp tests/AppCaptureTest.cpp tests/LedTest.cpp tests/RecorderTest.cpp tests/MultitrackTest.cpp tests/AsioSecondaryTest.cpp tests/UndoTest.cpp tests/ReorderTest.cpp tests/SceneTest.cpp tests/SyncDelayTest.cpp tests/RoomAnalysisTest.cpp tests/CorrectionTest.cpp tests/DeviceNamesTest.cpp tests/FxChainTest.cpp tests/CorrectionPoolTest.cpp tests/VacTest.cpp tests/VacStreamTest.cpp tests/NetLinkTest.cpp tests/RemoteTest.cpp tests/LinkLiteTest.cpp tests/StemsTest.cpp tests/TransposeTest.cpp tests/InstallTest.cpp tests/HeadphoneTest.cpp tests/VoiceTest.cpp
+target_sources(HydraTests PRIVATE tests/DenoiserTest.cpp tests/SessionTest.cpp tests/MidiRangeTest.cpp tests/AppCaptureTest.cpp tests/LedTest.cpp tests/RecorderTest.cpp tests/MultitrackTest.cpp tests/AsioSecondaryTest.cpp tests/UndoTest.cpp tests/ReorderTest.cpp tests/SceneTest.cpp tests/SyncDelayTest.cpp tests/RoomAnalysisTest.cpp tests/CorrectionTest.cpp tests/DeviceNamesTest.cpp tests/FxChainTest.cpp tests/CorrectionPoolTest.cpp tests/VacTest.cpp tests/VacStreamTest.cpp tests/NetLinkTest.cpp tests/RemoteTest.cpp tests/LinkLiteTest.cpp tests/StemsTest.cpp tests/TransposeTest.cpp tests/InstallTest.cpp tests/HeadphoneTest.cpp tests/VoiceTest.cpp tests/DspBench.cpp
     src/core/StemDsp.cpp src/engine/Stems.cpp src/core/PitchShift.cpp src/core/KeyDetect.cpp src/engine/Transpose.cpp src/core/Denoiser.cpp src/core/RoomAnalysis.cpp src/core/Correction.cpp src/core/HeadphoneEq.cpp src/core/MatchEq.cpp src/core/HiResFir.cpp src/core/ParamEq.cpp src/engine/Engine.cpp src/engine/IoStreams.cpp src/engine/VacStream.cpp src/engine/NetLink.cpp src/core/NetCodec.cpp src/core/NetCrypto.cpp src/remote/QrCode.cpp src/remote/RemoteServer.cpp src/remote/RemoteControl.cpp src/linkcore/LinkLite.cpp src/engine/AsioSecondary.cpp src/engine/Recorder.cpp src/engine/RecProject.cpp src/engine/PluginChain.cpp
     src/midi/MidiMapper.cpp src/midi/Hotkeys.cpp src/state/Session.cpp src/state/RecorderProject.cpp src/state/CorrectionSync.cpp src/state/VoicemeeterImport.cpp src/state/UndoHistory.cpp src/state/Scenes.cpp src/state/RoomMeasurements.cpp src/state/DeviceNames.cpp src/state/ChannelClipboard.cpp src/state/Presets.cpp src/state/CorrectionPool.cpp src/state/VacControl.cpp src/state/VacCables.cpp src/state/Install.cpp src/state/Updater.cpp src/state/Autostart.cpp)
 target_include_directories(HydraTests PRIVATE "${CMAKE_SOURCE_DIR}/src" ${HYDRA_SIGNALSMITH_INCLUDES})
@@ -190,6 +190,10 @@ hydra_precompile_headers(HydraTests)
 hydra_use_stems(HydraTests)
 if(HYDRA_STEMS)   # StemsTest compares the DLLs unpacked from the exe with these
     set_property(SOURCE tests/StemsTest.cpp APPEND PROPERTY COMPILE_DEFINITIONS "HYDRA_ORT_BIN=\"${HYDRA_ORT_DIR}/bin\"")
+endif()
+# The same optimisation as the app, so the DSP timings and results the tests report are those of the shipped code.
+if(MSVC)
+    target_compile_options(HydraTests PRIVATE $<$<CONFIG:Release,RelWithDebInfo>:/O2 /Oi /Ot /arch:AVX2 /fp:fast>)
 endif()
 # The tests keep several Engine objects on the stack (several 100 KB each since the EQ has 16 bands): 16 MB stack.
 target_link_options(HydraTests PRIVATE /STACK:16777216)

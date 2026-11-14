@@ -1,5 +1,6 @@
 #pragma once
 #include "Theme.h"
+#include "VBlank.h"
 #include "Dialog.h"
 
 namespace hydra
@@ -44,7 +45,7 @@ private:
     juce::Component& owner;
     double timeConstant, lastFrame = 0.0;
     std::vector<Item> items;
-    juce::VBlankAttachment vblank { &owner, [this] (double t) { frame (t); } };
+    VBlank vblank { &owner, [this] (double t) { frame (t); } };
 };
 
 /** Legend for a tool window header: colour swatches with names, right-aligned in area. */

@@ -79,5 +79,6 @@ private:
     std::vector<Param*> captured;
     std::vector<Scene> scenes;
     int current = -1;
+    uint32_t checkedAt = ~0u;   // Param::changeCount() when the triggers were last looked at
 };
 } // namespace hydra

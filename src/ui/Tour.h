@@ -1,5 +1,6 @@
 #pragma once
 #include "Widgets.h"
+#include "VBlank.h"
 #include "Dialog.h"
 
 namespace hydra
@@ -95,7 +96,7 @@ private:
     std::unique_ptr<Card> card;
     bool taskDone = false;
     double doneAt = 0.0, startTime = 0.0, lastT = 0.0;
-    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
+    VBlank vblank { this, [this] (double t) { frame (t); } };
 };
 
 /** "Tour paused at step 5 of 14 - Continue / Restart / x" at the bottom right of the main window. */

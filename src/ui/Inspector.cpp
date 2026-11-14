@@ -1,4 +1,5 @@
 #include "Inspector.h"
+#include "VBlank.h"
 #include "state/ChannelClipboard.h"
 #include "state/Presets.h"
 #include "state/CorrectionPool.h"
@@ -369,7 +370,7 @@ private:
     juce::String caption;
     float marker = -1.0f, shown = 0.0f, smooth = 0.0f, rise = 0.03f, fall = 0.18f;
     double lastFrame = 0.0;
-    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
+    VBlank vblank { this, [this] (double t) { frame (t); } };
 };
 
 // RNNoise's speech probability jumps from frame to frame: a bar showing it follows slowly.
@@ -1364,7 +1365,7 @@ private:
     }
     float load = 0.0f, target = 0.0f, number = 0.0f, sum = 0.0f, sumT = 0.0f;
     double last = 0.0, secondStart = 0.0;
-    juce::VBlankAttachment vblank { this, [this] (double t) { if (isShowing()) frame (t); } };
+    VBlank vblank { this, [this] (double t) { if (isShowing()) frame (t); } };
 };
 
 /** The latency of the separation, large, with a line below (mode, or a warning). */
@@ -1573,7 +1574,7 @@ private:
     int stem;
     float level = 0.0f, shown = 0.0f;
     double last = 0.0;
-    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
+    VBlank vblank { this, [this] (double t) { frame (t); } };
 };
 
 /** Horizontal slider for a GPU share (%): track, fill, thumb, value. Dragging it while Auto is on switches Auto off. */
@@ -1747,7 +1748,7 @@ private:
     bool spinning = false;
     juce::String text;
     double phase = 0.0, last = 0.0;
-    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
+    VBlank vblank { this, [this] (double t) { frame (t); } };
 };
 
 /** What the stem controls show over themselves: nothing while the separation runs (or the effect is off), else a
@@ -2203,7 +2204,7 @@ private:
     MissWindow misses;
     std::array<stems::Service::Status, stems::kNumModels> status;
     juce::String shownKey;
-    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
+    VBlank vblank { this, [this] (double t) { frame (t); } };
 };
 
 /** Lights up the arc of each knob of the block in its stem's colour with the stem's level (after gain, mute and solo).
@@ -2240,7 +2241,7 @@ private:
     std::vector<Knob*> knobs;
     std::array<float, stems::numStems> level {};
     double last = 0.0;
-    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
+    VBlank vblank { this, [this] (double t) { frame (t); } };
 };
 
 /** The Stems block: a level and mute / solo per stem, the latency (large) and the GPU load. */
@@ -2868,7 +2869,7 @@ public:
     {
         const auto r = getLocalBounds();
         const int x = (int) (r.getHeight() * 0.95f) + 8;
-        return juce::Rectangle<int> (x, 0, offsetWidth(), r.getHeight()).reduced (7, 8).removeFromBottom (kButtonHeight);
+        return juce::Rectangle<int> (x, 0, (int) offsetWidth(), r.getHeight()).reduced (7, 8).removeFromBottom (kButtonHeight);
     }
 
 private:
@@ -4144,7 +4145,7 @@ private:
     bool fading = false;
     uint32_t seenVersion = ~0u;
     LayoutAnimator animator { *this };
-    juce::VBlankAttachment fadeVBlank { this, [this] (double t) { fadeFrame (t); } };
+    VBlank fadeVBlank { this, [this] (double t) { fadeFrame (t); } };
 };
 
 PluginCard::PluginCard (PluginSlot& s, juce::Colour a) : slot (s), accent (a)

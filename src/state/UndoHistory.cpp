@@ -53,6 +53,11 @@ void UndoHistory::forget (const std::vector<Param*>& params)
 
 void UndoHistory::scan()
 {
+    // Nothing changed anywhere since the last pass: nothing to look at.
+    const auto count = Param::changeCount();
+    if (scannedValid && count == scannedAt) return;
+    scannedAt = count;
+    scannedValid = true;
     const double now = juce::Time::getMillisecondCounterHiRes();
     for (size_t i = 0; i < tracked.size(); ++i)
     {

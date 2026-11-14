@@ -125,7 +125,7 @@ private:
     std::vector<std::pair<std::unique_ptr<Coeffs>, uint64_t>> retired;
 
     // audio thread
-    float z1[CorrectionProfile::kMaxBands][2] {}, z2[CorrectionProfile::kMaxBands][2] {};
+    double z1[CorrectionProfile::kMaxBands][2] {}, z2[CorrectionProfile::kMaxBands][2] {};
     float lastPreamp[2] { 1.0f, 1.0f };
     bool wasOn = false;
     std::vector<float> delayBuf[2] { std::vector<float> (kDelaySize, 0.0f), std::vector<float> (kDelaySize, 0.0f) };

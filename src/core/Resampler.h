@@ -1,5 +1,8 @@
 #pragma once
 #include "RingBuffer.h"
+#if defined (__AVX2__)
+ #include <immintrin.h>
+#endif
 
 namespace hydra
 {
@@ -16,7 +19,7 @@ public:
         numChannels = juce::jlimit (1, kMaxChannels, channels);
         nominal = nominalRatio;
         ratio = nominalRatio;
-        halfTaps = wantedHalfTaps > 0 ? wantedHalfTaps : std::abs (nominalRatio - 1.0) < 1.0e-3 ? 8 : 16;
+        halfTaps = juce::jmin (kMaxTaps / 2, wantedHalfTaps > 0 ? wantedHalfTaps : std::abs (nominalRatio - 1.0) < 1.0e-3 ? 8 : 16);
         taps = halfTaps * 2;
 
         // Anti-aliasing: when consuming faster than producing, lower the cutoff.
@@ -117,6 +120,7 @@ public:
 private:
     static constexpr int kMaxChannels = kMaxStreamChannels;
     static constexpr int kPhases = 512;
+    static constexpr int kMaxTaps = 64;
     static constexpr size_t tmpSize = 512;
 
     void buildTable (double cutoff)
@@ -147,6 +151,16 @@ private:
 
     void produce (float* const* out, int n) noexcept
     {
+        // The kernel between the two nearest phases is interpolated once per output frame, then every channel
+        // needs one dot product (before: two per channel, interpolated afterwards; the same result).
+#if defined (__AVX2__)
+        if (taps % 8 == 0)
+        {
+            produceAvx (out, n);
+            return;
+        }
+#endif
+        alignas (32) float kernel[kMaxTaps];
         for (int i = 0; i < n; ++i)
         {
             const int base = (int) pos;
@@ -157,21 +171,55 @@ private:
             const float* k0 = table.data() + (size_t) ph * (size_t) taps;
             const float* k1 = k0 + taps;
             const int start = base - halfTaps + 1;
+            for (int k = 0; k < taps; ++k) kernel[k] = k0[k] + (k1[k] - k0[k]) * t;
 
             for (int c = 0; c < numChannels; ++c)
             {
                 const float* h = hist[(size_t) c].data() + start;
-                float a = 0.0f, b = 0.0f;
-                for (int k = 0; k < taps; ++k)
-                {
-                    a += h[k] * k0[k];
-                    b += h[k] * k1[k];
-                }
-                out[c][i] = a + (b - a) * t;
+                float a = 0.0f;
+                for (int k = 0; k < taps; ++k) a += h[k] * kernel[k];
+                out[c][i] = a;
             }
             pos += ratio;
         }
     }
+
+#if defined (__AVX2__)
+    /** produce() for 16 / 32 / ... taps: the interpolated kernel stays in registers (up to 8 vectors), each channel
+        is one row of fused multiply-adds with a horizontal sum at the end. */
+    void produceAvx (float* const* out, int n) noexcept
+    {
+        const int vecs = taps / 8;
+        for (int i = 0; i < n; ++i)
+        {
+            const int base = (int) pos;
+            const double frac = pos - (double) base;
+            const double fp = frac * kPhases;
+            const int ph = (int) fp;
+            const __m256 t = _mm256_set1_ps ((float) (fp - ph));
+            const float* k0 = table.data() + (size_t) ph * (size_t) taps;
+            const float* k1 = k0 + taps;
+            const int start = base - halfTaps + 1;
+            __m256 kernel[kMaxTaps / 8];
+            for (int v = 0; v < vecs; ++v)
+            {
+                const __m256 a = _mm256_loadu_ps (k0 + 8 * v);
+                kernel[v] = _mm256_fmadd_ps (_mm256_sub_ps (_mm256_loadu_ps (k1 + 8 * v), a), t, a);
+            }
+            for (int c = 0; c < numChannels; ++c)
+            {
+                const float* h = hist[(size_t) c].data() + start;
+                __m256 acc = _mm256_mul_ps (_mm256_loadu_ps (h), kernel[0]);
+                for (int v = 1; v < vecs; ++v) acc = _mm256_fmadd_ps (_mm256_loadu_ps (h + 8 * v), kernel[v], acc);
+                __m128 s = _mm_add_ps (_mm256_castps256_ps128 (acc), _mm256_extractf128_ps (acc, 1));
+                s = _mm_add_ps (s, _mm_movehl_ps (s, s));
+                s = _mm_add_ss (s, _mm_movehdup_ps (s));
+                out[c][i] = _mm_cvtss_f32 (s);
+            }
+            pos += ratio;
+        }
+    }
+#endif
 
     /** Drop history that is no longer needed. */
     void compact() noexcept

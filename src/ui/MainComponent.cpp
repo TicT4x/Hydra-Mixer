@@ -1499,11 +1499,17 @@ void MainComponent::meterFrame (double t)
 void MainComponent::timerCallback()
 {
     const double now = juce::Time::getMillisecondCounterHiRes();
+    // Hidden (tray) or minimised: only the work that is not about drawing, 4x per second.
+    const bool showing = isShowing();
+    if (const int interval = showing ? 33 : 250; getTimerInterval() != interval) startTimer (interval);
     // Channels added / removed elsewhere (settings loaded, Voicemeeter import, ...)
     if (ctx.engine.getLayoutVersion() != shownLayout)
         rebuildStrips();
-    inspector.updateMeters();
-    top.update();
+    if (showing)
+    {
+        inspector.updateMeters();
+        top.update();
+    }
     tickUpdates();
     if (pluginScan != nullptr && ! pluginScan->isThreadRunning())
     {

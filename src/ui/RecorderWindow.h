@@ -1,5 +1,6 @@
 #pragma once
 #include "Widgets.h"
+#include "VBlank.h"
 
 namespace hydra
 {
@@ -89,7 +90,7 @@ private:
     Knob level;
 
     double lastFrame = 0.0;
-    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
+    VBlank vblank { this, [this] (double t) { frame (t); } };
     static constexpr int kSourceWidth = 230, kOutputWidth = 150, kHeaderWidth = 200, kTopHeight = 52;
 };
 } // namespace hydra

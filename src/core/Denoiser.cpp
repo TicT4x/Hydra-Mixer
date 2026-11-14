@@ -1,5 +1,8 @@
 #include "Denoiser.h"
 #include <rnnoise.h>
+#if defined (__AVX2__)
+ #include <immintrin.h>
+#endif
 
 namespace hydra::dsp
 {
@@ -9,11 +12,11 @@ void Denoiser::Channel::clear() noexcept
     std::fill (std::begin (fifo), std::end (fifo), 0.0f);
     std::fill (std::begin (nativeOut), std::end (nativeOut), 0.0f);
     std::fill (delay.begin(), delay.end(), 0.0f);
-    std::fill (std::begin (z1), std::end (z1), 0.0f);
-    std::fill (std::begin (z2), std::end (z2), 0.0f);
-    std::fill (std::begin (w), std::end (w), 0.0f);
-    std::fill (std::begin (wStep), std::end (wStep), 0.0f);
-    wLast = 1.0f; wLastStep = 0.0f; rampLeft = 0;
+    std::fill (std::begin (z1), std::end (z1), 0.0);
+    std::fill (std::begin (z2), std::end (z2), 0.0);
+    std::fill (std::begin (w), std::end (w), 0.0);
+    std::fill (std::begin (wStep), std::end (wStep), 0.0);
+    wLast = 1.0; wLastStep = 0.0; rampLeft = 0;
 }
 
 Denoiser::Denoiser()
@@ -42,22 +45,23 @@ void Denoiser::configure (double sampleRate)
         const double fc = std::sqrt ((double) rnnoise_band_centre_hz (j) * rnnoise_band_centre_hz (j + 1));
         if (fc >= 0.45 * rate)   // above what this rate can carry: passes everything, the sum stays exact
         {
-            b0[j] = 1.0f;
-            b1[j] = b2[j] = a1[j] = a2[j] = 0.0f;
+            b0[j] = 1.0;
+            b1[j] = b2[j] = a1[j] = a2[j] = 0.0;
             continue;
         }
         const double w0 = juce::MathConstants<double>::twoPi * fc / rate;
         const double cw = std::cos (w0), alpha = std::sin (w0) / (2.0 * 0.70710678);
         const double a0 = 1.0 + alpha;
-        b0[j] = (float) ((1.0 - cw) * 0.5 / a0);
-        b1[j] = (float) ((1.0 - cw) / a0);
+        b0[j] = (1.0 - cw) * 0.5 / a0;
+        b1[j] = (1.0 - cw) / a0;
         b2[j] = b0[j];
-        a1[j] = (float) (-2.0 * cw / a0);
-        a2[j] = (float) ((1.0 - alpha) / a0);
+        a1[j] = -2.0 * cw / a0;
+        a2[j] = (1.0 - alpha) / a0;
     }
+    for (int j = kXover; j < kPad; ++j) b0[j] = b1[j] = b2[j] = a1[j] = a2[j] = 0.0;   // padding: outputs 0, weight 0
 
     ramp = juce::jmax (8, juce::roundToInt (0.002 * rate));   // 2 ms gain interpolation
-    rampInv = 1.0f / (float) ramp;
+    rampInv = 1.0 / (double) ramp;
 
     if (resampled)
     {
@@ -126,28 +130,53 @@ void Denoiser::startFrame (Channel& c) noexcept
 
     // y = g[31] * x + sum_j (g[j] - g[j+1]) * LP_j(x)  -> telescoping, exact when all gains are equal
     for (int j = 0; j < kXover; ++j)
-        c.wStep[j] = ((g[j] - g[j + 1]) - c.w[j]) * rampInv;
-    c.wLastStep = (g[kBands - 1] - c.wLast) * rampInv;
+        c.wStep[j] = ((double) (g[j] - g[j + 1]) - c.w[j]) * rampInv;
+    c.wLastStep = ((double) g[kBands - 1] - c.wLast) * rampInv;
     c.rampLeft = ramp;
 }
 
-inline float Denoiser::filterbank (Channel& c, float d) noexcept
+inline float Denoiser::filterbank (Channel& c, float in) noexcept
 {
+    // 31 lowpasses, all fed by the same sample: independent of each other, so four of them run in one AVX register.
+    const double d = in;
+#if defined (__AVX2__)
+    if (c.rampLeft > 0)
+    {
+        for (int j = 0; j < kPad; j += 4)
+            _mm256_store_pd (c.w + j, _mm256_add_pd (_mm256_load_pd (c.w + j), _mm256_load_pd (c.wStep + j)));
+        c.wLast += c.wLastStep;
+        --c.rampLeft;
+    }
+    const __m256d dv = _mm256_set1_pd (d);
+    __m256d acc = _mm256_setzero_pd();
+    for (int j = 0; j < kPad; j += 4)
+    {
+        const __m256d s1 = _mm256_load_pd (c.z1 + j), s2 = _mm256_load_pd (c.z2 + j);
+        const __m256d o = _mm256_fmadd_pd (_mm256_load_pd (b0 + j), dv, s1);
+        _mm256_store_pd (c.z1 + j, _mm256_fmadd_pd (_mm256_load_pd (b1 + j), dv, _mm256_fnmadd_pd (_mm256_load_pd (a1 + j), o, s2)));
+        _mm256_store_pd (c.z2 + j, _mm256_fnmadd_pd (_mm256_load_pd (a2 + j), o, _mm256_mul_pd (_mm256_load_pd (b2 + j), dv)));
+        acc = _mm256_fmadd_pd (_mm256_load_pd (c.w + j), o, acc);
+    }
+    const __m128d h = _mm_add_pd (_mm256_castpd256_pd128 (acc), _mm256_extractf128_pd (acc, 1));
+    const double sum = _mm_cvtsd_f64 (_mm_add_sd (h, _mm_unpackhi_pd (h, h)));
+    return (float) (c.wLast * d + sum);
+#else
     if (c.rampLeft > 0)
     {
         for (int j = 0; j < kXover; ++j) c.w[j] += c.wStep[j];
         c.wLast += c.wLastStep;
         --c.rampLeft;
     }
-    float y = c.wLast * d;
+    double y = c.wLast * d;
     for (int j = 0; j < kXover; ++j)
     {
-        const float o = b0[j] * d + c.z1[j];
+        const double o = b0[j] * d + c.z1[j];
         c.z1[j] = b1[j] * d - a1[j] * o + c.z2[j];
         c.z2[j] = b2[j] * d - a2[j] * o;
         y += c.w[j] * o;
     }
-    return y;
+    return (float) y;
+#endif
 }
 
 void Denoiser::process (float* l, float* r, int n, const DenoiserSettings& s, bool stereo) noexcept

@@ -11,7 +11,8 @@ namespace hydra::dsp
     the first kBlock taps are convolved directly, the rest in uniformly partitioned FFT blocks (that part only needs
     input that is at least one block old, so it is computed at the start of each block). 8192 taps at up to 50 kHz
     (16384 above), i.e. a resolution of about 6 Hz. Cost: about kBlock + taps / kBlock * 4 multiply-adds per sample and
-    channel while a filter is set; nothing while off.
+    channel while a filter is set; nothing while off. The direct part is computed for all samples of a call at once
+    (vectorised over the samples); both channels share one complex FFT each way.
 
     A new filter is crossfaded over one block. Threading: setFilter / collect / design on the message thread, process
     on the audio thread (never allocates); filters change hands through atomics. */
@@ -24,7 +25,7 @@ public:
     struct Side
     {
         std::vector<float> h0rev;          // first kBlock taps, reversed
-        std::vector<float> spectra;        // partitions 1 .. parts-1: 2 * kBins floats each (JUCE real-FFT layout)
+        std::vector<float> spectra;        // partitions 1 .. parts-1: kBins real parts, then kBins imaginary parts each
         std::vector<float> taps;           // the whole impulse response (tests, views)
     };
     /** One filter per channel (the same twice for a linked match). midSide: the channels are mid and side (the
@@ -34,6 +35,7 @@ public:
         int parts = 0;                     // taps / kBlock
         Side side[2];
         bool midSide = false;
+        bool linked = false;               // both sides the same filter (the tail reads its spectra once)
     };
 
     HiResFir();
@@ -57,20 +59,21 @@ public:
 private:
     struct Chan
     {
-        float hist[2 * kBlock] {};      // the last kBlock inputs, written twice (contiguous window)
-        float frame[2 * kBlock] {};     // previous block | current block
+        float frame[2 * kBlock] {};     // previous block | current block (also the window of the direct part)
         float tailNew[kBlock] {}, tailOld[kBlock] {};
-        std::vector<float> fdl;         // kMaxParts input spectra (2 * kBins floats each)
+        std::vector<float> fdl;         // kMaxParts input spectra (kBins re, then kBins im each)
     };
     void beginBlock() noexcept;
-    void computeTail (const Filter&, int side, Chan&, float* out) noexcept;
+    void computeTails (const Filter&, float* out0, float* out1) noexcept;
     void clearState() noexcept;
     static Filter* offMarker() noexcept;
 
     juce::dsp::FFT fft { 8 };            // 2 * kBlock
     Chan chans[2];
-    std::vector<float> work, acc;        // 4 * kBlock, 2 * kBins
-    int pos = 0, hpos = 0, fdlHead = 0;
+    // Both channels share one complex FFT each way (left = real part, right = imaginary part).
+    std::vector<juce::dsp::Complex<float>> cin, cout;   // 2 * kBlock each
+    std::vector<float> acc;              // 2 * 2 * kBins (both channels)
+    int pos = 0, fdlHead = 0;
     Filter* cur = nullptr;               // audio thread
     Filter* prev = nullptr;              // fading from (or waiting to be retired)
     bool fading = false, idle = true, domainMidSide = false;

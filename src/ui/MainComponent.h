@@ -1,5 +1,6 @@
 #pragma once
 #include "Strips.h"
+#include "VBlank.h"
 #include "Inspector.h"
 #include "Settings.h"
 #include "LatencyView.h"
@@ -85,7 +86,7 @@ private:
     float shownLoad = 0, shownPeak = 0;               // drawn, glide towards the targets
     double lastFrame = 0.0;
     bool hover = false;
-    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
+    VBlank vblank { this, [this] (double t) { frame (t); } };
 };
 
 /** "Update 0.9" in the top bar while a new version is available (Updater); shows the download progress. */
@@ -170,7 +171,7 @@ private:
     // Narrow windows: recorder -> cassette, logo -> icon. 1 = full, 0 = small; glides to the target, runs only while it moves.
     float recorderShown = -1.0f, logoShown = -1.0f, recorderTarget = 1.0f, logoTarget = 1.0f;
     double lastGlideFrame = 0.0;
-    juce::VBlankAttachment glideVBlank { this, [this] (double t) { glideFrame (t); } };
+    VBlank glideVBlank { this, [this] (double t) { glideFrame (t); } };
     juce::String status;
     Engine::LoadMeter cpuMeter;
     uint64_t overloadsSeen = 0;
@@ -319,7 +320,7 @@ private:
     float browserShown = -1.0f, browserGlideFrom = 0.0f;   // 0 = folded in .. 1 = out (glides)
     double browserGlideStart = 0.0;
     bool browserGliding = false;
-    juce::VBlankAttachment browserVBlank { this, [this] (double) { browserFrame(); sceneFrame(); } };
+    VBlank browserVBlank { this, [this] (double) { browserFrame(); sceneFrame(); } };
     void sceneFrame();
     int browserWidth() const { return (browserOpen() ? EffectBrowser::kWidth : 0) + BrowserTab::kWidth + 4; }
     /** Settings of an effect ("..." in its header: gate / denoiser / compressor) in their own window. */
@@ -346,6 +347,6 @@ private:
     // Tooltips of every window (main and tool windows); without one JUCE shows none at all.
     theme::TooltipWindow tooltips;
     // Meters follow the display refresh (capped at ~60 Hz) instead of a coarse timer.
-    juce::VBlankAttachment vblank { this, [this] (double t) { meterFrame (t); } };
+    VBlank vblank { this, [this] (double t) { meterFrame (t); } };
 };
 } // namespace hydra

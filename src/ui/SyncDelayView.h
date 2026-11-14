@@ -1,5 +1,6 @@
 #pragma once
 #include "Charts.h"
+#include "VBlank.h"
 
 namespace hydra
 {
@@ -33,6 +34,6 @@ private:
     uint32_t shownLayout = ~0u;
     double lastPublish = 0.0;   // ms
     FrameClock clock;
-    juce::VBlankAttachment vblank { this, [this] (double t) { frame (t); } };
+    VBlank vblank { this, [this] (double t) { frame (t); } };
 };
 } // namespace hydra
