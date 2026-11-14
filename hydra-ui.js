@@ -409,6 +409,14 @@
 
   /* EQ maths: RBJ biquads, magnitude in dB (ParamEq.h types: Bell, Notch, Band Pass, High Cut, Low Cut, Low Shelf, High Shelf) */
   function bandDb(type, g, f0, q, f) {
+    // Low / High Cut are 24 dB/oct (ParamEq::sections): two stages, Butterworth at Q 0.707.
+    if (type.endsWith('cut') && !bandDb.inner) {
+      const k = Math.sqrt(q / 0.707);
+      bandDb.inner = true;
+      const d = bandDb(type, g, f0, 0.5412 * k, f) + bandDb(type, g, f0, 1.3066 * k, f);
+      bandDb.inner = false;
+      return d;
+    }
     const fs = 48000, w0 = 2 * Math.PI * f0 / fs, cs = Math.cos(w0), sn = Math.sin(w0), al = sn / (2 * q), A = Math.pow(10, g / 40);
     let b0, b1, b2, a0, a1, a2;
     if (type === 'bell') { b0 = 1 + al * A; b1 = -2 * cs; b2 = 1 - al * A; a0 = 1 + al / A; a1 = -2 * cs; a2 = 1 - al / A; }
@@ -464,10 +472,13 @@
   }
   // Filter type glyphs (the column of type buttons in the EQ block).
   const TYPES = ['M2 9Q7 1 12 9', 'M2 4H5Q7 4 7 9Q7 4 9 4H12', 'M2 9Q7 -1 12 9', 'M2 4H7Q9 4 12 9', 'M2 9Q5 4 7 4H12', 'M2 9H5Q7 9 9 4H12', 'M2 9Q5 9 7 4H12'];
+  // Shown in the app's order (Widgets.cpp kTypeOrder): Bell, Notch, Band Pass, Low Shelf, High Shelf, Low Cut, High Cut;
+  // `active` stays the type index (Voicemeeter order of TYPES).
+  const TYPE_ORDER = [0, 1, 2, 5, 6, 4, 3];
   function typeColumn(x, y, active, col, h = 19) {
     let g = '';
-    TYPES.forEach((d, i) => {
-      const on = i === active;
+    TYPE_ORDER.forEach((t, i) => {
+      const d = TYPES[t], on = t === active;
       g += R(x, y + i * (h + 2), 26, h, 4, on ? mix(C.raised, col, 0.25) : C.raised, on ? { stroke: col } : {}) +
         `<path transform="translate(${x + 6} ${y + i * (h + 2) + h / 2 - 6.5})" d="${d}" fill="none" stroke="${on ? col : C.dim}" stroke-width="1.3" stroke-linecap="round"/>`;
     });
@@ -961,6 +972,165 @@
     b += tiles(178, ['B', 'C#', 'D', 'E', 'F#', 'G', 'A'], [1, 0, 1, 1, 1, 1, 1]) + tiles(222, ['D', 'E', 'F#', 'G', 'A', 'B', 'C#'], [1, 1, 1, 1, 1, 1, 0]);
     b += T(444, 298, 'Filled = heard  ·  also heard: Bb  ·  2 parts of the song', { size: 9, fill: C.faint });
     return [W, H, b, 'Transpose window: +2 semitones, -22.5 cents, quality Normal (200 ms), detected key B minor 81 %, song tuned +22.5 cents'];
+  };
+
+  const C_VOICE = '#b8f060', C_SAT = '#ff5a3c';
+  // Studio Voice (Inspector.cpp VoiceUnit): profile bar, AMOUNT, live LEVEL / COMP, LEARN MY MIC, SPLIT; right: what runs inside.
+  FX.voice = () => {
+    const W = 720, H = 300, col = C_VOICE;
+    let b = R(0, 0, W, H, 0, C.bg) + block(14, 14, 256, 272, 'STUDIO VOICE', col);
+    b += R(24, 48, 236, 26, 6, '#07090c');
+    ['PODCAST', 'RADIO', 'STREAM', 'SINGING'].forEach((t, i) => {
+      const sw = 236 / 4, sx = 24 + i * sw, on = i === 0;
+      b += (on ? R(sx + 2, 50, sw - 4, 22, 5, col) : '') + T(sx + sw / 2, 65, t, { size: 9, anchor: 'middle', weight: on ? 700 : 400, fill: on ? '#0a0c10' : C.dim });
+    });
+    b += T(142, 96, 'AMOUNT', { size: 9, fill: C.dim, anchor: 'middle' }) + knob(142, 132, 28, 0.5, col) + T(142, 180, '50.0 %', { size: 9.5, fill: C.dim, anchor: 'middle' });
+    b += T(142, 214, 'LEVEL +4.2 dB     COMP 3.1 dB', { size: 9, fill: C.faint, anchor: 'middle' });
+    b += button(24, 236, 160, 26, 'LEARN MY MIC') + button(190, 236, 70, 26, 'SPLIT');
+    b += card(280, 14, 426, 272, 'Inside: a whole vocal chain');
+    const st = [['EQ', C.eq], ['GATE', C.gate], ['LEVEL', col], ['COMP', C.comp], ['SAT', C_SAT], ['LIMIT', C.lim]];
+    st.forEach(([t, c], i) => {
+      const x = 294 + i * 68;
+      b += R(x, 38, 56, 30, 5, mix(C.panel2, c, 0.18), { stroke: mix(C.panel2, c, 0.6) }) + T(x + 28, 57, t, { size: 9, weight: 700, fill: c, anchor: 'middle' });
+      if (i < st.length - 1) b += `<path d="M${x + 58} 53h8m-3-3 3 3-3 3" stroke="${C.faint}" fill="none" stroke-width="1.2"/>`;
+    });
+    b += eqGraph(294, 80, 398, 140, [{ type: 'lowcut', g: 0, f: 60, q: 0.7 }, { type: 'lowshelf', g: 3, f: 150, q: 0.7 }, { type: 'bell', g: -2, f: 300, q: 1.4 },
+      { type: 'bell', g: 2.5, f: 4000, q: 1 }, { type: 'highshelf', g: 1.5, f: 10000, q: 0.7 }], { small: true });
+    b += T(294, 240, 'Podcast at 100 %: high pass 60 Hz, warmth, less mud, presence, air.', { size: 9.5, fill: C.dim }) +
+      T(294, 256, 'Then gate, leveling to -18 dBFS, 3:1 compression, saturation, limiter.', { size: 9.5, fill: C.dim }) +
+      T(294, 274, 'Learn my mic adds a correction for your microphone.', { size: 9.5, fill: C.faint });
+    return [W, H, b, 'Studio Voice: profiles Podcast, Radio, Stream, Singing, one AMOUNT knob, Learn my mic and Split; inside an EQ, gate, leveling, compressor, saturation and limiter'];
+  };
+  // Saturation (Inspector.cpp SaturationUnit): DRIVE, WARMTH, MIX, OUTPUT; right: the transfer curve.
+  FX.saturation = () => {
+    const W = 620, H = 260, col = C_SAT;
+    let b = R(0, 0, W, H, 0, C.bg) + block(14, 14, 316, 232, 'SATURATION', col);
+    [['DRIVE', 0.35, '+6.0 dB'], ['WARMTH', 0.3, '30 %'], ['MIX', 1, '100 %'], ['OUTPUT', 0.5, '0.0 dB', true]].forEach(([l, n, v, bi], i) => {
+      b += knob(14 + 39.5 + i * 79, 128, 24, n, col, { label: l, value: v, bipolar: bi });
+    });
+    b += card(340, 14, 266, 232, 'Transfer curve');
+    // slope 1 at zero (quiet parts unchanged), flattening towards the top; WARMTH = a little asymmetry
+    const px = 372, py = 40, ps = 180, k = 1.7, a = 0.18;
+    const sat = x => Math.tanh(k * (x + a * x * x)) / k;
+    b += R(px, py, ps, ps, 3, '#0c0f14') + L(px, py + ps / 2, px + ps, py + ps / 2, '#1c222c') + L(px + ps / 2, py, px + ps / 2, py + ps, '#1c222c');
+    b += L(px, py + ps, px + ps, py, C.faint, 1, 'stroke-dasharray="3 3"');
+    b += `<path d="M${[...Array(81)].map((_, i) => { const x = -1 + i / 40; return f1(px + (x + 1) / 2 * ps) + ' ' + f1(py + ps - (Math.max(-1, Math.min(1, sat(x))) + 1) / 2 * ps); }).join('L')}" fill="none" stroke="${col}" stroke-width="2"/>`;
+    b += T(px + ps / 2, py + ps + 16, 'quiet parts stay as they are', { size: 9, fill: C.faint, anchor: 'middle' });
+    return [W, H, b, 'Saturation: drive, warmth, mix and output, and the soft transfer curve'];
+  };
+  // Match in the EQ window (ui/EqMatch.cpp): reference (orange), this channel (blue), the match (white area), four cards.
+  G.eqmatch = function (host) {
+    const W = 900, H = 540, ORG = '#ffa53d', BLU = C.in, MB = '#5b9cff';
+    let b = R(0, 0, W, H, 10, C.bg) + T(18, 26, 'IN 1', { size: 12, fill: C.in, weight: 700 }) + T(52, 26, 'Mic', { size: 12, fill: C.in, weight: 700 });
+    b += R(330, 12, 120, 24, 5, C.raised) + `<circle cx="346" cy="24" r="5" fill="none" stroke="${C.dim}" stroke-width="1.3"/><circle cx="353" cy="24" r="5" fill="none" stroke="${C.dim}" stroke-width="1.3"/>` +
+      T(366, 28, 'STEREO', { size: 9, weight: 700 }) + `<path d="M436 21h8l-4 5z" fill="${C.dim}"/>`;
+    b += button(458, 12, 60, 24, 'DELTA') + R(524, 12, 64, 24, 5, C.raised, { stroke: C.dim }) + T(556, 28, 'MATCH', { size: 8.5, weight: 700, anchor: 'middle' });
+    b += toggle(596, 16, C.dim, false) + T(632, 28, 'Show input', { size: 9.5, fill: C.dim });
+    b += button(W - 196, 12, 80, 24, 'EQ ...', { color: C.text }) + R(W - 110, 12, 96, 24, 5, C.eq) + T(W - 62, 28, 'EQ ON', { size: 9.5, fill: C.bg, anchor: 'middle', weight: 700 });
+    const gx = 44, gy = 52, gw = W - 74, gh = 292, lo = 20, hi = 20000, rg = 20;
+    const fx = f => gx + gw * Math.log(f / lo) / Math.log(hi / lo), fy = d => gy + gh / 2 - d / rg * (gh / 2);
+    b += R(14, 44, W - 28, gh + 26, 6, '#0d1015');
+    [50, 100, 200, 500, 1000, 2000, 5000, 10000].forEach(f => { b += L(fx(f), gy, fx(f), gy + gh, '#1c222c') + T(fx(f), gy + gh + 14, f >= 1000 ? f / 1000 + 'k' : f, { size: 8.5, fill: C.faint, anchor: 'middle' }); });
+    [-12, -6, 6, 12].forEach(d => { b += L(gx, fy(d), gx + gw, fy(d), '#1c222c') + T(gx - 6, fy(d) + 3, (d > 0 ? '+' : '') + d, { size: 8.5, fill: C.faint, anchor: 'end' }); });
+    const hump = (f, c, w, h) => h / (1 + Math.pow(Math.log2(f / c) / w, 2));
+    const wig = (f, s) => 0.35 * Math.sin(Math.log(f) * 13 + s) + 0.15 * Math.sin(Math.log(f) * 31 + s * 2);
+    const refS = f => -8 + hump(f, 420, 1.9, 17) - (f > 3000 ? Math.log2(f / 3000) * 1.6 : 0);
+    const chS = f => -8 + hump(f, 480, 1.4, 19) - (f > 1500 ? Math.log2(f / 1500) * 2.6 : 0);
+    const ref = f => refS(f) + wig(f, 1), ch = f => chS(f) + wig(f, 3);
+    const N = 200, fs = [...Array(N + 1)].map((_, i) => lo * Math.pow(hi / lo, i / N));
+    const mean = fs.reduce((a, f) => a + refS(f) - chS(f), 0) / fs.length;
+    // the match: the difference smoothed (SMOOTH), level kept (mean removed)
+    const mt = f => Math.max(-rg, Math.min(rg, refS(f) - chS(f) - mean + 0.25 * Math.sin(Math.log(f) * 9)));
+    const pts = fn => fs.map(f => f1(fx(f)) + ' ' + f1(fy(fn(f)))).join('L');
+    b += `<path d="M${f1(gx)} ${f1(fy(0))}L${pts(mt)}L${f1(gx + gw)} ${f1(fy(0))}Z" fill="#9b8fd0" opacity=".28"/>`;
+    b += `<path d="M${pts(ch)}" fill="none" stroke="${BLU}" stroke-width="1.5"/><path d="M${pts(ref)}" fill="none" stroke="${ORG}" stroke-width="1.5"/>`;
+    b += `<path d="M${pts(mt)}" fill="none" stroke="${C.text}" stroke-width="2.2"/>` + L(gx, fy(0), gx + gw, fy(0), '#3a4252');
+    [gx, gx + gw].forEach(x => { b += L(x, gy, x, gy + gh, C.dim, 1) + R(x - 5, gy - 2, 10, 20, 4, C.raised, { stroke: C.dim }); });
+    [['Reference', ORG], ['This channel', BLU], ['Match', C.text]].forEach(([t, c], i) => { b += R(gx + 30 + i * 110, gy + 10, 14, 3, 1.5, c) + T(gx + 50 + i * 110, gy + 15, t, { size: 9.5, fill: C.dim }); });
+    const cy = 362, ch2 = 166;
+    const mini = (x, y, w, h, fn, c) => {
+      const n = 60, p = [...Array(n + 1)].map((_, i) => { const f = lo * Math.pow(hi / lo, i / n); return f1(x + w * i / n) + ' ' + f1(y + h - Math.max(0, Math.min(1, (fn(f) + 18) / 30)) * (h - 6)); }).join('L');
+      return R(x, y, w, h, 4, '#07090c') + `<path d="M${x} ${y + h}L${p}L${x + w} ${y + h}Z" fill="${c}" opacity=".35"/><path d="M${p}" fill="none" stroke="${c}" stroke-width="1.3"/>`;
+    };
+    const cap = (x, y, t) => R(x, y, 18 + t.length * 5.6, 18, 3, 'transparent') + T(x, y + 12, t, { size: 8.5, fill: MB, weight: 700, ls: '.04em' });
+    b += R(14, cy, 214, ch2, 6, C.panel2) + cap(26, cy + 8, 'REFERENCE') + R(116, cy + 8, 102, 20, 4, C.raised) + T(124, cy + 22, 'IN 2  Headset', { size: 9, fill: MB });
+    b += mini(26, cy + 36, 110, 116, ref, ORG) + button(144, cy + 40, 74, 30, 'CAPTURE', { color: MB }) + button(144, cy + 78, 74, 26, 'CLEAR');
+    b += R(236, cy, 214, ch2, 6, C.panel2) + cap(248, cy + 8, 'THIS CHANNEL') + mini(248, cy + 36, 110, 116, ch, BLU) +
+      button(366, cy + 40, 74, 30, 'CAPTURE', { color: MB }) + button(366, cy + 78, 74, 26, 'CLEAR');
+    b += R(458, cy, 196, ch2, 6, C.panel2) + cap(470, cy + 8, 'FINE TUNE') + knob(510, cy + 82, 28, 0.25, MB, { value: '25 %' }) + knob(600, cy + 82, 28, 1, MB, { value: '100 %' }) +
+      T(510, cy + 40, 'SMOOTH', { size: 8.5, fill: C.dim, anchor: 'middle' }) + T(600, cy + 40, 'AMOUNT', { size: 8.5, fill: C.dim, anchor: 'middle' });
+    b += R(662, cy, W - 676, ch2, 6, C.panel2) + cap(674, cy + 8, 'RESULT') + R(674, cy + 32, W - 700, 28, 5, MB) + T(674 + (W - 700) / 2, cy + 50, 'MATCH ON', { size: 9.5, weight: 700, fill: '#0a0c10', anchor: 'middle' });
+    b += button(674, cy + 68, (W - 706) / 2, 26, 'FULL RANGE') + button(680 + (W - 706) / 2, cy + 68, (W - 706) / 2, 26, 'SEPARATE L/R') +
+      R(674, cy + 102, W - 700, 26, 5, C.panel2, { stroke: C.outline }) + T(674 + (W - 700) / 2, cy + 119, 'INTO BANDS ...', { size: 8.5, weight: 700, fill: MB, anchor: 'middle' });
+    host.innerHTML = svg(W, H, b, "Match in Hydra's EQ: the reference (orange), this channel (blue) and the match curve, with the cards Reference, This channel, Fine tune and Result");
+  };
+  // Multitrack recorder window (ui/RecorderWindow.cpp): transport, record source, timeline with clips, track strips, Play To.
+  G.multitrack = function (host) {
+    const W = 900, H = 440, CL = '#2bb6d8';
+    let b = R(0, 0, W, H, 10, C.bg);
+    b += R(10, 10, 30, 28, 5, C.raised) + `<circle cx="25" cy="24" r="7" fill="${C.mute}"/>` + R(44, 10, 30, 28, 5, C.raised) + `<path d="M54 17l12 7-12 7z" fill="${C.good}"/>` +
+      R(78, 10, 30, 28, 5, C.raised) + R(87, 18, 12, 12, 2, C.dim);
+    b += T(120, 30, '00:10.500 / 00:24.0', { size: 15, mono: true, weight: 600 }) + T(296, 28, 'Hydra 2026-11-14 · 3 tracks', { size: 9.5, fill: C.dim });
+    ['Split', 'Delete', 'Crop', 'Undo', 'Redo'].forEach((t, i) => { b += button(470 + i * 50, 12, 46, 24, t, { color: C.text, size: 9 }); });
+    b += button(730, 12, 76, 24, 'Recordings', { color: C.text, size: 9 }) + button(812, 12, 78, 24, 'Export...', { color: C.text, size: 9 });
+    // record source
+    b += R(10, 48, 170, H - 58, 7, C.panel) + `<path d="M17 48.5h156" stroke="${C.mute}" stroke-width="2.5" stroke-linecap="round"/>` + T(20, 66, 'RECORD', { size: 9, fill: C.mute, weight: 700, ls: '.04em' });
+    b += R(20, 74, 150, 22, 5, '#07090c') + T(57, 89, 'V bus', { size: 9.5, fill: C.dim, anchor: 'middle' }) + R(97, 76, 71, 18, 4, C.mute) + T(132, 89, 'Inputs', { size: 9.5, weight: 700, anchor: 'middle' });
+    b += toggle(20, 104, C.mute) + T(58, 116, 'Separate tracks', { size: 9.5, weight: 600 });
+    b += R(20, 128, 150, 22, 5, '#07090c') + R(22, 130, 72, 18, 4, C.in) + T(58, 143, 'Pre effects', { size: 9, weight: 700, fill: '#0a0c10', anchor: 'middle' }) + T(132, 143, 'Post effects', { size: 9, fill: C.dim, anchor: 'middle' });
+    [['Mic', 1], ['Headset', 0], ['Guitar', 1], ['Chrome', 0], ['Discord', 0], ['Game', 1], ['Spotify', 0]].forEach(([n, on], i) => {
+      const y = 160 + i * 28;
+      b += R(20, y, 22, 20, 4, on ? mix(C.raised, C.mute, 0.45) : C.raised) + `<circle cx="31" cy="${y + 10}" r="5" fill="${C.mute}" opacity="${on ? 1 : 0.55}"/>` +
+        T(50, y + 14, n, { size: 9.5, fill: on ? C.text : C.dim }) + L(48, y + 24, 170, y + 24, C.outline);
+    });
+    // timeline
+    const tx = 188, tw = 450, ty = 48, sx = t => tx + 6 + t / 24 * (tw - 12);
+    b += R(tx, ty, tw, H - 58, 7, '#0c0f14') + R(tx, ty, tw, 22, 0, C.panel);
+    [0, 5, 10, 15, 20].forEach(t => { b += L(sx(t), ty + 14, sx(t), ty + 22, C.faint) + T(sx(t) + 3, ty + 12, '0:' + String(t).padStart(2, '0'), { size: 8, fill: C.faint }); });
+    b += R(sx(3.5), ty + 4, sx(14.5) - sx(3.5), 4, 2, C.dim, { op: 0.6 });
+    const wave = (x, y, w, h, seed, kind) => {
+      let p = '';
+      const n = Math.max(6, Math.floor(w / 3));
+      for (let i = 0; i < n; i++) {
+        const t = i / n, s = Math.sin;
+        const env = kind === 'voice' ? Math.abs(s(t * 9 + seed) * s(t * 3.1 + seed)) : kind === 'pluck' ? Math.pow(1 - ((t * 7 + seed) % 1), 2) : 0.45 + 0.1 * s(t * 20 + seed);
+        const a = Math.max(0.05, env) * (h / 2 - 3);
+        p += `M${f1(x + 2 + i * (w - 4) / n)} ${f1(y + h / 2 - a)}v${f1(2 * a)}`;
+      }
+      return `<path d="${p}" stroke="${CL}" stroke-width="1.6"/>`;
+    };
+    const clip = (t0, t1, y, h, name, seed, kind, fade) => {
+      const x = sx(t0), w = sx(t1) - x;
+      let g = R(x, y, w, h, 4, mix('#0c0f14', CL, 0.22), { stroke: mix('#0c0f14', CL, 0.6) }) + R(x, y, w, 13, 4, mix('#0c0f14', CL, 0.42)) + T(x + 5, y + 10, name, { size: 8, weight: 700 });
+      g += wave(x, y + 14, w, h - 14, seed, kind);
+      if (fade) g += L(x + w - 50, y + 14, x + w, y + h, C.text, 1, 'opacity=".7"');
+      return g;
+    };
+    const rows = [['Mic', 'voice', [[1.5, 21.5]]], ['Guitar', 'pluck', [[0, 10.4], [10.6, 14.5], [16.5, 21.5]]], ['Game  -3.0 dB', 'flat', [[0, 21.5]]]];
+    rows.forEach(([n, k, cl], r) => {
+      const y = ty + 28 + r * 84;
+      b += L(tx, y + 80, tx + tw, y + 80, C.outline);
+      cl.forEach(([a, z], j) => { b += clip(a, z, y + 4, 72, n, r * 3 + j, k, r === 2); });
+    });
+    b += L(sx(10.5), ty, sx(10.5), H - 10, C.text, 1.2, 'opacity=".75"') + `<path d="M${f1(sx(10.5) - 5)} ${ty + 14}h10l-5 6z" fill="${C.text}"/>`;
+    // track strips
+    const kx = 646;
+    rows.forEach(([n], r) => {
+      const y = ty + r * 84;
+      b += R(kx, y + 28, 136, 80, 0, C.panel) + (r === 0 ? R(kx, y + 28, 3, 80, 1.5, C.in) : '') + T(kx + 10, y + 44, 'TR ' + (r + 1), { size: 8.5, fill: C.in, weight: 700 }) + T(kx + 38, y + 44, n.split(' ')[0], { size: 9.5, weight: 700 });
+      b += button(kx + 8, y + 52, 20, 18, 'M', { size: 8 }) + button(kx + 31, y + 52, 20, 18, 'S', { size: 8 }) + button(kx + 54, y + 52, 34, 18, 'MONO', r === 1 ? { fill: C.in, color: '#0a0c10', size: 7.5 } : { size: 7.5 });
+      b += R(kx + 10, y + 82, 70, 4, 2, '#050608') + R(kx + 10, y + 82, 50, 4, 2, C.in) + R(kx + 56, y + 77, 10, 14, 2, '#c9ced8');
+      b += knob(kx + 106, y + 62, 11, 0.5, C.in, { bipolar: true }) + T(kx + 106, y + 88, 'GAIN', { size: 7, fill: C.dim, anchor: 'middle' });
+    });
+    // Play To
+    const px = 790;
+    b += R(px, 48, 100, 170, 7, C.panel) + `<path d="M${px + 7} 48.5h86" stroke="${C.hw}" stroke-width="2.5" stroke-linecap="round"/>` + T(px + 10, 66, 'PLAY TO', { size: 9, fill: C.hw, weight: 700 });
+    ['H1', 'H2', 'H3', 'V1', 'V2', 'V3'].forEach((t, i) => {
+      const x = px + 10 + (i % 2) * 42, y = 76 + Math.floor(i / 2) * 26, on = i === 0;
+      b += button(x, y, 38, 22, t, on ? { fill: C.hw, color: C.text } : {});
+    });
+    b += knob(px + 50, 176, 16, 0.75, C.hw, { label: 'LEVEL' });
+    host.innerHTML = svg(W, H, b, "Hydra's multitrack recorder: three inputs recorded into separate tracks with clips, the track strips and where the playback goes");
   };
 
   /* ---------- wiki: device picker, controls, channel menu ---------- */

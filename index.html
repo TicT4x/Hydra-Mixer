@@ -484,7 +484,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
 
 /* Effects */
 .fxgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 30px; }
-.fxgrid .fx[data-fx="vst"] { grid-column: span 2; }
+.fxgrid .fx[data-fx="vst"] { grid-column: span 4; }
 .fx { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 18px 16px; position: relative; overflow: hidden; }
 .fx::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; background: var(--c); }
 .fx h3 { margin: 0 0 6px; font-size: 13px; letter-spacing: .07em; text-transform: uppercase; color: var(--c); }
@@ -673,7 +673,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
       </div>
       <div class="stat" style="--c:#3ee08f">
         <div class="si"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></div>
-        <b>10</b><span class="en">built-in effects, from denoiser to pitch shifter</span><span class="de">eingebaute Effekte, vom Denoiser bis zum Pitch-Shifter</span>
+        <b>12</b><span class="en">built-in effects, from denoiser to pitch shifter</span><span class="de">eingebaute Effekte, vom Denoiser bis zum Pitch-Shifter</span>
         <div class="viz fxs"></div>
       </div>
       <div class="stat" style="--c:#ffc23f">
@@ -713,21 +713,25 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
     <p class="eyebrow"><span class="en">Effects</span><span class="de">Effekte</span></p>
     <h2 class="h2"><span class="en">Studio effects on every channel.</span><span class="de">Studio-Effekte auf jedem Kanal.</span></h2>
     <p class="sub">
-      <span class="en">Built-in effects and your VST3 plugins are blocks in one chain. Drag them into any order, use up to four of each, switch them off without losing settings. Almost all built-in effects add no latency.</span>
-      <span class="de">Eingebaute Effekte und deine VST3-Plugins sind Blöcke in einer Kette. Zieh sie in jede Reihenfolge, nutze bis zu vier von jedem, schalte sie aus, ohne Einstellungen zu verlieren. Fast alle eingebauten Effekte kosten keine Latenz.</span>
+      <span class="en">Built-in effects and your VST3 plugins are blocks in one chain, on every input and output. Drag them into any order or straight in from the effect browser, use up to four of each, save presets, switch them off without losing settings. Almost all built-in effects add no latency.</span>
+      <span class="de">Eingebaute Effekte und deine VST3-Plugins sind Blöcke in einer Kette, auf jedem Input und Ausgang. Zieh sie in jede Reihenfolge oder direkt aus dem Effekt-Browser hinein, nutze bis zu vier von jedem, speichere Presets, schalte sie aus, ohne Einstellungen zu verlieren. Fast alle eingebauten Effekte kosten keine Latenz.</span>
     </p>
     <div class="routing hx rv" data-g="chain" style="background:#13171e"></div>
     <p class="swipe"><span class="en">← Swipe to see the whole chain →</span><span class="de">← Wischen für die ganze Kette →</span></p>
 
     <div class="fxgrid">
+      <div class="fx rv" tabindex="0" data-fx="voice" style="--c:#b8f060"><h3>Studio Voice<span class="tag">New</span></h3>
+        <p><span class="en">One knob for a better voice: pick Podcast, Radio, Stream or Singing and turn it up. "Learn my mic" listens for a few seconds and evens out your microphone.</span><span class="de">Ein Regler für eine bessere Stimme: Podcast, Radio, Stream oder Singing wählen und aufdrehen. „Learn my mic“ hört ein paar Sekunden zu und gleicht dein Mikrofon aus.</span></p></div>
       <div class="fx rv" tabindex="0" data-fx="denoiser" style="--c:#3ee08f"><h3>Denoiser</h3>
         <p><span class="en">Removes fans, keyboards and room noise from your voice. RNNoise with Hydra's own filter bank, from 0 ms extra delay.</span><span class="de">Entfernt Lüfter, Tastatur und Raumrauschen aus der Stimme. RNNoise mit Hydras eigener Filterbank, ab 0 ms Zusatzverzögerung.</span></p></div>
       <div class="fx rv" tabindex="0" data-fx="eq" style="--c:#35d0f4"><h3>Equalizer</h3>
-        <p><span class="en">16 bands, seven filter types, a large window with a live spectrum. Import and export presets.</span><span class="de">16 Bänder, sieben Filtertypen, ein großes Fenster mit Live-Spektrum. Presets importieren und exportieren.</span></p></div>
+        <p><span class="en">16 bands, a live spectrum, left/right and mid/side, and Match: it makes a channel sound like a reference, with no added latency.</span><span class="de">16 Bänder, Live-Spektrum, Links/Rechts und Mitte/Seite, und Match: lässt einen Kanal wie eine Referenz klingen, ohne zusätzliche Latenz.</span></p></div>
       <div class="fx rv" tabindex="0" data-fx="gate" style="--c:#ffc23f"><h3>Gate</h3>
         <p><span class="en">Closes between words. With Voice Key it only opens for speech, not for a keyboard click.</span><span class="de">Schließt zwischen den Wörtern. Mit Voice Key öffnet es nur für Sprache, nicht für Tastenklicks.</span></p></div>
       <div class="fx rv" tabindex="0" data-fx="comp" style="--c:#ff8f4d"><h3><span class="en">Compressor</span><span class="de">Kompressor</span></h3>
         <p><span class="en">Evens out loud and quiet parts. Knee, attack, release, makeup and auto gain, with a live curve.</span><span class="de">Gleicht laute und leise Stellen aus. Knee, Attack, Release, Makeup und Auto-Gain, mit Live-Kennlinie.</span></p></div>
+      <div class="fx rv" tabindex="0" data-fx="saturation" style="--c:#ff5a3c"><h3>Saturation<span class="tag">New</span></h3>
+        <p><span class="en">Warmth and density like analogue gear. Loud parts get rounder, quiet parts stay as they are.</span><span class="de">Wärme und Dichte wie bei analogen Geräten. Laute Stellen werden runder, leise bleiben, wie sie sind.</span></p></div>
       <div class="fx rv" tabindex="0" data-fx="limiter" style="--c:#ff6a7d"><h3>Limiter</h3>
         <p><span class="en">A ceiling nothing goes over. Protects ears, speakers and your stream from peaks.</span><span class="de">Eine Grenze, über die nichts geht. Schützt Ohren, Lautsprecher und Stream vor Spitzen.</span></p></div>
       <div class="fx rv" tabindex="0" data-fx="correction" style="--c:#a78bfa"><h3><span class="en">Speaker correction</span><span class="de">Lautsprecher-Korrektur</span></h3>
@@ -758,17 +762,19 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         <button role="tab" data-f="latency" aria-selected="true"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg></span><span class="en">Low-latency engine</span><span class="de">Latenzarme Engine</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="apps"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></span><span class="en">Capture single apps</span><span class="de">Einzelne Apps aufnehmen</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="cables"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h4l2-5 4 10 2-5h4"/></svg></span><span class="en">Virtual cables</span><span class="de">Virtuelle Kabel</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
-        <button role="tab" data-f="eq"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 16c3 0 3-8 6-8s3 6 6 6 3-4 6-4"/></svg></span><span class="en">EQ with live spectrum</span><span class="de">EQ mit Live-Spektrum</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="eq"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 16c3 0 3-8 6-8s3 6 6 6 3-4 6-4"/></svg></span><span class="en">EQ with Match</span><span class="de">EQ mit Match</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="voice"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/><path d="M19 3l.8 1.7L21.5 5.5l-1.7.8L19 8l-.8-1.7-1.7-.8 1.7-.8z" fill="currentColor" stroke="none"/></svg></span>Studio Voice<span class="tag">New</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="stems"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 10v4M8 6v12M12 3v18M16 8v8M20 11v2"/></svg></span><span class="en">Stem separation</span><span class="de">Stem-Separation</span><span class="tag">Beta</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="sel"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></span><span class="en">A separate mix per output</span><span class="de">Eigener Mix pro Ausgang</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="room"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10 12 3l9 7v10H3z"/><path d="M8 15c1.3-1.3 2.7-1.3 4 0s2.7 1.3 4 0"/></svg></span><span class="en">Speaker &amp; headphone correction</span><span class="de">Lautsprecher- &amp; Kopfhörer-Korrektur</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="link"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16a5 5 0 0 1 6 0"/><circle cx="12" cy="19.5" r="1"/></svg></span>Hydra Link<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="remote"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10 7v8M14 9v6"/></svg></span><span class="en">Phone &amp; tablet remote</span><span class="de">Handy &amp; Tablet als Fernbedienung</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
-        <button role="tab" data-f="recorder"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg></span>Recorder<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="recorder"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg></span><span class="en">Multitrack recorder</span><span class="de">Mehrspur-Recorder</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="finder"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg></span>Latency Finder &amp; Sync Delay<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="dsp"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 1v4M15 1v4M9 19v4M15 19v4M1 9h4M1 15h4M19 9h4M19 15h4"/></svg></span>DSP Load<svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="midi"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M7 6v7M12 6v7M17 6v7"/></svg></span><span class="en">MIDI &amp; hotkeys</span><span class="de">MIDI &amp; Tastenkürzel</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="scenes"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span><span class="en">Scenes</span><span class="de">Szenen</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button role="tab" data-f="look"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/></svg></span><span class="en">Look &amp; layout</span><span class="de">Aussehen &amp; Layout</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
         <button role="tab" data-f="vm"><span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></span><span class="en">Voicemeeter import</span><span class="de">Voicemeeter-Import</span><svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
       </div>
 
@@ -781,7 +787,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
             <li><b>ASIO, WASAPI exclusive, low-latency shared</b> <span class="en">and app capture, mixed freely.</span><span class="de">und App-Capture, frei gemischt.</span></li>
             <li><b><span class="en">Several ASIO interfaces at once,</span><span class="de">Mehrere ASIO-Interfaces gleichzeitig,</span></b> <span class="en">each sample-accurate within itself.</span><span class="de">jedes in sich sample-genau.</span></li>
             <li><b>Auto-reconnect:</b> <span class="en">a device that drops out comes back on its own, the master restarts after driver errors.</span><span class="de">ein Gerät, das wegfällt, kommt von selbst zurück, der Master startet nach Treiberfehlern neu.</span></li>
-            <li><b><span class="en">Light on the CPU:</span><span class="de">Sparsam:</span></b> <span class="en">about 1.6 % of one core when idle.</span><span class="de">etwa 1,6 % eines Kerns im Leerlauf.</span></li>
+            <li><b><span class="en">Light on the CPU:</span><span class="de">Sparsam:</span></b> <span class="en">filters run in a vectorised core, channels nobody hears pause their effects, and hidden in the tray Hydra hardly wakes up.</span><span class="de">Filter laufen in einem vektorisierten Kern, Kanäle, die niemand hört, pausieren ihre Effekte, und versteckt im Tray wacht Hydra kaum auf.</span></li>
           </ul>
           <a class="more" href="#concepts"><span class="en">Core concepts in the wiki →</span><span class="de">Grundkonzepte im Wiki →</span></a>
         </article>
@@ -809,14 +815,32 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         </article>
 
         <article data-f="eq" hidden>
-          <h3><span class="en">EQ with live spectrum</span><span class="de">EQ mit Live-Spektrum</span></h3>
-          <div class="pic hx" data-g="eq"></div>
-          <p><span class="en">Click on the curve to add a band and drag it where you need it. The large window shows what comes out of the EQ as a live spectrum, only while it is open.</span><span class="de">Ein Klick auf die Kurve legt ein Band an, ziehen verschiebt es. Das große Fenster zeigt, was aus dem EQ kommt, als Live-Spektrum, nur solange es offen ist.</span></p>
+          <h3><span class="en">EQ with Match</span><span class="de">EQ mit Match</span></h3>
+          <div class="pic hx" data-g="eqmatch"></div>
+          <p><span class="en">Make your mic sound like your friend's, or a song like a reference: capture a reference (another channel, an audio file or standard speech) and your channel, and the EQ follows the reference with a finely detailed curve, with no added latency. Smooth it, scale it, limit it to a range, and turn it into normal bands whenever you like.</span><span class="de">Lass dein Mikro wie das deines Freundes klingen oder einen Song wie eine Referenz: Nimm eine Referenz auf (einen anderen Kanal, eine Audiodatei oder Standard-Sprache) und deinen Kanal, und der EQ folgt der Referenz mit einer fein aufgelösten Kurve, ohne zusätzliche Latenz. Glätten, abschwächen, auf einen Bereich begrenzen und jederzeit in normale Bänder umwandeln.</span></p>
           <ul>
-            <li><span class="en">16 bands: bell, notch, band pass, high/low cut, low/high shelf.</span><span class="de">16 Bänder: Glocke, Notch, Bandpass, High/Low Cut, Low/High Shelf.</span></li>
-            <li><span class="en">The same EQ on inputs and outputs, presets as .hydraeq files.</span><span class="de">Derselbe EQ auf Inputs und Ausgängen, Presets als .hydraeq-Dateien.</span></li>
+            <li><span class="en">16 bands, click on the curve to add one, live spectrum in the large window (optionally with the signal before the EQ).</span><span class="de">16 Bänder, Klick auf die Kurve legt eins an, Live-Spektrum im großen Fenster (wahlweise mit dem Signal vor dem EQ).</span></li>
+            <li><span class="en">Stereo, left/right or mid/side: every band works on both sides or only one. DELTA lets you hear only what the EQ changes.</span><span class="de">Stereo, Links/Rechts oder Mitte/Seite: Jedes Band wirkt auf beide Seiten oder nur auf eine. DELTA lässt dich nur hören, was der EQ ändert.</span></li>
+            <li><span class="en">Steep low and high cuts (24 dB/oct).</span><span class="de">Steile Low und High Cuts (24 dB/Okt.).</span></li>
           </ul>
           <a class="more" href="#eq"><span class="en">Equalizer in the wiki →</span><span class="de">Equalizer im Wiki →</span></a>
+        </article>
+
+        <article data-f="voice" hidden>
+          <h3>Studio Voice <span class="tag">New</span></h3>
+          <div class="pic hx" data-g="fxwin" data-o="voice"></div>
+          <p><span class="en">No idea about EQ and compressors? Put Studio Voice on your mic, pick a profile and turn AMOUNT up until it sounds good. Inside runs a complete vocal chain like in a studio: EQ, gate, leveling, compression, saturation and a limiter, all set to work together.</span><span class="de">Keine Ahnung von EQ und Kompressoren? Leg Studio Voice auf dein Mikro, wähl ein Profil und dreh AMOUNT auf, bis es gut klingt. Darin läuft eine komplette Gesangskette wie im Studio: EQ, Gate, Pegelausgleich, Kompression, Sättigung und ein Limiter, alles aufeinander abgestimmt.</span></p>
+          <dl class="kv">
+            <dt>Podcast</dt><dd><span class="en">warm and clear, natural dynamics</span><span class="de">warm und klar, natürliche Dynamik</span></dd>
+            <dt>Radio</dt><dd><span class="en">close, full and loud like a broadcast mic</span><span class="de">nah, voll und laut wie ein Radiomikrofon</span></dd>
+            <dt>Stream</dt><dd><span class="en">present, keeps keyboard and desk noise out</span><span class="de">präsent, hält Tastatur- und Tischgeräusche draußen</span></dd>
+            <dt>Singing</dt><dd><span class="en">airy, gentle, keeps the dynamics of a song</span><span class="de">luftig, sanft, lässt einem Song seine Dynamik</span></dd>
+          </dl>
+          <ul>
+            <li><b>Learn my mic:</b> <span class="en">speak for a few seconds and Studio Voice corrects how your microphone sounds.</span><span class="de">ein paar Sekunden sprechen, und Studio Voice gleicht den Klang deines Mikrofons aus.</span></li>
+            <li><b>Split:</b> <span class="en">turns the block into normal effects with exactly the same settings, to keep tweaking yourself.</span><span class="de">macht aus dem Block normale Effekte mit genau denselben Einstellungen, zum Selbst-Weiterdrehen.</span></li>
+          </ul>
+          <a class="more" href="#voice"><span class="en">Studio Voice in the wiki →</span><span class="de">Studio Voice im Wiki →</span></a>
         </article>
 
         <article data-f="stems" hidden>
@@ -882,12 +906,13 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         </article>
 
         <article data-f="recorder" hidden>
-          <h3>Recorder</h3>
-          <div class="pic hx" data-g="recorder"></div>
-          <p><span class="en">Record any virtual output to WAV (16, 24 or 32-bit float), right from the top bar or the effect chain area. Play WAV, FLAC, MP3 or Ogg files into any output, for example a jingle into the stream.</span><span class="de">Nimm jeden virtuellen Ausgang als WAV auf (16, 24 oder 32 Bit float), direkt aus der Top-Bar oder dem Bereich der Effektkette. Spiel WAV-, FLAC-, MP3- oder Ogg-Dateien auf jeden Ausgang, zum Beispiel einen Jingle in den Stream.</span></p>
+          <h3><span class="en">Multitrack recorder</span><span class="de">Mehrspur-Recorder</span></h3>
+          <div class="pic hx" data-g="multitrack"></div>
+          <p><span class="en">Record several inputs at once, each into its own file and sample-accurate to each other: your voice, the guitar and the game. Every take opens as a small project: move, trim, split and fade the clips, give every track its own fader, pan and effect chain, and export single tracks or a mixdown.</span><span class="de">Nimm mehrere Inputs gleichzeitig auf, jeden in eine eigene Datei und sample-genau zueinander: deine Stimme, die Gitarre und das Spiel. Jeder Take öffnet sich als kleines Projekt: Clips verschieben, trimmen, schneiden und ausblenden, jede Spur mit eigenem Fader, Pan und eigener Effektkette, einzelne Spuren oder einen Mixdown exportieren.</span></p>
           <ul>
-            <li><span class="en">Waveform while recording, click to jump, loop.</span><span class="de">Wellenform schon beim Aufnehmen, Klick springt, Loop.</span></li>
-            <li><span class="en">Trim with the handles, "Cut" writes the file (the original goes to the recycle bin).</span><span class="de">Mit den Griffen trimmen, „Cut“ schreibt die Datei (das Original geht in den Papierkorb).</span></li>
+            <li><span class="en">Raw (pre effects, the track gets a copy of the chain) or with effects.</span><span class="de">Roh (vor den Effekten, die Spur bekommt eine Kopie der Kette) oder mit Effekten.</span></li>
+            <li><span class="en">Or record a virtual output to one WAV file, and play audio files into any output, for example a jingle into the stream.</span><span class="de">Oder einen virtuellen Ausgang in eine WAV-Datei aufnehmen, und Audiodateien auf jeden Ausgang spielen, zum Beispiel einen Jingle in den Stream.</span></li>
+            <li><span class="en">Compact in the effect area, the full window with one click.</span><span class="de">Kompakt im Effektbereich, das große Fenster mit einem Klick.</span></li>
           </ul>
           <a class="more" href="#recorder"><span class="en">Recorder in the wiki →</span><span class="de">Recorder im Wiki →</span></a>
         </article>
@@ -921,7 +946,20 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         <article data-f="scenes" hidden>
           <h3><span class="en">Scenes</span><span class="de">Szenen</span></h3>
           <p><span class="en">Save the whole mixer as a scene ("Gaming", "Podcast", "Late night") and switch with one click, a MIDI button, a hotkey or from your phone. A scene stores every level, switch and effect setting; devices and plugins stay where they are.</span><span class="de">Speichere den ganzen Mixer als Szene („Gaming“, „Podcast“, „Late night“) und wechsle mit einem Klick, einer MIDI-Taste, einem Tastenkürzel oder vom Handy. Eine Szene speichert alle Pegel, Schalter und Effekteinstellungen; Geräte und Plugins bleiben, wo sie sind.</span></p>
+          <p><span class="en">The scenes sit in a panel at the right edge of the window (Ctrl+Alt+S).</span><span class="de">Die Szenen liegen in einem Panel am rechten Fensterrand (Strg+Alt+S).</span></p>
           <a class="more" href="#scenes"><span class="en">Scenes in the wiki →</span><span class="de">Szenen im Wiki →</span></a>
+        </article>
+
+        <article data-f="look" hidden>
+          <h3><span class="en">Look &amp; layout</span><span class="de">Aussehen &amp; Layout</span></h3>
+          <p><span class="en">Hydra adapts to your screen and your taste.</span><span class="de">Hydra passt sich deinem Bildschirm und deinem Geschmack an.</span></p>
+          <ul>
+            <li><b><span class="en">Themes:</span><span class="de">Themes:</span></b> <span class="en">Dark, Darker (graphite) and Light, switched without a restart.</span><span class="de">Dark, Darker (Graphit) und Light, ohne Neustart umgeschaltet.</span></li>
+            <li><b><span class="en">Collapse or pin a group:</span><span class="de">Gruppen einklappen oder fixieren:</span></b> <span class="en">click Inputs, Hardware or Virtual Outputs. Collapsed, a group is a narrow overview with levels, mute and solo; pinned, it always stays in view while the others scroll.</span><span class="de">Klick auf Inputs, Hardware oder Virtual Outputs. Eingeklappt ist eine Gruppe eine schmale Übersicht mit Pegeln, Mute und Solo; fixiert bleibt sie immer sichtbar, während die anderen scrollen.</span></li>
+            <li><b><span class="en">Channels as rows,</span><span class="de">Kanäle als Zeilen,</span></b> <span class="en">interface and text size from 75 to 200 %, a window that is always as large as the channels need.</span><span class="de">Oberfläche und Schrift von 75 bis 200 %, ein Fenster, das immer so groß ist, wie die Kanäle brauchen.</span></li>
+            <li><b><span class="en">Effect browser</span><span class="de">Effekt-Browser</span></b> <span class="en">at the left edge: all effects, plugins and presets, drag them onto a channel.</span><span class="de">am linken Rand: alle Effekte, Plugins und Presets, auf einen Kanal ziehen.</span></li>
+          </ul>
+          <a class="more" href="#settings"><span class="en">Settings in the wiki →</span><span class="de">Settings im Wiki →</span></a>
         </article>
 
         <article data-f="vm" hidden>
@@ -951,7 +989,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
         <li><b><span class="en">Hear yourself, live.</span><span class="de">Hör dich selbst, live.</span></b> <span class="en">ASIO master without extra buffers. Your voice with EQ, compressor and reverb, your guitar through an amp simulation, e-drums or keys through any VST3 plugin.</span><span class="de">ASIO-Master ohne Zusatzpuffer. Deine Stimme mit EQ, Kompressor und Hall, deine Gitarre durch eine Amp-Simulation, E-Drums oder Keys durch jedes VST3-Plugin.</span></li>
         <li><b><span class="en">Take your part out of the song.</span><span class="de">Nimm deinen Part aus dem Song.</span></b> <span class="en">The Stem Separator splits whatever plays on Spotify or YouTube into vocals, drums, bass, guitar and the rest: mute the vocals to sing yourself, the drums to play them, or solo a part to learn it.</span><span class="de">Der Stem Separator zerlegt, was auf Spotify oder YouTube läuft, in Gesang, Schlagzeug, Bass, Gitarre und den Rest: Gesang stumm zum Selbersingen, Schlagzeug stumm zum Selbertrommeln, oder einen Part solo zum Lernen.</span></li>
         <li><b><span class="en">In your key.</span><span class="de">In deiner Tonart.</span></b> <span class="en">Transpose moves the song to a key that suits your voice or your tuning without changing its tempo, finds its key and tunes it to your instrument.</span><span class="de">Transpose verschiebt den Song in eine Tonart, die zu deiner Stimme oder Stimmung passt, ohne das Tempo zu ändern, findet seine Tonart und stimmt ihn auf dein Instrument.</span></li>
-        <li><b><span class="en">Record and share.</span><span class="de">Aufnehmen und teilen.</span></b> <span class="en">Record to WAV, send the mix to a call, a stream or another PC, calibrate your monitors, learn every control with MIDI.</span><span class="de">Als WAV aufnehmen, den Mix in einen Call, einen Stream oder an einen anderen PC schicken, Monitore einmessen, jeden Regler per MIDI lernen.</span></li>
+        <li><b><span class="en">Record and share.</span><span class="de">Aufnehmen und teilen.</span></b> <span class="en">Record voice and instrument on separate tracks, cut and mix them in the multitrack recorder, send the mix to a call, a stream or another PC, learn every control with MIDI.</span><span class="de">Stimme und Instrument auf getrennten Spuren aufnehmen, im Mehrspur-Recorder schneiden und mischen, den Mix in einen Call, einen Stream oder an einen anderen PC schicken, jeden Regler per MIDI lernen.</span></li>
       </ul>
       <div class="cta" style="justify-content:flex-start">
         <a class="btn" href="#musicians"><span class="en">Musicians' guide in the wiki</span><span class="de">Musiker-Anleitung im Wiki</span> →</a>
@@ -1148,6 +1186,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
   <div class="grp">Effects</div>
   <a href="#chain">Effect Chain</a>
   <a href="#fxoverview">Effects overview</a>
+  <a href="#voice">Studio Voice</a>
   <a href="#denoiser">Denoiser</a>
   <a href="#stems">Stem Separator</a>
   <a href="#transpose">Transpose</a>
@@ -1156,6 +1195,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
   <a href="#correction">Speaker &amp; Headphone Correction</a>
   <a href="#gate">Gate &amp; Voice Key</a>
   <a href="#comp">Compressor</a>
+  <a href="#saturation">Saturation</a>
   <a href="#limiter">Limiter</a>
   <a href="#vst">VST3 plugins</a>
   <div class="grp">Outputs</div>
@@ -1205,6 +1245,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
   <div class="grp">Effekte</div>
   <a href="#chain">Effektkette</a>
   <a href="#fxoverview">Effekte im Überblick</a>
+  <a href="#voice">Studio Voice</a>
   <a href="#denoiser">Denoiser</a>
   <a href="#stems">Stem Separator</a>
   <a href="#transpose">Transpose</a>
@@ -1213,6 +1254,7 @@ body[data-view="docs"] #home, body[data-view="home"] #docs { display: none; }
   <a href="#correction">Speaker &amp; Headphone Correction</a>
   <a href="#gate">Gate &amp; Voice Key</a>
   <a href="#comp">Kompressor</a>
+  <a href="#saturation">Saturation</a>
   <a href="#limiter">Limiter</a>
   <a href="#vst">VST3-Plugins</a>
   <div class="grp">Ausgänge</div>
@@ -1466,7 +1508,7 @@ cd Hydra-Mixer
     <li><b>MIDI</b>: lights up when MIDI arrives.</li>
     <li><b>DSP meter</b>: how much of the time per audio block Hydra needs (average). A small mark shows the slowest block of the last second; if a block took longer than 100 % (that is audible as a crackle on every device), bar and number turn red for a few seconds. A click opens <a href="#dsp">DSP Load</a>.</li>
     <li><b>Mini recorder</b>: record, play, stop and the time of the <a href="#recorder">recorder</a>. When space gets tight it turns into a cassette button.</li>
-    <li><b>Tools</b> (wrench): <a href="#scenes">Scene Editor</a>, <a href="#midi">MIDI Learn</a>, <a href="#midi">MIDI Map</a>, <a href="#latency">Latency Finder</a>, <a href="#dsp">DSP Load</a>, <a href="#syncdelay">Sync Delay</a>, <a href="#room">Room Correction</a>, <a href="#virtual">Cable Manager</a>, <a href="#recorder">Recorder</a>, setup wizard, guided tour and <a href="#troubleshoot">Restart Audio Engine</a>. In learn mode the wrench turns yellow.</li>
+    <li><b>Tools</b> (wrench): <a href="#scenes">Scenes</a>, <a href="#fxbrowser">Effect Browser</a>, <a href="#midi">MIDI Learn</a>, <a href="#midi">MIDI Map</a>, “MIDI faders stop at 0 dB”, <a href="#latency">Latency Finder</a>, <a href="#dsp">DSP Load</a>, <a href="#syncdelay">Sync Delay</a>, <a href="#troubleshoot">Restart Audio Engine</a>, guided tour, setup wizard and at the bottom “Wiki” (this page). Room Correction opens from its block, the Cable Manager from Settings → Virtual Cables, the recorder from the top bar. In learn mode the wrench turns yellow.</li>
     <li><b>Settings</b> (gear): see <a href="#settings">Settings</a>.</li>
     <li><b>Shut down</b>: quits Hydra (with a question). Needed when closing the window only hides Hydra in the tray.</li>
     <li><b>Window buttons</b>: minimise, maximise (with Windows' snap layouts), close.</li>
@@ -1569,6 +1611,13 @@ cd Hydra-Mixer
     <li><span class="ui">Duplicate</span>: a copy right behind it, MIDI mappings and shortcuts come along.</li>
     <li><span class="ui">Delete</span>: resets the channel's settings, plugins, MIDI mappings and shortcuts (with confirmation). At least one input and one hardware output always remain.</li>
   </ul>
+  <h3>Collapsing and pinning a group</h3>
+  <p>Click a group heading (<b>Inputs</b>, <b>Hardware Outputs</b> or <b>Virtual Outputs</b>). It gets a tinted frame and two symbols appear next to it:</p>
+  <ul>
+    <li><b>Collapse</b> (<span class="ui">&gt;|&lt;</span>): the group shrinks to a narrow overview with number, level, solo and mute of each channel. Click a channel there to select it, double-click to open the group again.</li>
+    <li><b>Pin</b> (pin symbol): the group always stays fully in view, the other groups scroll next to it. Handy when you have many inputs but always want to see your outputs.</li>
+  </ul>
+  <p><kbd>Esc</kbd>, a click elsewhere or another click on the heading ends the selection. Hydra remembers both for the next start.</p>
   <h3>Changing the order</h3>
   <ol class="steps">
     <li>Right-click a strip → <span class="ui">Change Order...</span>. A bar with <span class="ui">Done</span> and <span class="ui">Discard</span> appears above the strips.</li>
@@ -1646,18 +1695,25 @@ cd Hydra-Mixer
     <li><b>EQ menu</b> (<span class="ui">…</span>): import and export EQ settings as <code>.hydraeq</code> files.</li>
     <li><span class="ui">+</span> adds a built-in effect or a VST3 plugin at the end. Right-click a block → <span class="ui">Insert after</span> puts one in between.</li>
   </ol>
-  <h3>Which effects are where</h3>
-  <table>
-    <thead><tr><th>Channel</th><th>Available blocks</th></tr></thead>
-    <tbody>
-      <tr><td>Input</td><td><a href="#stems">Stem Separator</a> (beta) · <a href="#transpose">Transpose</a> · <a href="#utility">Utility</a> · <a href="#denoiser">Denoiser</a> · <a href="#eq">EQ</a> · <a href="#gate">Gate</a> · <a href="#comp">Compressor</a> · <a href="#limiter">Limiter</a> · <a href="#vst">VST3 plugins</a></td></tr>
-      <tr><td>Hardware output (H)</td><td><a href="#correction">Speaker Correction</a> · <a href="#headphone">Headphone Correction</a> · Utility · EQ · Compressor · Limiter · VST3 plugins</td></tr>
-      <tr><td>Virtual output (V)</td><td>Utility · EQ · Compressor · Limiter · VST3 plugins</td></tr>
-    </tbody>
-  </table>
+  <h3>Every effect on every channel</h3>
+  <p>Every built-in effect works on inputs and on outputs. The <span class="ui">+</span> menu shows the usual ones for the kind of channel (Speaker Correction, for example, only on hardware outputs); all others are in the <a href="#fxbrowser">effect browser</a>. A channel can have up to four blocks of each effect (Studio Voice, Stem Separator and Transpose once).</p>
+  <h3 id="fxbrowser">Effect browser</h3>
+  <p>The tab <span class="ui">EFFECTS</span> at the left edge of the window (or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>B</kbd>) slides out the browser: the built-in effects, your VST3 plugins sorted by vendor and your saved chains, each with its presets. The search field at the top filters everything.</p>
   <ul>
-    <li>Up to four blocks of each built-in effect per channel (Stem Separator and Transpose once).</li>
-    <li><b>Right-click a block</b>: Copy, Cut, Paste, Paste settings, Duplicate, Delete, Switch on/off, Insert after. Right-click the empty area: copy, paste or clear the whole chain. Chains can be pasted onto other channels.</li>
+    <li><b>Drag</b> an entry into the effect chain: a gap opens where it will land.</li>
+    <li><b>Drop it on a strip</b>: it goes to the end of that channel's chain. Hold it over a strip for a moment and that channel opens in the chain.</li>
+    <li><b>Double-click</b>: adds it to the selected channel.</li>
+  </ul>
+  <h3>Presets</h3>
+  <p>Right-click a block → <span class="ui">Save as preset</span> stores its settings, <span class="ui">Load preset</span> brings them back. Right-click the empty area of the chain to save or load whole chains, or to export and import them as files. In the <span class="ui">+</span> menu and in the browser, effects with presets have a submenu. Presets are plain files in <code>%APPDATA%\HydraMixer\Presets</code>, so you can copy them to another PC.</p>
+  <h3>Several blocks at once</h3>
+  <p>A click selects a block, <kbd>Ctrl</kbd>+click adds more, <kbd>Shift</kbd>+click selects a range. <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd> / <kbd>D</kbd> and <kbd>Del</kbd> then work on all of them, <kbd>Ctrl</kbd>+<kbd>A</kbd> selects the whole chain, <kbd>Esc</kbd> ends the selection.</p>
+  <h3>PRE / POST and MONO</h3>
+  <p>The button next to <span class="ui">BYPASS</span> decides where the chain sits: <b>PRE</b> (default) before the fader, <b>POST</b> after it. With POST a reverb keeps ringing out when you pull the fader down, and a limiter at the end of an output stays the last word even with the fader above 0 dB.</p>
+  <p><span class="ui">MONO</span> on a strip sums left and right <i>before</i> the effects, so stereo effects after it still work. If you want the result in mono, put a <a href="#utility">Utility</a> set to Mono at the end of the chain.</p>
+  <h3>More</h3>
+  <ul>
+    <li><b>Right-click a block</b>: Copy, Cut, Paste, Paste settings, Duplicate, Delete, Switch on/off, Insert after, Save as preset, Load preset. Chains can be pasted onto other channels.</li>
     <li>A channel nobody hears (muted, fader at −∞, not routed to an output in use) pauses its effects to save CPU; the header then says “effects paused: channel not heard”.</li>
     <li>What each effect does: see <a href="#fxoverview">Effects overview</a>.</li>
   </ul>
@@ -1666,14 +1722,16 @@ cd Hydra-Mixer
 <!-- ============================================================ -->
 <section id="fxoverview">
   <h2><span class="num">11</span>Effects overview</h2>
-  <p>Hydra has ten built-in effects. All of them run inside Hydra, need no plugin and, except Stem Separator and Transpose, add no latency.</p>
+  <p>Hydra has twelve built-in effects. All of them run inside Hydra, need no plugin and, except Stem Separator and Transpose, add no latency.</p>
   <table>
     <thead><tr><th>Effect</th><th>What it does</th><th>Typical use</th><th>Latency</th></tr></thead>
     <tbody>
+      <tr><td><a href="#voice">Studio Voice</a></td><td>A complete vocal chain behind one knob.</td><td>Better voice for podcast, stream or calls without knowing EQ and compression.</td><td>0</td></tr>
       <tr><td><a href="#denoiser">Denoiser</a></td><td>Removes background noise from speech.</td><td>Mic with fans, keyboard, street noise.</td><td>0–30 ms (Low: 10)</td></tr>
-      <tr><td><a href="#eq">Equalizer</a></td><td>Raises or lowers frequency ranges.</td><td>Less boom, more clarity, remove hum.</td><td>0</td></tr>
+      <tr><td><a href="#eq">Equalizer</a></td><td>Raises or lowers frequency ranges, matches a channel to a reference.</td><td>Less boom, more clarity, sound like another mic.</td><td>0</td></tr>
       <tr><td><a href="#gate">Gate</a></td><td>Silences the channel below a threshold.</td><td>Mic quiet between sentences.</td><td>0</td></tr>
       <tr><td><a href="#comp">Compressor</a></td><td>Makes loud parts quieter, the level more even.</td><td>Voice that is sometimes shouted, sometimes whispered.</td><td>0</td></tr>
+      <tr><td><a href="#saturation">Saturation</a></td><td>Warmth and density like analogue gear.</td><td>A fuller voice, a rounder bass.</td><td>0</td></tr>
       <tr><td><a href="#limiter">Limiter</a></td><td>A hard ceiling no peak goes over.</td><td>Protect the stream, your ears, your speakers.</td><td>0</td></tr>
       <tr><td><a href="#utility">Utility</a></td><td>Phase, left/right, stereo width, bass mono, balance, gain.</td><td>Mono mic only on one side, too wide music, a wrongly wired cable.</td><td>0</td></tr>
       <tr><td><a href="#transpose">Transpose</a></td><td>Shifts the pitch, finds key and tuning of a song.</td><td>Play along with a song in a key that suits you.</td><td>100–300 ms while shifting</td></tr>
@@ -1683,6 +1741,42 @@ cd Hydra-Mixer
     </tbody>
   </table>
   <p>Plus any <a href="#vst">VST3 plugin</a> (amp simulations, reverbs, de-essers …), anywhere in the chain.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="voice">
+  <h2><span class="num">12</span>Studio Voice</h2>
+  <p>Studio Voice is for everyone who wants a better-sounding voice without learning about EQs and compressors. Behind one knob runs a complete vocal chain like in a studio, set up so the parts work together. You choose what it should sound like, Hydra does the rest.</p>
+  <div class="hx shot" data-g="fxwin" data-o="voice"></div>
+  <h3>Getting started</h3>
+  <ol class="steps">
+    <li>Click your microphone strip, then <span class="ui">+</span> → <span class="ui">Studio Voice</span>.</li>
+    <li>Pick a profile in the bar at the top of the block.</li>
+    <li>Turn <span class="ui">AMOUNT</span> up while you speak. At 0 % nothing changes, 50 % is a good start, 100 % is the full effect.</li>
+    <li>Optional: <span class="ui">LEARN MY MIC</span> (see below).</li>
+  </ol>
+  <h3>Profiles</h3>
+  <dl class="kv">
+    <dt>Podcast</dt><dd>Warm and clear, natural dynamics. The default.</dd>
+    <dt>Radio</dt><dd>Close, full and loud like a broadcast microphone: more bass, stronger compression with a second fast stage for peaks, a bit more saturation.</dd>
+    <dt>Stream</dt><dd>Present and clear, keeps keyboard and desk thumps out, a firmer gate.</dd>
+    <dt>Singing</dt><dd>Airy and gentle, a slow attack lets consonants through, slow leveling keeps the dynamics of a song.</dd>
+  </dl>
+  <h3>What runs inside</h3>
+  <ul>
+    <li><b>EQ</b>: a high pass against rumble, warmth, less “mud”, presence and air, depending on the profile.</li>
+    <li><b>Gate</b>: its threshold follows the measured noise of your microphone, so pauses stay quiet without cutting words.</li>
+    <li><b>Leveling</b>: brings your voice to the target loudness of the profile, measured only while you speak.</li>
+    <li><b>Compressor</b>: evens out loud and quiet syllables (Radio and Singing with a second, fast stage for peaks).</li>
+    <li><b>Saturation</b> for density, and a <b>limiter</b> at −1 dB at the end.</li>
+  </ul>
+  <p>Everything scales with AMOUNT. Studio Voice adds no latency and needs about a quarter of a percent of one CPU core.</p>
+  <p>The line under the knob shows measured values, not settings: <b>LEVEL</b> is how much the leveling currently lifts or lowers your voice, <b>COMP</b> how much the compressor takes off. Both are the mean of the last second.</p>
+  <h3>Learn my mic</h3>
+  <p>Every microphone sounds different: some are dull, some boom. Click <span class="ui">LEARN MY MIC</span> and talk normally for about ten seconds (the bar shows the progress, only speech counts). Hydra measures how your microphone sounds and corrects it partly toward an average speech spectrum, on top of the profile. Bass is only corrected gently, because a close microphone naturally has more of it. What was learned is saved with the session. Right-click the button to forget it. If Hydra hears no voice for 40 seconds it stops and tells you; the old result stays.</p>
+  <h3>Split into effects</h3>
+  <p><span class="ui">SPLIT</span> (also in the block menu) replaces Studio Voice with the normal effects it is made of (EQ, Gate, Compressor, Saturation, Limiter) with exactly the same settings, so you can keep tweaking them yourself. Stages that do nothing at the current AMOUNT are left out. Radio needs two compressors; if a channel has no free slot for a block, nothing happens and Hydra tells you why. There is no way back to the single knob.</p>
+  <p class="note">Tip: In a noisy room put the <a href="#denoiser">Denoiser</a> before Studio Voice.</p>
 </section>
 
 <!-- ============================================================ -->
@@ -1818,20 +1912,47 @@ cd Hydra-Mixer
     </tbody>
   </table>
   <h3>Filter types</h3>
+  <p>In the order of the type bar:</p>
   <table>
     <thead><tr><th>Type</th><th>Effect</th><th>Typical use</th></tr></thead>
     <tbody>
       <tr><td>Bell</td><td>Boost/cut around a frequency.</td><td>More voice presence (+3 dB at 3 kHz), less boom (−4 dB at 250 Hz).</td></tr>
       <tr><td>Notch</td><td>Very narrow cut.</td><td>Remove hum (50/60 Hz) or a whistle.</td></tr>
       <tr><td>Band Pass</td><td>Only one frequency range remains.</td><td>Telephone/radio effect.</td></tr>
-      <tr><td>High Cut</td><td>Removes high frequencies.</td><td>Hiss, noise.</td></tr>
-      <tr><td>Low Cut</td><td>Removes low frequencies.</td><td>Rumble, mic pops (about 80 Hz).</td></tr>
       <tr><td>Low Shelf / High Shelf</td><td>Boost or cut everything below/above a frequency.</td><td>Overall bass or treble.</td></tr>
+      <tr><td>Low Cut</td><td>Removes low frequencies, 24 dB per octave.</td><td>Rumble, mic pops (about 80 Hz).</td></tr>
+      <tr><td>High Cut</td><td>Removes high frequencies, 24 dB per octave.</td><td>Hiss, noise.</td></tr>
     </tbody>
   </table>
-  <p>Q range 0.1–100, gain ±18 dB.</p>
+  <p>Q range 0.1–100, gain ±18 dB. With Q 0.7 the cuts are an exact 4th-order Butterworth filter; a higher Q gives a small bump at the edge.</p>
   <h3>Large EQ window</h3>
   <p>The arrow button in the EQ header opens a separate window with a large curve, the bands in use with their values (up to 8 per row, <span class="ui">+ Add band</span> for a new one) and a <b>live spectrum</b> of the signal after the EQ (scale on the right in dBFS). The window follows the selected channel. The spectrum is only computed while the window is open. <span class="ui">Show input</span> adds the spectrum before the EQ in grey behind it, so you see exactly what the EQ changes.</p>
+  <h3>Stereo, left/right and mid/side</h3>
+  <p>The button with the two rings at the top of the window sets the channel mode of this EQ:</p>
+  <ul>
+    <li><b>Stereo</b> (default): every band works on both sides.</li>
+    <li><b>Left/Right</b>: each band works on both sides or only on the left or right.</li>
+    <li><b>Mid/Side</b>: the same for the middle (what is in both sides, usually voice, bass, kick) and the side (the stereo width, reverb, wide guitars).</li>
+  </ul>
+  <p>Next to it the switch <span class="ui">L | L+R | R</span> (or <span class="ui">M | M+S | S</span>) chooses what you see and edit. <span class="ui">L+R</span> shows both curves at once; new bands then work on both sides. With only one side chosen, new bands go to that side, the other curve is dashed and its bands can't be grabbed. The chip next to a band's name shows its side and changes it.</p>
+  <h3>DELTA</h3>
+  <p><span class="ui">DELTA</span> lets you hear only what the EQ changes (output minus input): a boost sounds like the boosted range, a cut like what is taken away. Useful for finding a resonance or checking that a cut only removes what it should. DELTA switches off by itself the next time Hydra starts.</p>
+  <h3 id="eqmatch">Match</h3>
+  <p>Match makes a channel sound like a reference: your mic like your friend's, your podcast like an episode you like, one recording like another. Hydra compares the average spectrum of both and lets the EQ follow the difference with a finely detailed curve, with no latency.</p>
+  <div class="hx shot" data-g="eqmatch"></div>
+  <ol class="steps">
+    <li>Open the large EQ window and click <span class="ui">MATCH</span>. Instead of the band columns you see four cards.</li>
+    <li><b>Reference</b>: choose what it should sound like: another channel (after its effects), an audio file, <i>Standard speech</i> or <i>Flat</i>. For a channel, click <span class="ui">CAPTURE</span> while it plays and again to stop (or let it run up to about 5 minutes); the curve builds up live. A file, speech and flat are ready right away.</li>
+    <li><b>This channel</b>: <span class="ui">CAPTURE</span> while the channel plays something typical, for example you talking normally. It is measured before the EQ.</li>
+    <li><b>Fine tune</b>: <span class="ui">SMOOTH</span> evens out the curve (0 = every detail, 100 % = very broad), <span class="ui">AMOUNT</span> how strongly it is applied. The two handles at the edges of the graph limit the range; <span class="ui">FULL RANGE</span> resets them.</li>
+    <li><b>Result</b>: <span class="ui">MATCH ON</span> switches the match on and off to compare.</li>
+  </ol>
+  <p>In the graph the reference is orange, this channel blue and the white area is what the match does. The overall level stays about the same.</p>
+  <ul>
+    <li><span class="ui">INTO BANDS …</span> turns the match into normal EQ bands: choose how many (1–16, only free bands), compare the dashed preview and the stated difference, then <span class="ui">CONVERT</span>. The match switches off and the band columns come back.</li>
+    <li>By default the match uses the sum of left and right, which is right for nearly everything and saves CPU. <span class="ui">SEPARATE L/R</span> makes one curve per side (or mid and side in Mid/Side mode); capture again after switching it on.</li>
+    <li>The captured spectra are saved with the session and in presets. While a match is active the EQ block shows the tag <span class="ui">MATCH</span>.</li>
+  </ul>
 </section>
 
 <!-- ============================================================ -->
@@ -1907,6 +2028,20 @@ cd Hydra-Mixer
 </section>
 
 <!-- ============================================================ -->
+<section id="saturation">
+  <h2><span class="num">17</span>Saturation</h2>
+  <p>Saturation adds the warmth and density of analogue gear: loud parts get rounder and richer in harmonics, quiet parts stay as loud as they were. Use a little on a voice to make it fuller, or on a bass to make it audible on small speakers.</p>
+  <div class="hx shot" data-g="fxwin" data-o="saturation"></div>
+  <dl class="kv">
+    <dt>DRIVE</dt><dd>How hard the signal is driven into saturation. More drive, more harmonics.</dd>
+    <dt>WARMTH</dt><dd>Makes the curve asymmetric: adds even harmonics, which sound warmer.</dd>
+    <dt>MIX</dt><dd>Original and saturated signal mixed (100 % = only saturated).</dd>
+    <dt>OUTPUT</dt><dd>Level after the effect.</dd>
+  </dl>
+  <p>No latency, works on every channel. With a lot of drive on a full mix it can get harsh; less is usually more. <a href="#voice">Studio Voice</a> already contains a saturation stage.</p>
+</section>
+
+<!-- ============================================================ -->
 <section id="limiter">
   <h2><span class="num">20</span>Limiter</h2>
   <div class="hx shot" data-g="fxwin" data-o="limiter" style="max-width:520px"></div>
@@ -1966,42 +2101,47 @@ cd Hydra-Mixer
 <!-- ============================================================ -->
 <section id="recorder">
   <h2><span class="num">20</span>Recorder</h2>
-  <div class="hx shot" data-g="recorder"></div>
-  <p>The recorder records a virtual output (V) as WAV and plays audio files into any outputs. Open it via <span class="ui">Tools → Recorder</span> or the time display in the top bar. It has three areas:</p>
-  <table>
-    <thead><tr><th>Area</th><th>Contents</th></tr></thead>
-    <tbody>
-      <tr><td><b>Record Source</b> (left)</td><td>Which V output is recorded, target folder (default <code>Documents\Hydra Recordings</code>, files named <code>Hydra_V1_…</code>), format WAV 16 / 24 / 32-bit float.</td></tr>
-      <tr><td><b>Recording</b> (middle)</td><td>Transport, time, waveform, file name, load/show/delete file.</td></tr>
-      <tr><td><b>Play To</b> (right)</td><td>Hardware and virtual outputs the playback goes to, and the playback level.</td></tr>
-    </tbody>
-  </table>
+  <p>The recorder records a virtual output into one WAV file, or several inputs at once into separate tracks, and plays recordings and audio files into any outputs. It has two views: the compact one in the effect area (click the time in the top bar or select the recorder) and the full window (expand button in the header of “Recording”, or double-click the waveform).</p>
+  <div class="hscroll"><div class="hx shot" data-g="multitrack"></div></div>
+  <h3>Recording a virtual output</h3>
+  <p>Choose <span class="ui">V bus</span> and the output (V1, V2 …). The recorder records it after its fader into one WAV file, <code>Hydra_V1_&lt;date&gt;.wav</code> in <code>Documents\Hydra Recordings</code> (folder and format 16 / 24 / 32-bit float are below the source).</p>
+  <h3>Recording several inputs</h3>
+  <ol class="steps">
+    <li>Choose <span class="ui">Inputs</span> and arm the inputs you want with their round buttons.</li>
+    <li><span class="ui">Separate tracks</span> on (default): every input gets its own file, sample-accurate to each other. Off: all armed inputs are summed into one stereo file.</li>
+    <li><span class="ui">Pre effects</span> records the raw signal (after the gain knob); every track then gets a copy of its input's effect chain, so it sounds the same but you can still change everything. <span class="ui">Post effects</span> records with the effects.</li>
+    <li>Press ● to start and ■ to stop.</li>
+  </ol>
+  <p>A take with separate tracks becomes a folder <code>Hydra &lt;date&gt;</code> with one WAV per input (mono inputs as mono files) and a project file <code>.hydrarec</code>. It opens right away as a project.</p>
   <h3>Transport</h3>
-  <table>
-    <thead><tr><th>Symbol</th><th>Function</th></tr></thead>
-    <tbody>
-      <tr><td>● Record</td><td>Starts recording the selected V output (after its fader). A second click stops.</td></tr>
-      <tr><td>▶ / ❚❚</td><td>Play / pause. Pause remembers the position. At the end of the file it goes back to 0.</td></tr>
-      <tr><td>■ Stop</td><td>Ends recording and playback, position back to 0.</td></tr>
-      <tr><td>Loop</td><td>Repeats the file or the trim range.</td></tr>
-      <tr><td>Trash can</td><td>Unloads the file and moves it to the Windows Recycle Bin (with confirmation).</td></tr>
-    </tbody>
-  </table>
-  <h3>Waveform, seek and trim</h3>
   <ul>
-    <li>The waveform grows live while recording.</li>
-    <li>Clicking or dragging in the waveform jumps there. While stopped, this sets the start point for play.</li>
-    <li>Dragging the handles at the left and right edge inwards sets the in and out points (non-destructive, outside is greyed out). Playback and loop stay within this range.</li>
-    <li><span class="ui">Cut</span> writes the range to the file (WAV: the original goes to the Recycle Bin; other formats: new file <code>name_trimmed.wav</code>). <span class="ui">Reset</span> moves the handles back.</li>
+    <li><b>● Record</b>: starts recording, a second click stops.</li>
+    <li><b>▶ / ❚❚</b>: play / pause. <b>■</b>: stop, back to the start. <b>Loop</b>: repeats the loop range.</li>
+    <li><kbd>Space</kbd> plays and pauses in the full window.</li>
   </ul>
-  <p>WAV, AIFF, FLAC, Ogg and MP3 can be played, with automatic sample rate conversion. <span class="ui">Last Take</span> loads the most recent recording.</p>
+  <h3>Editing a project</h3>
+  <p>A project is like a small DAW: one row per track with its clips.</p>
+  <ul>
+    <li><b>Ruler</b>: click sets the position, drag sets the loop range.</li>
+    <li><b>Clips</b>: drag to move (it snaps to edges and the position; hold <kbd>Alt</kbd> to move freely), drag an edge to trim, drag the small squares at the top corners for fades. A clip covers what lies under it on its track.</li>
+    <li><b>Keys</b>: <kbd>Ctrl</kbd>+<kbd>E</kbd> split at the position, <kbd>Del</kbd> delete, <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd> / <kbd>D</kbd>, arrow keys move (with <kbd>Shift</kbd> by 1 s), <kbd>Ctrl</kbd>+<kbd>A</kbd> all, <kbd>Ctrl</kbd>+<kbd>L</kbd> loop from the selection, <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Y</kbd> undo/redo of the edits.</li>
+    <li><b>Zoom</b>: <kbd>Ctrl</kbd> + wheel or <kbd>+</kbd> / <kbd>−</kbd>; <kbd>Shift</kbd> + wheel scrolls sideways.</li>
+    <li>Buttons at the top: Split, Delete, Crop, Undo, Redo; <span class="ui">Recordings</span> lists the projects in the folder.</li>
+  </ul>
+  <h3>Tracks</h3>
+  <p>Every track is a full channel: <span class="ui">M</span>, <span class="ui">S</span>, <span class="ui">MONO</span>, <span class="ui">GAIN</span>, <span class="ui">PAN</span>, a fader and its own <a href="#chain">effect chain</a> with the same effects as an input (below the timeline, with BYPASS and PRE/POST). Double-click a name to rename it. The track menu has Rename, Delete and <span class="ui">Add an audio file as a track</span>. Everything is saved automatically in the project file; tracks are not part of scenes.</p>
+  <p><b>Play To</b> (right) chooses the outputs the playback goes to and its level.</p>
+  <h3>Export</h3>
+  <p><span class="ui">Export…</span> renders single tracks (stems), a mixdown or both, with or without the track settings and effects, the whole project or only the loop range, as WAV 16 / 24 / 32-bit float, into a folder <code>Export &lt;date&gt;</code> inside the take. The raw recordings stay untouched.</p>
+  <h3>Single files</h3>
+  <p>A single recording or a loaded file (WAV, AIFF, FLAC, Ogg, MP3, any sample rate) shows its waveform with trim handles: drag them inwards to set in and out points. <span class="ui">Save copy</span> saves the trimmed part as a new file next to it, <span class="ui">Cut</span> shortens the file itself (the original goes to the Recycle Bin). <span class="ui">Edit as multitrack</span> turns it into a project.</p>
 </section>
 
 <!-- ============================================================ -->
 <section id="scenes">
   <h2><span class="num">21</span>Scenes</h2>
   <p>A scene is a snapshot of all mixer parameters (faders, mutes, routing, effects, sends …). Not included: devices, channel names, plugins and which channels are in use. Typical scenes: “Gaming”, “Stream”, “Call”, “Music”.</p>
-  <p>Open: <span class="ui">Tools → Scene Editor</span>. The scenes appear as a panel on the left of the main window.</p>
+  <p>Open: the tab <span class="ui">SCENES</span> at the right edge of the window, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>S</kbd> or <span class="ui">Tools → Scenes</span>. The panel slides in from the right.</p>
   <table>
     <thead><tr><th>Action</th><th>Effect</th></tr></thead>
     <tbody>
@@ -2215,21 +2355,26 @@ cd Hydra-Mixer
 <!-- ============================================================ -->
 <section id="settings">
   <h2><span class="num">32</span>Settings</h2>
-  <p>Open them with the gear in the top bar. The small <span class="ui">i</span> buttons explain each section.</p>
-  <table>
-    <thead><tr><th>Tab</th><th>Contents</th></tr></thead>
-    <tbody>
-      <tr><td><b>General</b></td><td>Start with Windows (high priority; if the ASIO driver isn't ready yet, Hydra keeps retrying for 90 s), system tray (close/minimise to the tray, start hidden), devices (<span class="ui">Reconnect devices automatically when they are back</span>, <span class="ui">Show all Windows audio modes</span>), <a href="#sel">monitoring (SEL)</a>, shut down.</td></tr>
-      <tr><td><b>Display</b></td><td>Interface size and text size (75–200 %), theme (Default / Legacy), layout options (see <a href="#strips">Strips</a>), experimental options.</td></tr>
-      <tr><td><b>Audio Engine</b></td><td>Driver, <a href="#clock">master device</a>, sample rate, buffer size, ASIO Control Panel, Apply / Restart.</td></tr>
-      <tr><td><b>Virtual Cables</b></td><td>Cable options, see <a href="#virtual">Virtual cables</a>.</td></tr>
-      <tr><td><b>Network</b></td><td><a href="#network">Hydra Link</a>: on/off, computer name, port, network password, other computers, what Hydra hears on the network.</td></tr>
-      <tr><td><b>Remote</b></td><td><a href="#remote">Phone &amp; tablet remote</a>: on/off, QR code, access code, connected devices.</td></tr>
-      <tr><td><b>MIDI</b></td><td>MIDI inputs, feedback output, LED profile, “MIDI faders stop at 0 dB”. See <a href="#midi">MIDI Learn</a> and <a href="#apc">APC mini</a>.</td></tr>
-      <tr><td><b>Plugins</b></td><td>VST3 search folders and scan. See <a href="#vst">VST3 plugins</a>.</td></tr>
-      <tr><td><b>Backup &amp; Transfer</b></td><td>See the <a href="#backup">next section</a>.</td></tr>
-    </tbody>
-  </table>
+  <p>Open them with the gear in the top bar. The pages are listed on the left in three groups; the small <span class="ui">i</span> buttons explain each section.</p>
+  <h3>Audio</h3>
+  <ul>
+    <li><b>Audio Engine</b>: driver, <a href="#clock">master device</a>, sample rate, buffer size, ASIO Control Panel, Apply / Restart. Below: other devices (<span class="ui">Reconnect devices automatically when they are back</span>, <span class="ui">Show all Windows audio modes</span>) and <a href="#sel">monitoring (SEL)</a>.</li>
+    <li><b>Virtual Cables</b>: see <a href="#virtual">Virtual cables</a>.</li>
+    <li><b>Plugins</b>: VST3 search folders and scan, see <a href="#vst">VST3 plugins</a>.</li>
+  </ul>
+  <h3>Connections</h3>
+  <ul>
+    <li><b>Network</b>, with two parts: <span class="ui">Audio over the network</span> (<a href="#network">Hydra Link</a>: on/off, name, port, password, paired devices, other computers) and <span class="ui">Phone &amp; Tablet</span> (<a href="#remote">remote</a>: on/off, QR code, access code, connected devices).</li>
+    <li><b>MIDI</b>: MIDI inputs, feedback output, LED profile, “MIDI faders stop at 0 dB”. See <a href="#midi">MIDI Learn</a> and <a href="#apc">APC mini</a>.</li>
+  </ul>
+  <h3>Application</h3>
+  <ul>
+    <li><b>General</b>: start with Windows (high priority; if the ASIO driver isn't ready yet, Hydra keeps retrying for 90 s), system tray (close/minimise to the tray, start hidden), updates and installation, shut down.</li>
+    <li><b>Display</b>: interface size and text size (75–200 %), theme, channel layout (see <a href="#strips">Strips</a>).</li>
+    <li><b>Backup &amp; Transfer</b>: see the <a href="#backup">next section</a>.</li>
+  </ul>
+  <h3>Themes</h3>
+  <p><b>Dark</b> (default), <b>Darker</b> (graphite, almost no blue), <b>Light</b> (cool grey-blue) and <b>Legacy</b> (Hydra's first look). The change applies right away; an open tool window may keep the old colours until you open it again.</p>
   <p>If the master device fails or falls silent, Hydra restarts the audio engine by itself after half a second (with growing pauses if it keeps failing). Every attempt is noted in <code>hydra.log</code>.</p>
 </section>
 
@@ -2338,7 +2483,7 @@ cd Hydra-Mixer
 
   <h3>Switching between setups</h3>
   <ol>
-    <li>Set up the mixer for “Gaming”, new scene in the Scene Editor, Save.</li>
+    <li>Set up the mixer for “Gaming”, new scene in the scene panel, Save.</li>
     <li>Repeat for “Stream”.</li>
     <li>Right-click each scene → keyboard shortcut or MIDI button.</li>
   </ol>
@@ -2730,7 +2875,7 @@ cd Hydra-Mixer
     <li><b>MIDI</b>: leuchtet, wenn MIDI ankommt.</li>
     <li><b>DSP-Anzeige</b>: wie viel der Zeit pro Audioblock Hydra braucht (Mittelwert). Eine kleine Marke zeigt den langsamsten Block der letzten Sekunde; dauerte ein Block länger als 100 % (das knackt auf allen Geräten), werden Balken und Zahl ein paar Sekunden rot. Ein Klick öffnet <a href="#dsp">DSP Load</a>.</li>
     <li><b>Mini-Recorder</b>: Aufnahme, Wiedergabe, Stopp und Zeit des <a href="#recorder">Recorders</a>. Wird es eng, wird daraus ein Kassetten-Knopf.</li>
-    <li><b>Tools</b> (Schraubenschlüssel): <a href="#scenes">Scene Editor</a>, <a href="#midi">MIDI Learn</a>, <a href="#midi">MIDI Map</a>, <a href="#latency">Latency Finder</a>, <a href="#dsp">DSP Load</a>, <a href="#syncdelay">Sync Delay</a>, <a href="#room">Room Correction</a>, <a href="#virtual">Cable Manager</a>, <a href="#recorder">Recorder</a>, Einrichtungs-Assistent, geführte Tour und <a href="#troubleshoot">Restart Audio Engine</a>. Im Learn-Modus wird der Schlüssel gelb.</li>
+    <li><b>Tools</b> (Schraubenschlüssel): <a href="#scenes">Scenes</a>, <a href="#fxbrowser">Effect Browser</a>, <a href="#midi">MIDI Learn</a>, <a href="#midi">MIDI Map</a>, „MIDI faders stop at 0 dB“, <a href="#latency">Latency Finder</a>, <a href="#dsp">DSP Load</a>, <a href="#syncdelay">Sync Delay</a>, <a href="#troubleshoot">Restart Audio Engine</a>, geführte Tour, Einrichtungs-Assistent und ganz unten „Wiki“ (diese Seite). Room Correction öffnet sich über ihren Block, der Cable Manager über Settings → Virtual Cables, der Recorder über die Top-Bar. Im Learn-Modus wird der Schlüssel gelb.</li>
     <li><b>Settings</b> (Zahnrad): siehe <a href="#settings">Settings</a>.</li>
     <li><b>Beenden</b>: schließt Hydra (mit Rückfrage). Nötig, wenn Schließen das Fenster nur in den Tray legt.</li>
     <li><b>Fensterknöpfe</b>: Minimieren, Maximieren (mit den Andock-Layouts von Windows), Schließen.</li>
@@ -2831,6 +2976,13 @@ cd Hydra-Mixer
     <li><span class="ui">Duplicate</span>: eine Kopie direkt dahinter, MIDI-Zuweisungen und Tastenkürzel kommen mit.</li>
     <li><span class="ui">Delete</span>: setzt Einstellungen, Plugins, MIDI-Zuweisungen und Tastenkürzel des Kanals zurück (mit Bestätigung). Mindestens ein Input und ein Hardware-Ausgang bleiben immer.</li>
   </ul>
+  <h3>Gruppen einklappen und fixieren</h3>
+  <p>Klick auf eine Gruppen-Überschrift (<b>Inputs</b>, <b>Hardware Outputs</b> oder <b>Virtual Outputs</b>). Sie bekommt einen getönten Rahmen, daneben erscheinen zwei Symbole:</p>
+  <ul>
+    <li><b>Einklappen</b> (<span class="ui">&gt;|&lt;</span>): Die Gruppe schrumpft zu einer schmalen Übersicht mit Nummer, Pegel, Solo und Mute jedes Kanals. Klick auf einen Kanal wählt ihn aus, Doppelklick klappt die Gruppe wieder auf.</li>
+    <li><b>Fixieren</b> (Pinnadel): Die Gruppe bleibt immer ganz sichtbar, die anderen scrollen daneben. Praktisch, wenn du viele Inputs hast, deine Ausgänge aber immer sehen willst.</li>
+  </ul>
+  <p><kbd>Esc</kbd>, ein Klick woanders oder ein weiterer Klick auf die Überschrift beendet die Auswahl. Hydra merkt sich beides für den nächsten Start.</p>
   <h3>Reihenfolge ändern</h3>
   <ol class="steps">
     <li>Rechtsklick auf einen Strip → <span class="ui">Change Order...</span>. Über den Strips erscheint eine Leiste mit <span class="ui">Done</span> und <span class="ui">Discard</span>.</li>
@@ -2907,19 +3059,26 @@ cd Hydra-Mixer
     <li><b>EQ-Menü</b> (<span class="ui">…</span>): EQ-Einstellungen als <code>.hydraeq</code>-Datei importieren und exportieren.</li>
     <li><span class="ui">+</span> fügt am Ende einen eingebauten Effekt oder ein VST3-Plugin hinzu. Rechtsklick auf einen Block → <span class="ui">Insert after</span> setzt einen dazwischen.</li>
   </ol>
-  <h3>Welche Effekte wo</h3>
-  <table>
-    <thead><tr><th>Kanal</th><th>Verfügbare Blöcke</th></tr></thead>
-    <tbody>
-      <tr><td>Input</td><td><a href="#stems">Stem Separator</a> (Beta) · <a href="#transpose">Transpose</a> · <a href="#utility">Utility</a> · <a href="#denoiser">Denoiser</a> · <a href="#eq">EQ</a> · <a href="#gate">Gate</a> · <a href="#comp">Kompressor</a> · <a href="#limiter">Limiter</a> · <a href="#vst">VST3-Plugins</a></td></tr>
-      <tr><td>Hardware-Ausgang (H)</td><td><a href="#correction">Speaker Correction</a> · <a href="#headphone">Headphone Correction</a> · Utility · EQ · Kompressor · Limiter · VST3-Plugins</td></tr>
-      <tr><td>Virtueller Ausgang (V)</td><td>Utility · EQ · Kompressor · Limiter · VST3-Plugins</td></tr>
-    </tbody>
-  </table>
+  <h3>Jeder Effekt auf jedem Kanal</h3>
+  <p>Jeder eingebaute Effekt funktioniert auf Inputs und auf Ausgängen. Das <span class="ui">+</span>-Menü zeigt die für die Kanalart üblichen (Speaker Correction zum Beispiel nur auf Hardware-Ausgängen), alle anderen findest du im <a href="#fxbrowser">Effekt-Browser</a>. Ein Kanal kann bis zu vier Blöcke jedes Effekts haben (Studio Voice, Stem Separator und Transpose einmal).</p>
+  <h3 id="fxbrowser">Effekt-Browser</h3>
+  <p>Der Reiter <span class="ui">EFFECTS</span> am linken Fensterrand (oder <kbd>Strg</kbd>+<kbd>Alt</kbd>+<kbd>B</kbd>) fährt den Browser heraus: die eingebauten Effekte, deine VST3-Plugins nach Hersteller und deine gespeicherten Ketten, jeweils mit ihren Presets. Das Suchfeld oben filtert alles.</p>
   <ul>
-    <li>Von jedem eingebauten Effekt bis zu vier Blöcke pro Kanal (Stem Separator und Transpose einmal).</li>
-    <li><b>Rechtsklick auf einen Block</b>: Copy, Cut, Paste, Paste settings, Duplicate, Delete, Switch on/off, Insert after. Rechtsklick ins Leere: ganze Kette kopieren, einfügen oder leeren. Ketten lassen sich auf andere Kanäle einfügen.</li>
-    <li>Ein Kanal, den niemand hört (gemutet, Fader auf −∞, auf keinen benutzten Ausgang geroutet), pausiert seine Effekte und spart CPU; im Kopf steht dann „effects paused: channel not heard“.</li>
+    <li><b>Ziehen</b> in die Effektkette: Es öffnet sich eine Lücke, wo der Block landet.</li>
+    <li><b>Auf einen Strip fallen lassen</b>: Er kommt ans Ende der Kette dieses Kanals. Hältst du ihn kurz über einen Strip, öffnet sich dessen Kette.</li>
+    <li><b>Doppelklick</b>: fügt ihn dem ausgewählten Kanal hinzu.</li>
+  </ul>
+  <h3>Presets</h3>
+  <p>Rechtsklick auf einen Block → <span class="ui">Save as preset</span> speichert seine Einstellungen, <span class="ui">Load preset</span> holt sie zurück. Rechtsklick in den leeren Bereich der Kette speichert oder lädt ganze Ketten oder exportiert und importiert sie als Datei. Im <span class="ui">+</span>-Menü und im Browser haben Effekte mit Presets ein Untermenü. Presets sind einfache Dateien in <code>%APPDATA%\HydraMixer\Presets</code>, du kannst sie also auf einen anderen PC kopieren.</p>
+  <h3>Mehrere Blöcke auf einmal</h3>
+  <p>Ein Klick wählt einen Block, <kbd>Strg</kbd>+Klick nimmt weitere dazu, <kbd>Shift</kbd>+Klick wählt einen Bereich. <kbd>Strg</kbd>+<kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd> / <kbd>D</kbd> und <kbd>Entf</kbd> wirken dann auf alle, <kbd>Strg</kbd>+<kbd>A</kbd> wählt die ganze Kette, <kbd>Esc</kbd> beendet die Auswahl.</p>
+  <h3>PRE / POST und MONO</h3>
+  <p>Der Knopf neben <span class="ui">BYPASS</span> legt fest, wo die Kette sitzt: <b>PRE</b> (Standard) vor dem Fader, <b>POST</b> dahinter. Mit POST klingt ein Hall weiter aus, wenn du den Fader herunterziehst, und ein Limiter am Ende eines Ausgangs hat auch bei Fader über 0 dB das letzte Wort.</p>
+  <p><span class="ui">MONO</span> am Strip summiert links und rechts <i>vor</i> den Effekten, Stereo-Effekte danach wirken also weiter. Willst du das Ergebnis in Mono, setz ein <a href="#utility">Utility</a> auf Mono ans Ende der Kette.</p>
+  <h3>Mehr</h3>
+  <ul>
+    <li><b>Rechtsklick auf einen Block</b>: Copy, Cut, Paste, Paste settings, Duplicate, Delete, Switch on/off, Insert after, Save as preset, Load preset. Ketten lassen sich auf andere Kanäle einfügen.</li>
+    <li>Ein Kanal, den niemand hört (gemutet, Fader auf −∞, auf keinen benutzten Ausgang geroutet), pausiert seine Effekte, um CPU zu sparen; im Kopf steht dann „effects paused: channel not heard“.</li>
     <li>Was jeder Effekt macht: siehe <a href="#fxoverview">Effekte im Überblick</a>.</li>
   </ul>
 </section>
@@ -2927,23 +3086,61 @@ cd Hydra-Mixer
 <!-- ============================================================ -->
 <section id="fxoverview">
   <h2><span class="num">11</span>Effekte im Überblick</h2>
-  <p>Hydra hat zehn eingebaute Effekte. Alle laufen in Hydra selbst, brauchen kein Plugin und kosten, außer Stem Separator und Transpose, keine Latenz.</p>
+  <p>Hydra hat zwölf eingebaute Effekte. Alle laufen in Hydra selbst, brauchen kein Plugin und kosten, außer Stem Separator und Transpose, keine Latenz.</p>
   <table>
     <thead><tr><th>Effekt</th><th>Was er macht</th><th>Typischer Einsatz</th><th>Latenz</th></tr></thead>
     <tbody>
+      <tr><td><a href="#voice">Studio Voice</a></td><td>Eine komplette Gesangskette hinter einem Regler.</td><td>Bessere Stimme für Podcast, Stream oder Calls, ohne EQ und Kompression zu kennen.</td><td>0</td></tr>
       <tr><td><a href="#denoiser">Denoiser</a></td><td>Entfernt Hintergrundgeräusche aus Sprache.</td><td>Mikro mit Lüfter, Tastatur, Straßenlärm.</td><td>0–30 ms (Low: 10)</td></tr>
-      <tr><td><a href="#eq">Equalizer</a></td><td>Hebt oder senkt Frequenzbereiche.</td><td>Weniger Dröhnen, mehr Klarheit, Brummen weg.</td><td>0</td></tr>
+      <tr><td><a href="#eq">Equalizer</a></td><td>Hebt oder senkt Frequenzbereiche, gleicht einen Kanal an eine Referenz an.</td><td>Weniger Dröhnen, mehr Klarheit, wie ein anderes Mikro klingen.</td><td>0</td></tr>
       <tr><td><a href="#gate">Gate</a></td><td>Schaltet den Kanal unter einer Schwelle stumm.</td><td>Mikro still zwischen den Sätzen.</td><td>0</td></tr>
-      <tr><td><a href="#comp">Kompressor</a></td><td>Macht laute Stellen leiser, den Pegel gleichmäßiger.</td><td>Stimme, die mal schreit, mal flüstert.</td><td>0</td></tr>
+      <tr><td><a href="#comp">Kompressor</a></td><td>Macht laute Stellen leiser, den Pegel gleichmäßiger.</td><td>Stimme, die mal ruft, mal flüstert.</td><td>0</td></tr>
+      <tr><td><a href="#saturation">Saturation</a></td><td>Wärme und Dichte wie bei analogen Geräten.</td><td>Vollere Stimme, rundere Bässe.</td><td>0</td></tr>
       <tr><td><a href="#limiter">Limiter</a></td><td>Harte Obergrenze, über die keine Spitze geht.</td><td>Stream, Ohren und Lautsprecher schützen.</td><td>0</td></tr>
-      <tr><td><a href="#utility">Utility</a></td><td>Phase, links/rechts, Stereobreite, Bass mono, Balance, Gain.</td><td>Mono-Mikro nur auf einer Seite, zu breite Musik, falsch verdrahtetes Kabel.</td><td>0</td></tr>
+      <tr><td><a href="#utility">Utility</a></td><td>Phase, links/rechts, Stereobreite, Bass in Mono, Balance, Gain.</td><td>Mono-Mikro nur auf einer Seite, zu breite Musik, falsch verdrahtetes Kabel.</td><td>0</td></tr>
       <tr><td><a href="#transpose">Transpose</a></td><td>Verschiebt die Tonhöhe, findet Tonart und Stimmung eines Songs.</td><td>Zu einem Song in einer passenden Tonart mitspielen.</td><td>100–300 ms beim Verschieben</td></tr>
-      <tr><td><a href="#stems">Stem Separator</a> (Beta)</td><td>Zerlegt Musik in Gesang, Schlagzeug, Bass, Gitarre, Rest.</td><td>Karaoke, dein Instrument zur Band üben.</td><td>1,3–3,6 s</td></tr>
+      <tr><td><a href="#stems">Stem Separator</a> (Beta)</td><td>Zerlegt Musik in Gesang, Schlagzeug, Bass, Gitarre, Rest.</td><td>Karaoke, mit dem eigenen Instrument zur Band üben.</td><td>1,3–3,6 s</td></tr>
       <tr><td><a href="#correction">Speaker Correction</a></td><td>Gemessene Raumkorrektur für Lautsprecher.</td><td>Dröhnenden Bass im Raum zähmen.</td><td>0</td></tr>
-      <tr><td><a href="#headphone">Headphone Correction</a></td><td>Macht Kopfhörer neutral oder klingt wie andere Kopfhörer.</td><td>Studiokopfhörer, der wie dein Headset klingt, oder umgekehrt.</td><td>0</td></tr>
+      <tr><td><a href="#headphone">Headphone Correction</a></td><td>Macht Kopfhörer neutral oder lässt sie wie andere klingen.</td><td>Studiokopfhörer, die wie dein Headset klingen, oder umgekehrt.</td><td>0</td></tr>
     </tbody>
   </table>
   <p>Dazu jedes <a href="#vst">VST3-Plugin</a> (Amp-Simulationen, Hall, De-Esser …), an jeder Stelle der Kette.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="voice">
+  <h2><span class="num">12</span>Studio Voice</h2>
+  <p>Studio Voice ist für alle, die eine besser klingende Stimme wollen, ohne sich mit EQs und Kompressoren zu beschäftigen. Hinter einem Regler läuft eine komplette Gesangskette wie im Studio, so eingestellt, dass die Teile zusammenpassen. Du wählst, wie es klingen soll, Hydra macht den Rest.</p>
+  <div class="hx shot" data-g="fxwin" data-o="voice"></div>
+  <h3>Loslegen</h3>
+  <ol class="steps">
+    <li>Klick auf deinen Mikrofon-Strip, dann <span class="ui">+</span> → <span class="ui">Studio Voice</span>.</li>
+    <li>Wähle oben im Block ein Profil.</li>
+    <li>Dreh <span class="ui">AMOUNT</span> auf, während du sprichst. Bei 0 % ändert sich nichts, 50 % ist ein guter Start, 100 % die volle Wirkung.</li>
+    <li>Optional: <span class="ui">LEARN MY MIC</span> (siehe unten).</li>
+  </ol>
+  <h3>Profile</h3>
+  <dl class="kv">
+    <dt>Podcast</dt><dd>Warm und klar, natürliche Dynamik. Der Standard.</dd>
+    <dt>Radio</dt><dd>Nah, voll und laut wie ein Radiomikrofon: mehr Bass, stärkere Kompression mit einer zweiten, schnellen Stufe für Spitzen, etwas mehr Sättigung.</dd>
+    <dt>Stream</dt><dd>Präsent und klar, hält Tastatur- und Tischgeräusche draußen, ein festeres Gate.</dd>
+    <dt>Singing</dt><dd>Luftig und sanft, ein langsamer Attack lässt Konsonanten durch, ein langsamer Pegelausgleich lässt einem Song seine Dynamik.</dd>
+  </dl>
+  <h3>Was darin läuft</h3>
+  <ul>
+    <li><b>EQ</b>: ein Hochpass gegen Rumpeln, Wärme, weniger „Matsch“, Präsenz und Luft, je nach Profil.</li>
+    <li><b>Gate</b>: Seine Schwelle folgt dem gemessenen Rauschen deines Mikrofons, Pausen bleiben also leise, ohne Wörter abzuschneiden.</li>
+    <li><b>Pegelausgleich</b>: bringt deine Stimme auf die Ziellautstärke des Profils, gemessen nur, während du sprichst.</li>
+    <li><b>Kompressor</b>: gleicht laute und leise Silben aus (Radio und Singing mit einer zweiten, schnellen Stufe für Spitzen).</li>
+    <li><b>Saturation</b> für Dichte und am Ende ein <b>Limiter</b> bei −1 dB.</li>
+  </ul>
+  <p>Alles skaliert mit AMOUNT. Studio Voice kostet keine Latenz und braucht etwa ein Viertelprozent eines CPU-Kerns.</p>
+  <p>Die Zeile unter dem Regler zeigt Messwerte, keine Einstellungen: <b>LEVEL</b> ist, wie stark der Pegelausgleich deine Stimme gerade anhebt oder absenkt, <b>COMP</b>, wie viel der Kompressor wegnimmt. Beides ist das Mittel der letzten Sekunde.</p>
+  <h3>Learn my mic</h3>
+  <p>Jedes Mikrofon klingt anders: manche dumpf, manche dröhnend. Klick auf <span class="ui">LEARN MY MIC</span> und sprich etwa zehn Sekunden normal (der Balken zeigt den Fortschritt, nur Sprache zählt). Hydra misst, wie dein Mikrofon klingt, und korrigiert es zusätzlich zum Profil ein Stück in Richtung eines durchschnittlichen Sprachspektrums. Der Bass wird nur behutsam korrigiert, weil ein nahes Mikrofon von Natur aus mehr davon hat. Das Gelernte wird mit der Session gespeichert. Rechtsklick auf den Knopf vergisst es. Hört Hydra 40 Sekunden lang keine Stimme, bricht es ab und sagt Bescheid; das alte Ergebnis bleibt.</p>
+  <h3>In Effekte aufteilen</h3>
+  <p><span class="ui">SPLIT</span> (auch im Block-Menü) ersetzt Studio Voice durch die normalen Effekte, aus denen es besteht (EQ, Gate, Kompressor, Saturation, Limiter), mit genau denselben Einstellungen, damit du selbst weiterdrehen kannst. Stufen, die beim aktuellen AMOUNT nichts tun, fallen weg. Radio braucht zwei Kompressoren; hat ein Kanal für einen Block keinen freien Platz mehr, passiert nichts und Hydra sagt, warum. Zurück zum einen Regler geht es danach nicht.</p>
+  <p class="note">Tipp: In einem lauten Raum den <a href="#denoiser">Denoiser</a> vor Studio Voice setzen.</p>
 </section>
 
 <!-- ============================================================ -->
@@ -3064,35 +3261,62 @@ cd Hydra-Mixer
 <!-- ============================================================ -->
 <section id="eq">
   <h2><span class="num">13</span>Equalizer</h2>
-  <p>Inputs und Ausgänge haben denselben parametrischen EQ mit <b>16 Bändern</b>. Ein Band ist nur sichtbar (als farbiger Punkt), wenn es benutzt wird. Ein neuer Kanal startet ohne Punkte. Ein ausgeschaltetes Band behält seine Werte und erscheint als hohler Punkt. Eine Kette kann bis zu vier EQs enthalten.</p>
+  <p>Inputs und Ausgänge haben denselben parametrischen EQ mit <b>16 Bändern</b>. Ein Band ist nur sichtbar (als farbiger Punkt), solange es benutzt wird. Ein neuer Kanal startet ohne Punkte. Ein ausgeschaltetes Band behält seine Werte und erscheint als hohler Punkt. Eine Kette kann bis zu vier EQs haben.</p>
   <div class="hx shot" data-g="eq"></div>
-  <h3>Bedienung der Kurve</h3>
+  <h3>Mit der Kurve arbeiten</h3>
   <table>
     <thead><tr><th>Aktion</th><th>Wirkung</th></tr></thead>
     <tbody>
-      <tr><td>Hover nahe der Kurve</td><td>Ein Geisterpunkt zeigt, wo ein neues Band entstehen würde.</td></tr>
-      <tr><td>Klick auf freie Stelle</td><td>Neues Band (Bell) an dieser Stelle.</td></tr>
-      <tr><td>Punkt ziehen</td><td>Frequenz (waagrecht) und Gain (senkrecht).</td></tr>
-      <tr><td>Mausrad über Punkt</td><td>Güte (Q).</td></tr>
-      <tr><td>Doppelklick / Rechtsklick auf Punkt</td><td>Entfernen bzw. Typ ändern.</td></tr>
-      <tr><td>Typ-Leiste + Knobs</td><td>Typ, GAIN, FREQ, Q des gewählten Bands, <span class="ui">Remove</span> zum Entfernen.</td></tr>
+      <tr><td>Maus nahe der Kurve</td><td>Ein Geisterpunkt zeigt, wo ein neues Band entstünde.</td></tr>
+      <tr><td>Klick auf eine freie Stelle</td><td>Neues Band (Bell) an dieser Stelle.</td></tr>
+      <tr><td>Punkt ziehen</td><td>Frequenz (waagerecht) und Gain (senkrecht).</td></tr>
+      <tr><td>Mausrad über einem Punkt</td><td>Güte (Q).</td></tr>
+      <tr><td>Doppelklick / Rechtsklick auf einen Punkt</td><td>Entfernen oder Typ ändern.</td></tr>
+      <tr><td>Typ-Leiste + Regler</td><td>Typ, GAIN, FREQ, Q des gewählten Bands, <span class="ui">Remove</span> löscht es.</td></tr>
     </tbody>
   </table>
   <h3>Filtertypen</h3>
+  <p>In der Reihenfolge der Typ-Leiste:</p>
   <table>
     <thead><tr><th>Typ</th><th>Wirkung</th><th>Typischer Einsatz</th></tr></thead>
     <tbody>
-      <tr><td>Bell</td><td>Anheben/Absenken um eine Frequenz.</td><td>Stimme präsenter (+3 dB bei 3 kHz), Dröhnen raus (−4 dB bei 250 Hz).</td></tr>
-      <tr><td>Notch</td><td>Sehr schmale Absenkung.</td><td>Brummen (50 Hz) oder Pfeifton entfernen.</td></tr>
-      <tr><td>Band Pass</td><td>Nur ein Frequenzbereich bleibt.</td><td>Telefon-/Funk-Effekt.</td></tr>
-      <tr><td>High Cut</td><td>Hohe Frequenzen weg.</td><td>Zischen, Rauschen.</td></tr>
-      <tr><td>Low Cut</td><td>Tiefe Frequenzen weg.</td><td>Trittschall, Pop-Geräusche beim Mikro (ca. 80 Hz).</td></tr>
+      <tr><td>Bell</td><td>Anheben/Absenken um eine Frequenz.</td><td>Mehr Präsenz der Stimme (+3 dB bei 3 kHz), weniger Dröhnen (−4 dB bei 250 Hz).</td></tr>
+      <tr><td>Notch</td><td>Sehr schmale Absenkung.</td><td>Brummen (50/60 Hz) oder ein Pfeifen entfernen.</td></tr>
+      <tr><td>Band Pass</td><td>Nur ein Frequenzbereich bleibt.</td><td>Telefon-/Radio-Effekt.</td></tr>
       <tr><td>Low Shelf / High Shelf</td><td>Alles unter/über einer Frequenz anheben oder absenken.</td><td>Bass oder Höhen insgesamt.</td></tr>
+      <tr><td>Low Cut</td><td>Entfernt tiefe Frequenzen, 24 dB pro Oktave.</td><td>Rumpeln, Popplaute (etwa 80 Hz).</td></tr>
+      <tr><td>High Cut</td><td>Entfernt hohe Frequenzen, 24 dB pro Oktave.</td><td>Zischen, Rauschen.</td></tr>
     </tbody>
   </table>
-  <p>Q-Bereich 0,1–100, Gain ±18 dB.</p>
+  <p>Q 0,1–100, Gain ±18 dB. Bei Q 0,7 sind die Cuts ein exakter Butterworth-Filter 4. Ordnung, ein höheres Q gibt eine kleine Überhöhung an der Kante.</p>
   <h3>Großes EQ-Fenster</h3>
-  <p>Der Pfeil-Button im EQ-Kopf öffnet ein eigenes Fenster mit großer Kurve, den benutzten Bändern mit Werten (bis zu 8 pro Reihe, <span class="ui">+ Add band</span> für ein neues) und einem <b>Live-Spektrum</b> des Signals nach dem EQ (Skala rechts in dBFS). Das Fenster folgt dem gewählten Kanal. Das Spektrum wird nur berechnet, solange das Fenster offen ist. <span class="ui">Show input</span> zeigt zusätzlich grau dahinter das Spektrum vor dem EQ, damit du genau siehst, was der EQ ändert.</p>
+  <p>Der Pfeil-Knopf im EQ-Kopf öffnet ein eigenes Fenster mit großer Kurve, den benutzten Bändern mit ihren Werten (bis zu 8 pro Reihe, <span class="ui">+ Add band</span> für ein neues) und einem <b>Live-Spektrum</b> des Signals nach dem EQ (Skala rechts in dBFS). Das Fenster folgt dem gewählten Kanal. Das Spektrum wird nur berechnet, solange das Fenster offen ist. <span class="ui">Show input</span> zeigt zusätzlich grau dahinter das Spektrum vor dem EQ, so siehst du genau, was der EQ ändert.</p>
+  <h3>Stereo, Links/Rechts und Mitte/Seite</h3>
+  <p>Der Knopf mit den zwei Ringen oben im Fenster stellt den Kanalmodus dieses EQ ein:</p>
+  <ul>
+    <li><b>Stereo</b> (Standard): Jedes Band wirkt auf beide Seiten.</li>
+    <li><b>Left/Right</b>: Jedes Band wirkt auf beide Seiten oder nur links bzw. rechts.</li>
+    <li><b>Mid/Side</b>: dasselbe für die Mitte (was auf beiden Seiten ist, meist Stimme, Bass, Bassdrum) und die Seite (Stereobreite, Hall, breite Gitarren).</li>
+  </ul>
+  <p>Daneben wählt der Schalter <span class="ui">L | L+R | R</span> (bzw. <span class="ui">M | M+S | S</span>), was du siehst und bearbeitest. <span class="ui">L+R</span> zeigt beide Kurven gleichzeitig; neue Bänder wirken dann auf beide Seiten. Ist nur eine Seite gewählt, gehen neue Bänder auf diese Seite, die Kurve der anderen ist gestrichelt und deren Bänder lassen sich nicht greifen. Der Chip neben dem Namen eines Bands zeigt seine Seite und ändert sie.</p>
+  <h3>DELTA</h3>
+  <p><span class="ui">DELTA</span> lässt dich nur hören, was der EQ ändert (Ausgang minus Eingang): Eine Anhebung klingt wie der angehobene Bereich, eine Absenkung wie das, was weggenommen wird. Praktisch, um eine Resonanz zu finden oder zu prüfen, dass ein Cut nur entfernt, was er soll. Beim nächsten Start ist DELTA von selbst wieder aus.</p>
+  <h3 id="eqmatch">Match</h3>
+  <p>Match lässt einen Kanal wie eine Referenz klingen: dein Mikro wie das deines Freundes, deinen Podcast wie eine Folge, die dir gefällt, eine Aufnahme wie eine andere. Hydra vergleicht das mittlere Spektrum beider und lässt den EQ dem Unterschied mit einer fein aufgelösten Kurve folgen, ohne Latenz.</p>
+  <div class="hx shot" data-g="eqmatch"></div>
+  <ol class="steps">
+    <li>Öffne das große EQ-Fenster und klick auf <span class="ui">MATCH</span>. Statt der Band-Spalten siehst du vier Karten.</li>
+    <li><b>Reference</b>: Wähle, wie es klingen soll: ein anderer Kanal (nach seinen Effekten), eine Audiodatei, <i>Standard speech</i> oder <i>Flat</i>. Bei einem Kanal klickst du <span class="ui">CAPTURE</span>, während er spielt, und zum Beenden noch einmal (oder lässt es bis etwa 5 Minuten laufen); die Kurve baut sich live auf. Datei, Sprache und Flat sind sofort fertig.</li>
+    <li><b>This channel</b>: <span class="ui">CAPTURE</span>, während der Kanal etwas Typisches spielt, zum Beispiel du normal sprichst. Gemessen wird vor dem EQ.</li>
+    <li><b>Fine tune</b>: <span class="ui">SMOOTH</span> glättet die Kurve (0 = jedes Detail, 100 % = sehr breit), <span class="ui">AMOUNT</span>, wie stark sie wirkt. Die zwei Griffe an den Rändern der Grafik begrenzen den Bereich, <span class="ui">FULL RANGE</span> setzt sie zurück.</li>
+    <li><b>Result</b>: <span class="ui">MATCH ON</span> schaltet den Match zum Vergleichen an und aus.</li>
+  </ol>
+  <p>In der Grafik ist die Referenz orange, dieser Kanal blau, die weiße Fläche ist, was der Match tut. Der Gesamtpegel bleibt etwa gleich.</p>
+  <ul>
+    <li><span class="ui">INTO BANDS …</span> wandelt den Match in normale EQ-Bänder um: Wähle, wie viele (1–16, nur freie Bänder), vergleiche die gestrichelte Vorschau und die angegebene Abweichung, dann <span class="ui">CONVERT</span>. Der Match geht aus, die Band-Spalten kommen zurück.</li>
+    <li>Standardmäßig nutzt der Match die Summe aus links und rechts, das passt für fast alles und spart CPU. <span class="ui">SEPARATE L/R</span> macht eine Kurve pro Seite (bzw. Mitte und Seite im Mid/Side-Modus); danach neu capturen.</li>
+    <li>Die aufgenommenen Spektren werden mit der Session und in Presets gespeichert. Solange ein Match aktiv ist, zeigt der EQ-Block das Tag <span class="ui">MATCH</span>.</li>
+  </ul>
 </section>
 
 <!-- ============================================================ -->
@@ -3168,6 +3392,20 @@ cd Hydra-Mixer
 </section>
 
 <!-- ============================================================ -->
+<section id="saturation">
+  <h2><span class="num">17</span>Saturation</h2>
+  <p>Saturation gibt die Wärme und Dichte analoger Geräte: Laute Stellen werden runder und reicher an Obertönen, leise Stellen bleiben so laut, wie sie waren. Ein wenig davon macht eine Stimme voller oder einen Bass auch auf kleinen Lautsprechern hörbar.</p>
+  <div class="hx shot" data-g="fxwin" data-o="saturation"></div>
+  <dl class="kv">
+    <dt>DRIVE</dt><dd>Wie stark das Signal in die Sättigung gefahren wird. Mehr Drive, mehr Obertöne.</dd>
+    <dt>WARMTH</dt><dd>Macht die Kennlinie unsymmetrisch: fügt geradzahlige Obertöne hinzu, die wärmer klingen.</dd>
+    <dt>MIX</dt><dd>Original und gesättigtes Signal gemischt (100 % = nur gesättigt).</dd>
+    <dt>OUTPUT</dt><dd>Pegel nach dem Effekt.</dd>
+  </dl>
+  <p>Keine Latenz, auf jedem Kanal. Mit viel Drive auf einem ganzen Mix kann es kratzig werden; weniger ist meist mehr. <a href="#voice">Studio Voice</a> enthält bereits eine Saturation-Stufe.</p>
+</section>
+
+<!-- ============================================================ -->
 <section id="limiter">
   <h2><span class="num">20</span>Limiter</h2>
   <div class="hx shot" data-g="fxwin" data-o="limiter" style="max-width:520px"></div>
@@ -3227,42 +3465,47 @@ cd Hydra-Mixer
 <!-- ============================================================ -->
 <section id="recorder">
   <h2><span class="num">20</span>Recorder</h2>
-  <div class="hx shot" data-g="recorder"></div>
-  <p>Der Recorder nimmt einen virtuellen Ausgang (V) als WAV auf und spielt Audiodateien auf beliebige Ausgänge. Öffnen über <span class="ui">Tools → Recorder</span> oder die Zeitanzeige in der Top-Bar. Er hat drei Bereiche:</p>
-  <table>
-    <thead><tr><th>Bereich</th><th>Inhalt</th></tr></thead>
-    <tbody>
-      <tr><td><b>Record Source</b> (links)</td><td>Welcher V-Ausgang aufgenommen wird, Zielordner (Standard <code>Dokumente\Hydra Recordings</code>, Dateien heißen <code>Hydra_V1_…</code>), Format WAV 16 / 24 / 32-bit float.</td></tr>
-      <tr><td><b>Recording</b> (Mitte)</td><td>Transport, Zeit, Waveform, Dateiname, Datei laden/zeigen/löschen.</td></tr>
-      <tr><td><b>Play To</b> (rechts)</td><td>Hardware- und virtuelle Ausgänge, auf die die Wiedergabe geht, und Wiedergabepegel.</td></tr>
-    </tbody>
-  </table>
+  <p>Der Recorder nimmt einen virtuellen Ausgang in eine WAV-Datei auf oder mehrere Inputs gleichzeitig in getrennte Spuren, und spielt Aufnahmen und Audiodateien auf beliebige Ausgänge. Er hat zwei Ansichten: die kompakte im Effektbereich (Klick auf die Zeit in der Top-Bar oder den Recorder auswählen) und das große Fenster (Erweitern-Knopf im Kopf von „Recording“ oder Doppelklick auf die Wellenform).</p>
+  <div class="hscroll"><div class="hx shot" data-g="multitrack"></div></div>
+  <h3>Einen virtuellen Ausgang aufnehmen</h3>
+  <p>Wähle <span class="ui">V bus</span> und den Ausgang (V1, V2 …). Der Recorder nimmt ihn nach seinem Fader in eine WAV-Datei auf, <code>Hydra_V1_&lt;datum&gt;.wav</code> in <code>Dokumente\Hydra Recordings</code> (Ordner und Format 16 / 24 / 32 Bit float stehen unter der Quelle).</p>
+  <h3>Mehrere Inputs aufnehmen</h3>
+  <ol class="steps">
+    <li>Wähle <span class="ui">Inputs</span> und schalte die gewünschten Inputs mit ihren runden Knöpfen scharf.</li>
+    <li><span class="ui">Separate tracks</span> an (Standard): Jeder Input bekommt eine eigene Datei, sample-genau zueinander. Aus: Alle scharfen Inputs werden in eine Stereo-Datei summiert.</li>
+    <li><span class="ui">Pre effects</span> nimmt das rohe Signal auf (nach dem Gain-Regler); jede Spur bekommt dann eine Kopie der Effektkette ihres Inputs, klingt also gleich, du kannst aber noch alles ändern. <span class="ui">Post effects</span> nimmt mit den Effekten auf.</li>
+    <li>● startet, ■ beendet.</li>
+  </ol>
+  <p>Ein Take mit getrennten Spuren wird ein Ordner <code>Hydra &lt;datum&gt;</code> mit einer WAV pro Input (Mono-Inputs als Mono-Dateien) und einer Projektdatei <code>.hydrarec</code>. Er öffnet sich sofort als Projekt.</p>
   <h3>Transport</h3>
-  <table>
-    <thead><tr><th>Symbol</th><th>Funktion</th></tr></thead>
-    <tbody>
-      <tr><td>● Aufnahme</td><td>Startet die Aufnahme des gewählten V-Ausgangs (nach seinem Fader). Zweiter Klick stoppt.</td></tr>
-      <tr><td>▶ / ❚❚</td><td>Play / Pause. Pause merkt sich die Position. Am Dateiende geht es zurück auf 0.</td></tr>
-      <tr><td>■ Stop</td><td>Beendet Aufnahme und Wiedergabe, Position auf 0.</td></tr>
-      <tr><td>Loop</td><td>Wiederholt die Datei bzw. den Trim-Bereich.</td></tr>
-      <tr><td>Papierkorb</td><td>Entlädt die Datei und verschiebt sie in den Windows-Papierkorb (mit Bestätigung).</td></tr>
-    </tbody>
-  </table>
-  <h3>Waveform, Seek und Trim</h3>
   <ul>
-    <li>Die Waveform wächst während der Aufnahme live mit.</li>
-    <li>Klick oder Ziehen in die Waveform springt an diese Stelle. Im Stopp setzt das den Startpunkt für Play.</li>
-    <li>Die Griffe am linken und rechten Rand nach innen ziehen setzt In- und Out-Punkt (nicht destruktiv, außerhalb grau). Wiedergabe und Loop laufen nur in diesem Bereich.</li>
-    <li><span class="ui">Cut</span> schreibt den Bereich in die Datei (WAV: Original geht in den Papierkorb; andere Formate: neue Datei <code>name_trimmed.wav</code>). <span class="ui">Reset</span> setzt die Griffe zurück.</li>
+    <li><b>● Aufnahme</b>: startet die Aufnahme, ein zweiter Klick beendet sie.</li>
+    <li><b>▶ / ❚❚</b>: Wiedergabe / Pause. <b>■</b>: Stopp, zurück zum Anfang. <b>Loop</b>: wiederholt den Loop-Bereich.</li>
+    <li><kbd>Leertaste</kbd> spielt und pausiert im großen Fenster.</li>
   </ul>
-  <p>Abspielbar sind WAV, AIFF, FLAC, Ogg und MP3, mit automatischer Anpassung der Abtastrate. <span class="ui">Last Take</span> lädt die letzte Aufnahme.</p>
+  <h3>Ein Projekt bearbeiten</h3>
+  <p>Ein Projekt ist wie eine kleine DAW: eine Zeile pro Spur mit ihren Clips.</p>
+  <ul>
+    <li><b>Lineal</b>: Klick setzt die Position, Ziehen setzt den Loop-Bereich.</li>
+    <li><b>Clips</b>: ziehen = verschieben (rastet an Kanten und der Position ein; mit <kbd>Alt</kbd> frei), Kante ziehen = trimmen, die kleinen Quadrate oben an den Ecken = Fades. Ein Clip verdeckt, was auf seiner Spur darunter liegt.</li>
+    <li><b>Tasten</b>: <kbd>Strg</kbd>+<kbd>E</kbd> an der Position schneiden, <kbd>Entf</kbd> löschen, <kbd>Strg</kbd>+<kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd> / <kbd>D</kbd>, Pfeiltasten verschieben (mit <kbd>Shift</kbd> um 1 s), <kbd>Strg</kbd>+<kbd>A</kbd> alles, <kbd>Strg</kbd>+<kbd>L</kbd> Loop aus der Auswahl, <kbd>Strg</kbd>+<kbd>Z</kbd> / <kbd>Y</kbd> Rückgängig/Wiederholen der Schnitte.</li>
+    <li><b>Zoom</b>: <kbd>Strg</kbd> + Mausrad oder <kbd>+</kbd> / <kbd>−</kbd>; <kbd>Shift</kbd> + Mausrad scrollt seitwärts.</li>
+    <li>Knöpfe oben: Split, Delete, Crop, Undo, Redo; <span class="ui">Recordings</span> listet die Projekte im Ordner.</li>
+  </ul>
+  <h3>Spuren</h3>
+  <p>Jede Spur ist ein vollwertiger Kanal: <span class="ui">M</span>, <span class="ui">S</span>, <span class="ui">MONO</span>, <span class="ui">GAIN</span>, <span class="ui">PAN</span>, ein Fader und eine eigene <a href="#chain">Effektkette</a> mit denselben Effekten wie ein Input (unter der Timeline, mit BYPASS und PRE/POST). Doppelklick auf einen Namen benennt die Spur um. Das Spur-Menü hat Rename, Delete und <span class="ui">Add an audio file as a track</span>. Alles wird automatisch in der Projektdatei gespeichert; Spuren gehören nicht zu Szenen.</p>
+  <p><b>Play To</b> (rechts) wählt die Ausgänge, auf die die Wiedergabe geht, und ihren Pegel.</p>
+  <h3>Export</h3>
+  <p><span class="ui">Export…</span> rendert einzelne Spuren (Stems), einen Mixdown oder beides, mit oder ohne Spur-Einstellungen und Effekte, das ganze Projekt oder nur den Loop-Bereich, als WAV 16 / 24 / 32 Bit float, in einen Ordner <code>Export &lt;datum&gt;</code> im Take. Die Rohaufnahmen bleiben unverändert.</p>
+  <h3>Einzelne Dateien</h3>
+  <p>Eine einzelne Aufnahme oder eine geladene Datei (WAV, AIFF, FLAC, Ogg, MP3, jede Sample-Rate) zeigt ihre Wellenform mit Trim-Griffen: nach innen ziehen setzt Anfang und Ende. <span class="ui">Save copy</span> speichert den getrimmten Teil als neue Datei daneben, <span class="ui">Cut</span> kürzt die Datei selbst (das Original geht in den Papierkorb). <span class="ui">Edit as multitrack</span> macht ein Projekt daraus.</p>
 </section>
 
 <!-- ============================================================ -->
 <section id="scenes">
   <h2><span class="num">21</span>Szenen</h2>
   <p>Eine Szene ist ein Schnappschuss aller Mixer-Parameter (Fader, Mutes, Routing, Effekte, Sends …). Nicht enthalten sind Geräte, Kanalnamen, Plugins und welche Kanäle aktiv sind. Typische Szenen: „Gaming“, „Stream“, „Call“, „Musik“.</p>
-  <p>Öffnen: <span class="ui">Tools → Scene Editor</span>. Die Szenen erscheinen als Leiste links im Hauptfenster.</p>
+  <p>Öffnen: der Reiter <span class="ui">SCENES</span> am rechten Fensterrand, <kbd>Strg</kbd>+<kbd>Alt</kbd>+<kbd>S</kbd> oder <span class="ui">Tools → Scenes</span>. Das Panel fährt von rechts herein.</p>
   <table>
     <thead><tr><th>Aktion</th><th>Wirkung</th></tr></thead>
     <tbody>
@@ -3476,22 +3719,27 @@ cd Hydra-Mixer
 <!-- ============================================================ -->
 <section id="settings">
   <h2><span class="num">32</span>Settings</h2>
-  <p>Öffnen über das Zahnrad in der Top-Bar. Die kleinen <span class="ui">i</span>-Buttons erklären jeden Abschnitt.</p>
-  <table>
-    <thead><tr><th>Tab</th><th>Inhalt</th></tr></thead>
-    <tbody>
-      <tr><td><b>General</b></td><td>Start mit Windows (hohe Priorität; ist der ASIO-Treiber noch nicht bereit, versucht Hydra es 90 s lang weiter), System-Tray (in den Tray schließen/minimieren, versteckt starten), Geräte (<span class="ui">Reconnect devices automatically when they are back</span>, <span class="ui">Show all Windows audio modes</span>), <a href="#sel">Monitoring (SEL)</a>, Beenden.</td></tr>
-      <tr><td><b>Display</b></td><td>Größe von Oberfläche und Schrift (75–200 %), Theme (Default / Legacy), Layout-Optionen (siehe <a href="#strips">Strips</a>), experimentelle Optionen.</td></tr>
-      <tr><td><b>Audio Engine</b></td><td>Treiber, <a href="#clock">Master-Gerät</a>, Sample-Rate, Puffergröße, ASIO Control Panel, Apply / Restart.</td></tr>
-      <tr><td><b>Virtual Cables</b></td><td>Kabel-Optionen, siehe <a href="#virtual">Virtuelle Kabel</a>.</td></tr>
-      <tr><td><b>Network</b></td><td><a href="#network">Hydra Link</a>: an/aus, Rechnername, Port, Netzwerk-Passwort, andere Rechner, was Hydra im Netz hört.</td></tr>
-      <tr><td><b>Remote</b></td><td><a href="#remote">Steuerung per Handy &amp; Tablet</a>: an/aus, QR-Code, Zugangscode, verbundene Geräte.</td></tr>
-      <tr><td><b>MIDI</b></td><td>MIDI-Eingänge, Feedback-Ausgang, LED-Profil, „MIDI faders stop at 0 dB“. Siehe <a href="#midi">MIDI Learn</a> und <a href="#apc">APC mini</a>.</td></tr>
-      <tr><td><b>Plugins</b></td><td>VST3-Suchordner und Scan. Siehe <a href="#vst">VST3-Plugins</a>.</td></tr>
-      <tr><td><b>Backup &amp; Transfer</b></td><td>Siehe <a href="#backup">nächsten Abschnitt</a>.</td></tr>
-    </tbody>
-  </table>
-  <p>Fällt das Master-Gerät aus oder verstummt es, startet Hydra die Audio-Engine nach einer halben Sekunde selbst neu (mit wachsenden Pausen, falls es immer wieder ausfällt). Jeder Versuch steht in <code>hydra.log</code>.</p>
+  <p>Öffnen mit dem Zahnrad in der Top-Bar. Die Seiten stehen links in drei Gruppen; die kleinen <span class="ui">i</span>-Knöpfe erklären jeden Abschnitt.</p>
+  <h3>Audio</h3>
+  <ul>
+    <li><b>Audio Engine</b>: Treiber, <a href="#clock">Master-Gerät</a>, Sample-Rate, Puffergröße, ASIO Control Panel, Apply / Restart. Darunter: weitere Geräte (<span class="ui">Reconnect devices automatically when they are back</span>, <span class="ui">Show all Windows audio modes</span>) und <a href="#sel">Monitoring (SEL)</a>.</li>
+    <li><b>Virtual Cables</b>: siehe <a href="#virtual">Virtuelle Kabel</a>.</li>
+    <li><b>Plugins</b>: VST3-Suchordner und Scan, siehe <a href="#vst">VST3-Plugins</a>.</li>
+  </ul>
+  <h3>Verbindungen</h3>
+  <ul>
+    <li><b>Network</b>, mit zwei Teilen: <span class="ui">Audio over the network</span> (<a href="#network">Hydra Link</a>: an/aus, Name, Port, Passwort, gekoppelte Geräte, andere Rechner) und <span class="ui">Phone &amp; Tablet</span> (<a href="#remote">Fernsteuerung</a>: an/aus, QR-Code, Zugangscode, verbundene Geräte).</li>
+    <li><b>MIDI</b>: MIDI-Eingänge, Feedback-Ausgang, LED-Profil, „MIDI faders stop at 0 dB“. Siehe <a href="#midi">MIDI Learn</a> und <a href="#apc">APC mini</a>.</li>
+  </ul>
+  <h3>Anwendung</h3>
+  <ul>
+    <li><b>General</b>: Start mit Windows (hohe Priorität; ist der ASIO-Treiber noch nicht bereit, versucht Hydra es 90 s lang weiter), System-Tray (in den Tray schließen/minimieren, versteckt starten), Updates und Installation, Beenden.</li>
+    <li><b>Display</b>: Größe von Oberfläche und Schrift (75–200 %), Theme, Kanal-Layout (siehe <a href="#strips">Strips</a>).</li>
+    <li><b>Backup &amp; Transfer</b>: siehe <a href="#backup">nächster Abschnitt</a>.</li>
+  </ul>
+  <h3>Themes</h3>
+  <p><b>Dark</b> (Standard), <b>Darker</b> (Graphit, fast ohne Blau), <b>Light</b> (kühles Blaugrau) und <b>Legacy</b> (Hydras erstes Aussehen). Der Wechsel wirkt sofort; ein offenes Werkzeugfenster behält die alten Farben eventuell, bis du es neu öffnest.</p>
+  <p>Fällt das Master-Gerät aus oder verstummt es, startet Hydra die Audio-Engine nach einer halben Sekunde von selbst neu (mit wachsenden Pausen, wenn es weiter fehlschlägt). Jeder Versuch steht in <code>hydra.log</code>.</p>
 </section>
 
 <!-- ============================================================ -->
@@ -3599,7 +3847,7 @@ cd Hydra-Mixer
 
   <h3>Zwischen Setups umschalten</h3>
   <ol>
-    <li>Mixer für „Gaming“ einstellen, im Scene Editor neue Szene, Save.</li>
+    <li>Mixer für „Gaming“ einstellen, im Szenen-Panel neue Szene, Save.</li>
     <li>Für „Stream“ wiederholen.</li>
     <li>Rechtsklick auf jede Szene → Tastenkürzel oder MIDI-Taste.</li>
   </ol>
