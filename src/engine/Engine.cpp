@@ -7,6 +7,14 @@
 #include <map>
 #include <numeric>
 
+#ifndef NOMINMAX
+ #define NOMINMAX
+#endif
+#include <windows.h>
+#include <avrt.h>
+#include <intrin.h>
+#pragma comment (lib, "avrt.lib")
+
 namespace hydra
 {
 namespace
@@ -162,6 +170,8 @@ Engine::Engine()
         trackL[(size_t) t] = rt.l.data();
         trackR[(size_t) t] = rt.r.data();
     }
+    for (int ch = 0; ch < kNumChannels; ++ch)
+        if (isFxChannel (ch)) fxOf (ch).scKey.assign (kMaxBlock, 0.0f);
     // What the recorder needs from the mixer: names and kind of the recorded inputs, the tracks' processing.
     recorder.inputName = [this] (int i) { return inputs[(size_t) i].name; };
     recorder.inputIsMono = [this] (int i) { return inputs[(size_t) i].source.mono || inputs[(size_t) i].source.kind == IoTarget::Kind::None; };
@@ -189,7 +199,19 @@ Engine::Engine()
     playL.assign (kMaxBlock, 0.0f);
     playR.assign (kMaxBlock, 0.0f);
 
+    calibrateCycles();
     startTimerHz (10);
+}
+
+void Engine::calibrateCycles()
+{
+    // TSC cycles per high-resolution tick, refined every timer tick over the whole run (QueryThreadCycleTime counts
+    // in TSC cycles). Message thread.
+    const uint64_t c = __rdtsc();
+    const auto t = juce::Time::getHighResolutionTicks();
+    if (calibTicks == 0) { calibCycles = c; calibTicks = t; return; }
+    if (t - calibTicks > (juce::int64) (0.2 / ticksToSeconds) && c > calibCycles)
+        cyclesPerTick.store ((double) (c - calibCycles) / (double) (t - calibTicks), std::memory_order_relaxed);
 }
 
 Engine::~Engine()
@@ -293,6 +315,39 @@ void Engine::createFxParams (ChannelFx& c, const juce::String& p, const juce::St
         sa.warmth = &params.add (saP + "warmth", lbl ("Saturation") + "Warmth", ParamType::Continuous, linRange (0, 100, 1.0f), 30.0f, " %");
         sa.mix    = &params.add (saP + "mix", lbl ("Saturation") + "Mix", ParamType::Continuous, linRange (0, 100, 1.0f), 50.0f, " %");
         sa.output = &params.add (saP + "output", lbl ("Saturation") + "Output", ParamType::Continuous, linRange (-12, 12, 0.1f), 0.0f, " dB");
+        if (k < kScInstances)
+        {
+            // Sidechain EQ: ids "in1.sc.*" / "in1.sc2.*"; source = key channel + 1 (0 = none).
+            auto& sc = c.sidechains[(size_t) k];
+            const auto scP = p + fxPart (Fx::sidechain, k) + ".";
+            const auto sn = lbl ("Sidechain EQ");
+            juce::StringArray sources { "None" };
+            for (int ch = 0; ch < kMaxInputs + kMaxBuses; ++ch) sources.add (channelCode (ch));
+            sc.on      = &params.addToggle (scP + "on", sn + "On");
+            sc.source  = &params.addChoice (scP + "source", sn + "Key", sources, 0);
+            sc.mode    = &params.addChoice (scP + "mode", sn + "Mode", { "Auto", "Bands" }, dsp::SidechainEqSettings::autoMode);
+            sc.amount  = &params.add (scP + "amount", sn + "Amount", ParamType::Continuous, linRange (0, 100, 1.0f), 100.0f, " %");
+            sc.depth   = &params.add (scP + "depth", sn + "Depth", ParamType::Continuous, linRange (0, 24, 0.1f), 6.0f, " dB");
+            sc.sens    = &params.add (scP + "sens", sn + "Sensitivity", ParamType::Continuous, linRange (-80, 0, 0.1f), -50.0f, " dB");
+            sc.lo      = &params.add (scP + "lo", sn + "Low", ParamType::Continuous, logRange (20.0f, 20000.0f), 100.0f, " Hz");
+            sc.hi      = &params.add (scP + "hi", sn + "High", ParamType::Continuous, logRange (20.0f, 20000.0f), 10000.0f, " Hz");
+            sc.attack  = &params.add (scP + "attack", sn + "Attack", ParamType::Continuous, logRange (1.0f, 200.0f), 10.0f, " ms");
+            sc.release = &params.add (scP + "release", sn + "Release", ParamType::Continuous, logRange (10.0f, 2000.0f), 150.0f, " ms");
+            // Bands: band 1 on (presence of a voice), the others at the usual spots, off.
+            static constexpr float kFreqs[] = { 2500.0f, 250.0f, 500.0f, 1000.0f, 5000.0f, 8000.0f };
+            for (int b = 0; b < dsp::SidechainEqSettings::kBands; ++b)
+            {
+                auto& bp = sc.bands[(size_t) b];
+                const auto bid = scP + "b" + juce::String (b + 1) + ".";
+                const auto bn = sn + "Band " + juce::String (b + 1) + " ";
+                bp.on    = &params.addToggle (bid + "on", bn + "On", b == 0);
+                bp.type  = &params.addChoice (bid + "type", bn + "Type", { "Bell", "Low Shelf", "High Shelf" }, dsp::SidechainEqSettings::bell);
+                bp.freq  = &params.add (bid + "freq", bn + "Freq", ParamType::Continuous, logRange (20.0f, 20000.0f), kFreqs[b], " Hz");
+                bp.q     = &params.add (bid + "q", bn + "Q", ParamType::Continuous, logRange (0.1f, 10.0f), 1.0f);
+                bp.range = &params.add (bid + "range", bn + "Range", ParamType::Continuous, linRange (-24, 12, 0.1f), -6.0f, " dB");
+                bp.thr   = &params.add (bid + "thr", bn + "Threshold", ParamType::Continuous, linRange (-80, 0, 0.1f), -40.0f, " dB");
+            }
+        }
     }
     {
         // Stems: ids "in1.stems.on", "in1.stems.mode", "in1.stems.vocals" (gain), "in1.stems.vocals.mute" ...
@@ -538,6 +593,7 @@ std::vector<Param*> Engine::removeInput (int i)
     s.source = {};
     s.plugins.clear();
     for (int k = 0; k < kFxInstances; ++k) { setCorrection (i, {}, k); setHeadphone (i, k, {}, {}); eqMatchFromXml (i, k, nullptr); }
+    clearSidechainSource (i);
     rebuildGraph();
     sendChangeMessage();
     return reset;
@@ -560,6 +616,7 @@ std::vector<Param*> Engine::removeBus (int b)
     bus.output = {};
     bus.plugins.clear();
     for (int k = 0; k < kFxInstances; ++k) { setCorrection (kMaxInputs + b, {}, k); setHeadphone (kMaxInputs + b, k, {}, {}); eqMatchFromXml (kMaxInputs + b, k, nullptr); }
+    clearSidechainSource (kMaxInputs + b);
     if (selOwner == b) selOwner = -1;
     rebuildGraph();
     sendChangeMessage();
@@ -725,10 +782,53 @@ bool Engine::reorderChannels (Group group, const std::vector<int>& order)
             monBus->set ((float) dest[(size_t) juce::jlimit (0, kMaxHwBuses - 1, juce::roundToInt (monBus->get()))]);
         if (selOwner >= 0) selOwner = dest[(size_t) selOwner];
     }
+    remapSidechainSources (forBuses, dest);
 
     rebuildGraph();
     sendChangeMessage();
     return true;
+}
+
+void Engine::remapSidechainSources (bool forBuses, const std::vector<int>& dest)
+{
+    for (int ch = 0; ch < kNumChannels; ++ch)
+    {
+        if (! isFxChannel (ch)) continue;
+        for (auto& sc : fxOf (ch).sidechains)
+        {
+            const int src = sc.sourceChannel();
+            if (! forBuses && juce::isPositiveAndBelow (src, kMaxInputs))
+                sc.source->set ((float) (dest[(size_t) src] + 1));
+            else if (forBuses && juce::isPositiveAndBelow (src - kMaxInputs, kMaxBuses))
+                sc.source->set ((float) (kMaxInputs + dest[(size_t) (src - kMaxInputs)] + 1));
+        }
+    }
+}
+
+void Engine::clearSidechainSource (int channel)
+{
+    for (int ch = 0; ch < kNumChannels; ++ch)
+        if (isFxChannel (ch))
+            for (auto& sc : fxOf (ch).sidechains)
+                if (sc.sourceChannel() == channel) sc.source->set (0.0f);
+}
+
+void Engine::updateSidechains()
+{
+    std::array<int, kMaxInputs + kMaxBuses> users {};
+    for (int ch = 0; ch < kNumChannels; ++ch)
+    {
+        if (! isFxChannel (ch) || ! isChannelActive (ch)) continue;
+        const auto& c = fxOf (ch);
+        if (c.fxBypass->isOn()) continue;
+        for (int k = 0; k < kScInstances; ++k)
+        {
+            const auto& sc = c.sidechains[(size_t) k];
+            const int src = sc.sourceChannel();
+            if (sc.on->isOn() && src != ch && isSidechainSource (src) && c.plugins.hasBuiltin (Fx::sidechain, k)) ++users[(size_t) src];
+        }
+    }
+    for (int ch = 0; ch < kMaxInputs + kMaxBuses; ++ch) fxOf (ch).scUsers.store (users[(size_t) ch], std::memory_order_relaxed);
 }
 
 //==============================================================================
@@ -964,10 +1064,16 @@ void Engine::updateOverloadLog()
     const double now = juce::Time::getMillisecondCounterHiRes();
     if (now - overloadLogTime < 10000.0) return;
     const float worst = overloadPeak.exchange (0.0f, std::memory_order_relaxed);
+    const float work = overloadWork.load (std::memory_order_relaxed);
+    const auto held = heldUp.load (std::memory_order_relaxed);
+    // How much of the slowest one Hydra computed: far under 100 % = the audio thread was held up (Windows, a
+    // driver, an interrupt), not busy; a bigger buffer helps then, saving DSP does not.
     logLine ("dsp: " + juce::String ((juce::int64) (n - overloadsLogged)) + " block(s) over 100 % (slowest "
-             + juce::String (juce::roundToInt (worst * 100.0f)) + " % of " + juce::String (blockSize) + " samples), total "
-             + juce::String ((juce::int64) n));
+             + juce::String (juce::roundToInt (worst * 100.0f)) + " % of " + juce::String (blockSize) + " samples, Hydra computing "
+             + juce::String (juce::roundToInt (work * 100.0f)) + " % of it; " + juce::String ((juce::int64) (held - heldUpLogged))
+             + " held up by Windows / a driver), total " + juce::String ((juce::int64) n));
     overloadsLogged = n;
+    heldUpLogged = held;
     overloadLogTime = now;
 }
 
@@ -1132,17 +1238,19 @@ std::vector<Fx> Engine::allowedFx (int ch) const
     // Every effect everywhere, in the usual order of the channel's kind (where ensureBuiltins inserts them).
     if (ch < kMaxInputs || isRecTrackChannel (ch))
         return { Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::voice, Fx::eq, Fx::gate, Fx::comp, Fx::saturation,
-                 Fx::correction, Fx::headphone, Fx::limiter };
+                 Fx::sidechain, Fx::correction, Fx::headphone, Fx::limiter };
     return { Fx::correction, Fx::headphone, Fx::stems, Fx::transpose, Fx::denoiser, Fx::gate, Fx::utility, Fx::voice, Fx::eq,
-             Fx::comp, Fx::saturation, Fx::limiter };
+             Fx::sidechain, Fx::comp, Fx::saturation, Fx::limiter };
 }
 
 std::vector<Fx> Engine::typicalFx (int ch) const
 {
     if (ch < kMaxInputs || isRecTrackChannel (ch))
-        return { Fx::voice, Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::saturation, Fx::limiter };
-    if (isHwBus (ch - kMaxInputs)) return { Fx::correction, Fx::headphone, Fx::utility, Fx::eq, Fx::comp, Fx::saturation, Fx::limiter };
-    return { Fx::utility, Fx::eq, Fx::comp, Fx::saturation, Fx::limiter };
+        return { Fx::voice, Fx::stems, Fx::transpose, Fx::utility, Fx::denoiser, Fx::eq, Fx::gate, Fx::comp, Fx::saturation,
+                 Fx::sidechain, Fx::limiter };
+    if (isHwBus (ch - kMaxInputs))
+        return { Fx::correction, Fx::headphone, Fx::utility, Fx::eq, Fx::sidechain, Fx::comp, Fx::saturation, Fx::limiter };
+    return { Fx::utility, Fx::eq, Fx::sidechain, Fx::comp, Fx::saturation, Fx::limiter };
 }
 
 juce::String Engine::fxPart (Fx f, int k)
@@ -1150,7 +1258,7 @@ juce::String Engine::fxPart (Fx f, int k)
     const juce::String base = f == Fx::denoiser ? "dn" : f == Fx::eq ? "eq" : f == Fx::gate ? "gate" : f == Fx::comp ? "comp"
                             : f == Fx::limiter ? "lim" : f == Fx::utility ? "util" : f == Fx::stems ? "stems"
                             : f == Fx::transpose ? "tp" : f == Fx::headphone ? "hp" : f == Fx::voice ? "voice"
-                            : f == Fx::saturation ? "sat" : "corr";
+                            : f == Fx::saturation ? "sat" : f == Fx::sidechain ? "sc" : "corr";
     return k == 0 ? base : base + juce::String (k + 1);
 }
 
@@ -1173,6 +1281,7 @@ Param* Engine::fxOnParam (int ch, Fx f, int k) const
         case Fx::headphone:  return c.headphones[i].on;
         case Fx::voice:      return c.voices[i].on;
         case Fx::saturation: return c.saturations[i].on;
+        case Fx::sidechain:  return c.sidechains[i].on;
         default:             return nullptr;
     }
 }
@@ -1570,7 +1679,7 @@ void Engine::prepareDenoiser (DenoiserFx& d)
     // Further denoisers are created when they are first used (RNNoise state is large); never on the audio thread.
     if (d.dsp != nullptr) return;
     auto dn = std::make_unique<dsp::Denoiser>();
-    dn->prepare (sampleRate);
+    dn->prepare (sampleRate, blockSize);   // the block: the time its RNNoise frames have on the worker thread
     d.dsp = std::move (dn);
     d.live.store (d.dsp.get(), std::memory_order_release);
 }
@@ -2041,6 +2150,13 @@ void Engine::timerCallback()
     for (auto& b : buses)  b.transpose.tick (callbackCount.load(), running, sampleRate);
     for (auto& t : recTracks) t.transpose.tick (callbackCount.load(), running, sampleRate);
     updateDropoutLogs();
+    calibrateCycles();
+    if (audioThreadNews.exchange (false, std::memory_order_acquire))
+        logLine (juce::String ("audio thread: ") + (audioThreadRaised.load() ? "MMCSS Pro Audio, critical" : "could not join MMCSS Pro Audio")
+                 + " (priority before " + juce::String (audioThreadWas.load())
+                 + (audioThreadRaised.load() ? juce::String() : ", error " + juce::String ((juce::int64) audioThreadError.load()))
+                 + ", thread " + juce::String ((juce::int64) raisedThread) + ")");
+    updateTraceLog();
     updateOverloadLog();
     updateSyncDelays();
 
@@ -2051,6 +2167,7 @@ void Engine::timerCallback()
     updateHeadphones();
     updateVoices();
     updateEqMatches();
+    updateSidechains();
     measureGraveyard.erase (std::remove_if (measureGraveyard.begin(), measureGraveyard.end(),
                                             [&] (const auto& r) { return now >= r.second || ! running; }),
                             measureGraveyard.end());
@@ -2138,6 +2255,9 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
 {
     sampleRate = d->getCurrentSampleRate();
     blockSize = juce::jmin (kMaxBlock, d->getCurrentBufferSizeSamples());
+    // The first second after a start (cold caches, the driver settling) is not counted as overloads: the first
+    // block alone often took 30-40x its time (hydra.log).
+    settleBlocks = (int) (sampleRate / juce::jmax (1, d->getCurrentBufferSizeSamples()));
 
     auto prepareFx = [this] (ChannelFx& s)
     {
@@ -2148,12 +2268,13 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
             s.comps[(size_t) k].dsp.prepare (sampleRate);
             s.limiters[(size_t) k].dsp.prepare (sampleRate);
             auto& d = s.denoisers[(size_t) k];
-            if (d.dsp != nullptr) d.dsp->prepare (sampleRate);
+            if (d.dsp != nullptr) d.dsp->prepare (sampleRate, blockSize);
             d.wasOn = false;
             s.utilities[(size_t) k].dsp.prepare (sampleRate);
             s.voices[(size_t) k].dsp.prepare (sampleRate);
             s.saturations[(size_t) k].dsp.prepare (sampleRate);
         }
+        for (auto& sc : s.sidechains) sc.dsp.prepare (sampleRate);
         if (s.transpose.dsp != nullptr) s.transpose.dsp->prepare (sampleRate);
         s.transpose.wasOn = false;
         if (s.stems.inst != nullptr) s.stems.inst->prepare (sampleRate);
@@ -2187,6 +2308,130 @@ void Engine::audioDeviceAboutToStart (juce::AudioIODevice* d)
     prepareChains();
 }
 
+bool Engine::onAudioThread() const noexcept { return GetCurrentThreadId() == raisedThread; }
+
+void Engine::finishTrace (uint64_t work, uint64_t wall, int n, unsigned cpu0, unsigned cpu1, const void* graph) noexcept
+{
+    auto& b = trCur;
+    b.work = work; b.wall = wall; b.n = n; b.cpu0 = cpu0; b.cpu1 = cpu1; b.graph = graph;
+    // Seqlock: odd while writing; the message thread copies the window and retries if it changed meanwhile.
+    const uint32_t s = trSeq.load (std::memory_order_relaxed);
+    trSeq.store (s + 1, std::memory_order_relaxed);
+    std::atomic_thread_fence (std::memory_order_release);
+    if (trReset.exchange (false, std::memory_order_acquire)) trWin = {};
+    auto& w = trWin;
+    for (int k = 0; k < kTrSlots; ++k) w.sumSlot[k] += b.slot[k];
+    for (int k = 0; k < DspTimes::numStages; ++k) w.sumStage[k] += b.stage[k];
+    w.sumWork += work;
+    ++w.blocks;
+    // Compared per sample (blocks of the driver can differ in length).
+    if (work * (uint64_t) juce::jmax (1, w.worstWork.n) >= w.worstWork.work * (uint64_t) n) w.worstWork = b;
+    if (wall * (uint64_t) juce::jmax (1, w.worstWall.n) >= w.worstWall.wall * (uint64_t) n) w.worstWall = b;
+    std::atomic_thread_fence (std::memory_order_release);
+    trSeq.store (s + 2, std::memory_order_release);
+    b = {};
+}
+
+void Engine::updateTraceLog()
+{
+    // One line per 10 s, only for a real peak: Hydra computed >= 20 % of a block, or the block took >= 60 % by the
+    // clock. Says which channel, which kind of effect and which stream took the time (user 18.11.: "why 40 %?").
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (now < trNextLog) return;
+    const double cpt = cyclesPerTick.load (std::memory_order_relaxed);
+    if (cpt <= 0.0 || sampleRate <= 0.0) return;
+    TraceWindow w;
+    const uint32_t s0 = trSeq.load (std::memory_order_acquire);
+    if ((s0 & 1) != 0) return;
+    std::memcpy ((void*) &w, (const void*) &trWin, sizeof (TraceWindow));
+    std::atomic_thread_fence (std::memory_order_acquire);
+    if (trSeq.load (std::memory_order_relaxed) != s0) return;   // written meanwhile: next tick
+    trReset.store (true, std::memory_order_release);
+    trNextLog = now + 10000.0;
+    if (w.blocks == 0 || w.worstWork.n <= 0) return;
+
+    const double cyclesPerSec = cpt / ticksToSeconds;
+    auto ms = [&] (uint64_t c) { return 1000.0 * (double) c / cyclesPerSec; };
+    auto pct = [&] (uint64_t c, int n) { return 100.0 * ms (c) / (1000.0 * juce::jmax (1, n) / sampleRate); };
+    const auto& ww = w.worstWork;
+    const auto& wc = w.worstWall;
+    const double workPct = pct (ww.work, ww.n), wallPct = pct (wc.wall, wc.n);
+    if (workPct < 20.0 && wallPct < 60.0) return;
+
+    auto f2 = [] (double v) { return juce::String (v, 2); };
+    auto slotName = [this] (int k) -> juce::String
+    {
+        if (k < kMaxInputs) return channelCode (k) + " " + inputs[(size_t) k].name;
+        if (k < kTrRec) return busLabel (k - kMaxInputs) + " " + buses[(size_t) (k - kMaxInputs)].name;
+        return k == kTrRec ? "recorder" : k == kTrPull ? "streams in" : "streams out";
+    };
+    auto streamName = [this] (const TraceBlock& b, bool in) -> juce::String
+    {
+        const int idx = in ? b.pullMax : b.pushMax;
+        if (current == nullptr || b.graph != current.get() || idx < 0) return {};
+        if (in)  return juce::isPositiveAndBelow (idx, (int) current->ins.size())  ? current->ins[(size_t) idx]->target.describe() : juce::String();
+        return juce::isPositiveAndBelow (idx, (int) current->outs.size()) ? current->outs[(size_t) idx]->target.describe() : juce::String();
+    };
+    static const char* stageNames[] = { "denoiser", "eq", "gate", "comp", "plugins", "limiter", "utility", "transpose",
+                                        "stems", "correction", "studio voice", "saturation", "other" };
+    static_assert (std::size (stageNames) == DspTimes::numStages);
+
+    // The slowest block by Hydra's work, its biggest parts.
+    std::vector<std::pair<uint64_t, int>> parts;
+    for (int k = 0; k < kTrSlots; ++k) if (ww.slot[k] > 0) parts.push_back ({ ww.slot[k], k });
+    std::sort (parts.rbegin(), parts.rend());
+    juce::StringArray top;
+    for (size_t i = 0; i < parts.size() && i < 4; ++i)
+    {
+        const int k = parts[i].second;
+        if (ms (parts[i].first) < 0.01) break;
+        auto t = slotName (k) + " " + f2 (ms (parts[i].first)) + " ms";
+        if (k == kTrPull || k == kTrPush)
+            if (const auto nm = streamName (ww, k == kTrPull); nm.isNotEmpty())
+                t << " (most: " << nm << " " << f2 (ms (k == kTrPull ? ww.pullMaxCyc : ww.pushMaxCyc)) << " ms)";
+        top.add (t);
+    }
+    std::vector<std::pair<uint64_t, int>> stages;
+    for (int k = 0; k < DspTimes::numStages; ++k) if (ww.stage[k] > 0) stages.push_back ({ ww.stage[k], k });
+    std::sort (stages.rbegin(), stages.rend());
+    juce::StringArray fx;
+    for (size_t i = 0; i < stages.size() && i < 4; ++i)
+        if (ms (stages[i].first) >= 0.01) fx.add (juce::String (stageNames[stages[i].second]) + " " + f2 (ms (stages[i].first)));
+
+    // The usual block: average per block over the window (what the channels cost apart from the peak).
+    std::vector<std::pair<uint64_t, int>> avg;
+    for (int k = 0; k < kTrSlots; ++k) if (w.sumSlot[k] > 0) avg.push_back ({ w.sumSlot[k], k });
+    std::sort (avg.rbegin(), avg.rend());
+    juce::StringArray usual;
+    for (size_t i = 0; i < avg.size() && i < 3; ++i)
+        usual.add (slotName (avg[i].second) + " " + juce::String (ms (avg[i].first / w.blocks), 3));
+
+    juce::String line;
+    line << "dsp peak (10 s): slowest block Hydra computed " << juce::roundToInt (workPct) << " % of " << ww.n << " samples ("
+         << f2 (ms (ww.work)) << " ms, by the clock " << juce::roundToInt (pct (ww.wall, ww.n)) << " %): " << top.joinIntoString (", ");
+    if (! fx.isEmpty()) line << " | effects: " << fx.joinIntoString (", ") << " ms";
+    line << " | usual block " << f2 (pct (w.sumWork / w.blocks, ww.n)) << " %: " << usual.joinIntoString (", ") << " ms";
+    if (wallPct >= 60.0)
+        line << " | slowest by the clock " << juce::roundToInt (wallPct) << " %, Hydra computing " << juce::roundToInt (pct (wc.work, wc.n))
+             << " % of it: held up " << f2 (juce::jmax (0.0, ms (wc.wall) - ms (wc.work))) << " ms"
+             << (wc.cpu0 != wc.cpu1 ? ", moved from CPU " + juce::String (wc.cpu0) + " to " + juce::String (wc.cpu1) : ", CPU " + juce::String (wc.cpu0));
+    logLine (line);
+}
+
+void Engine::raiseAudioThread() noexcept
+{
+    // Once per driver thread (the first callback, which does not count as an overload anyway): system calls,
+    // no allocation. The registration ends with the thread; a new device / restart brings a new one.
+    const HANDLE self = GetCurrentThread();
+    audioThreadWas.store (GetThreadPriority (self), std::memory_order_relaxed);
+    DWORD task = 0;
+    const HANDLE mmcss = AvSetMmThreadCharacteristicsW (L"Pro Audio", &task);
+    const bool ok = mmcss != nullptr && AvSetMmThreadPriority (mmcss, AVRT_PRIORITY_CRITICAL);
+    audioThreadError.store (ok ? 0 : GetLastError(), std::memory_order_relaxed);
+    audioThreadRaised.store (ok, std::memory_order_relaxed);
+    audioThreadNews.store (true, std::memory_order_release);
+}
+
 void Engine::audioDeviceStopped() { recorder.setSampleRate (0.0); }
 
 void Engine::audioDeviceError (const juce::String& e)
@@ -2213,7 +2458,14 @@ void Engine::audioDeviceIOCallbackWithContext (const float* const* in, int numIn
                                                int n, const juce::AudioIODeviceCallbackContext&)
 {
     const juce::ScopedNoDenormals noDenormals;
+    if (const unsigned long tid = GetCurrentThreadId(); tid != raisedThread) { raisedThread = tid; raiseAudioThread(); }
     const auto t0 = juce::Time::getHighResolutionTicks();
+    unsigned cpu0 = 0, cpu1 = 0;
+    const uint64_t w0 = __rdtscp (&cpu0);
+    // CPU cycles this thread used (not blocking; ~0.1-0.5 us per call): tells computing apart from being held up.
+    ULONG64 c0 = 0, c1 = 0;
+    const HANDLE self = GetCurrentThread();
+    QueryThreadCycleTime (self, &c0);
 
     const Graph* g = live.load (std::memory_order_acquire);
     if (g == nullptr)
@@ -2227,8 +2479,14 @@ void Engine::audioDeviceIOCallbackWithContext (const float* const* in, int numIn
     }
 
     const auto elapsed = juce::Time::getHighResolutionTicks() - t0;
+    QueryThreadCycleTime (self, &c1);
+    finishTrace (c1 - c0, __rdtscp (&cpu1) - w0, n, cpu0, cpu1, g);
     const double secs = (double) elapsed * ticksToSeconds;
     const float load = (float) (secs * sampleRate / juce::jmax (1, n));
+    const double cpt = cyclesPerTick.load (std::memory_order_relaxed);
+    const float work = cpt > 0.0 ? juce::jmin (load, (float) ((double) (c1 - c0) / cpt * ticksToSeconds * sampleRate / juce::jmax (1, n)))
+                                 : load;
+    if (work > workPeakWindow.load (std::memory_order_relaxed)) workPeakWindow.store (work, std::memory_order_relaxed);
     const float prev = cpuLoad.load (std::memory_order_relaxed);
     cpuLoad.store (load > prev ? load : prev + 0.05f * (load - prev), std::memory_order_relaxed);
     // Peak of the last 0.5-1 s (two windows of 0.5 s) and blocks that took longer than real time (an overload:
@@ -2238,12 +2496,20 @@ void Engine::audioDeviceIOCallbackWithContext (const float* const* in, int numIn
     {
         peakLast.store (peakWindow.load (std::memory_order_relaxed), std::memory_order_relaxed);
         peakWindow.store (0.0f, std::memory_order_relaxed);
+        workPeakLast.store (workPeakWindow.load (std::memory_order_relaxed), std::memory_order_relaxed);
+        workPeakWindow.store (0.0f, std::memory_order_relaxed);
         peakFrames = 0;
     }
-    if (load >= 1.0f)
+    if (settleBlocks > 0) --settleBlocks;
+    else if (load >= 1.0f)
     {
         overloads.store (overloads.load (std::memory_order_relaxed) + 1, std::memory_order_relaxed);
-        if (load > overloadPeak.load (std::memory_order_relaxed)) overloadPeak.store (load, std::memory_order_relaxed);
+        if (work < 0.5f) heldUp.store (heldUp.load (std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+        if (load > overloadPeak.load (std::memory_order_relaxed))
+        {
+            overloadPeak.store (load, std::memory_order_relaxed);
+            overloadWork.store (work, std::memory_order_relaxed);
+        }
     }
     busyTicks.store (busyTicks.load (std::memory_order_relaxed) + (uint64_t) juce::jmax ((juce::int64) 0, elapsed), std::memory_order_relaxed);
     busyFrames.store (busyFrames.load (std::memory_order_relaxed) + (uint64_t) n, std::memory_order_relaxed);
@@ -2261,6 +2527,7 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
                            int offset, int n) noexcept
 {
     const bool timed = profile.users.load (std::memory_order_relaxed) > 0;
+    ++chunkStamp;
     auto now = [] { return juce::Time::getHighResolutionTicks(); };
     auto addTicks = [] (std::atomic<uint64_t>& a, juce::int64 t)
     {
@@ -2281,7 +2548,11 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
     for (auto& s : g.ins)
     {
         const auto t0 = timed ? now() : 0;
+        const uint64_t tc = __rdtsc();
         s->pullBlock (n);
+        const uint64_t dc = __rdtsc() - tc;
+        trCur.slot[kTrPull] += dc;
+        if (dc > trCur.pullMaxCyc) { trCur.pullMaxCyc = dc; trCur.pullMax = (int) (&s - g.ins.data()); }
         if (timed) addTicks (s->dspTicks, now() - t0);
     }
 
@@ -2367,7 +2638,9 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
             }
             continue;
         }
+        const uint64_t tc = __rdtsc();
         processStrip (s, L, R, n, anySolo, L == R, timed, busOpen);
+        trCur.slot[i] += __rdtsc() - tc;
     }
 
     // Recording inputs (multitrack recorder): the taps processStrip filled.
@@ -2384,6 +2657,7 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
     // 3. Recorder playback into the chosen buses: a single file, or the tracks of the loaded project, each through
     //    its own strip (gain, effects, mono, pan, fader, mute / solo) and mixed.
     const auto recStart = timed ? now() : 0;
+    const uint64_t recCyc = __rdtsc();
     bool havePlayback = recorder.pullPlayback (playL.data(), playR.data(), n);
     if (! havePlayback && recorder.getNumTracks() > 0)
     {
@@ -2421,10 +2695,16 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
     else
         lastPlayRoute.fill (0.0f);
     if (timed) addTicks (profile.recorder, now() - recStart);
+    trCur.slot[kTrRec] += __rdtsc() - recCyc;
 
     // 4. Bus processing. Monitoring: the selected bus is processed first and replaces the
     //    monitor bus's own mix, so only the monitored signal is heard there (through its EQ / fader).
-    if (monBusIndex >= 0) processBus (buses[(size_t) selBus], n, timed, true);
+    if (monBusIndex >= 0)
+    {
+        const uint64_t tc = __rdtsc();
+        processBus (buses[(size_t) selBus], n, timed, true);
+        trCur.slot[kTrBus + selBus] += __rdtsc() - tc;
+    }
     for (int b = 0; b < kMaxBuses; ++b)
     {
         auto& bus = buses[(size_t) b];
@@ -2440,7 +2720,9 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
             std::memcpy (bus.l.data(), buses[(size_t) selBus].l.data(), (size_t) n * sizeof (float));
             std::memcpy (bus.r.data(), buses[(size_t) selBus].r.data(), (size_t) n * sizeof (float));
         }
+        const uint64_t tc = __rdtsc();
         processBus (bus, n, timed, busUsed[(size_t) b]);
+        trCur.slot[kTrBus + b] += __rdtsc() - tc;
         if (run != nullptr && run->muteOthers)
         {
             // Silent while measuring: fades out in the first chunk, the fader fades back in afterwards.
@@ -2505,7 +2787,11 @@ void Engine::processChunk (const Graph& g, const float* const* in, int numIn, fl
     for (auto& s : g.outs)
     {
         const auto t0 = timed ? now() : 0;
+        const uint64_t tc = __rdtsc();
         s->pushBlock (n);
+        const uint64_t dc = __rdtsc() - tc;
+        trCur.slot[kTrPush] += dc;
+        if (dc > trCur.pushMaxCyc) { trCur.pushMaxCyc = dc; trCur.pushMax = (int) (&s - g.outs.data()); }
         if (timed) addTicks (s->dspTicks, now() - t0);
     }
 
@@ -2521,7 +2807,8 @@ bool Engine::fxWatched (const ChannelFx& c) const noexcept
                 || c.stems.meterUsers.load (std::memory_order_relaxed) > 0
                 || c.transpose.isListening()
                 || c.voices[0].listening.load (std::memory_order_relaxed)
-                || c.refTap.load (std::memory_order_relaxed) != nullptr;
+                || c.refTap.load (std::memory_order_relaxed) != nullptr
+                || c.scUsers.load (std::memory_order_relaxed) > 0;   // the key of a Sidechain EQ (after these effects)
     for (const auto& comp : c.comps) watched |= comp.views.load (std::memory_order_relaxed) > 0;
     return watched;
 }
@@ -2546,8 +2833,17 @@ void Engine::runFxChain (ChannelFx& s, float* l, float* r, int n, bool timed, bo
     // Plugins and built-in effects in chain order. Profiling (DSP view open): each lap adds the time since the
     // previous lap to a stage.
     auto mark = timed ? juce::Time::getHighResolutionTicks() : 0;
+    // Peak trace (always, audio thread only: the export thread runs chains too): cycles per kind of effect.
+    const bool trace = onAudioThread();
+    uint64_t trMark = trace ? __rdtsc() : 0;
     auto lap = [&] (DspTimes::Stage stage)
     {
+        if (trace)
+        {
+            const uint64_t c = __rdtsc();
+            trCur.stage[(size_t) stage] += c - trMark;
+            trMark = c;
+        }
         if (! timed) return;
         const auto t = juce::Time::getHighResolutionTicks();
         s.dspTimes.add (stage, t - mark);
@@ -2572,7 +2868,9 @@ void Engine::runFxChain (ChannelFx& s, float* l, float* r, int n, bool timed, bo
                     auto* dn = d.live.load (std::memory_order_acquire);
                     if (! d.on->isOn() || dn == nullptr) break;
                     if (! d.wasOn) dn->reset();
-                    dn->process (l, r, n, d.settings(), stereo);
+                    auto ds = d.settings();
+                    ds.realtime = trace;   // on the audio thread: RNNoise's frames on the worker (export: in place)
+                    dn->process (l, r, n, ds, stereo);
                     latency += dn->getLatencySamples();
                     ran |= 1u << k;
                     lap (DspTimes::denoiser);
@@ -2634,6 +2932,32 @@ void Engine::runFxChain (ChannelFx& s, float* l, float* r, int n, bool timed, bo
                     s.saturations[i].dsp.process (l, r, n, s.saturations[i].settings());
                     lap (DspTimes::saturation);
                     break;
+                case Fx::sidechain:
+                {
+                    if (k >= kScInstances) break;
+                    auto& sc = s.sidechains[i];
+                    if (! sc.on->isOn()) break;
+                    const auto st = sc.settings();
+                    // The key: the source channel's signal of this chunk, or of the previous one if it comes later in
+                    // the mix (written by the audio thread only; the export thread gets none).
+                    const float* key = nullptr;
+                    int keyN = 0;
+                    const int src = sc.sourceChannel();
+                    if (trace && isSidechainSource (src) && &fxOf (src) != &s)
+                    {
+                        const auto& kc = fxOf (src);
+                        if (kc.scKeyStamp > sc.keySeen && kc.scKeyStamp + 1 >= chunkStamp)
+                        {
+                            key = kc.scKey.data();
+                            keyN = kc.scKeyN;
+                            sc.keySeen = kc.scKeyStamp;
+                        }
+                    }
+                    sc.dsp.feedKey (key, keyN, n, st);
+                    sc.dsp.process (l, r, n, st);
+                    lap (DspTimes::eq);
+                    break;
+                }
                 case Fx::transpose:
                 {
                     auto& t = s.transpose;
@@ -2669,6 +2993,14 @@ void Engine::runFxChain (ChannelFx& s, float* l, float* r, int n, bool timed, bo
     {
         const float* src[2] = { l, r };
         tap->write (src, 2, n);
+    }
+    if (trace && s.scUsers.load (std::memory_order_relaxed) > 0)   // key of Sidechain EQs on other channels (mono)
+    {
+        const int m = juce::jmin (n, (int) s.scKey.size());
+        float* key = s.scKey.data();
+        for (int i = 0; i < m; ++i) key[i] = 0.5f * (l[i] + r[i]);
+        s.scKeyN = m;
+        s.scKeyStamp = chunkStamp;
     }
     if (s.fxBypass->isOn() || chainRan)
     {

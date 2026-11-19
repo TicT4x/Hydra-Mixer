@@ -11,6 +11,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Camera as Hydra's webcam (only while an app on the PC shows it). -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
@@ -33,10 +37,10 @@
             </intent-filter>
         </activity>
 
-        <!-- Keeps audio running with the screen off (listening and / or sending). -->
+        <!-- Keeps audio (and the camera for Hydra) running with the screen off. -->
         <service
             android:name=".LinkService"
             android:exported="false"
-            android:foregroundServiceType="mediaPlayback|microphone" />
+            android:foregroundServiceType="mediaPlayback|microphone|camera" />
     </application>
 </manifest>

@@ -29,6 +29,26 @@ const char* styleName (Style);
 void drawSelectedTop (juce::Graphics&, juce::Rectangle<float> r, juce::Colour, bool vertical = false);
 constexpr float kSelectedLine = 4.0f;
 
+/** Path safe for PathStrokeType::createDashedStroke: finite and of sane size. JUCE's dash loop never ends on a
+    path with inf/NaN coordinates (its length is NaN) and grows the result until memory runs out; that crashed
+    Hydra on 19.11. (Sidechain EQ graph painted before its frequencies were set). Check before every dashed stroke. */
+inline bool dashable (const juce::Path& p)
+{
+    // Every coordinate (the bounds alone miss NaN: jmin/jmax drop it).
+    constexpr float kMax = 1.0e5f;
+    auto ok = [] (float v) { return std::isfinite (v) && std::abs (v) < kMax; };
+    for (juce::Path::Iterator it (p); it.next();)
+    {
+        using E = juce::Path::Iterator::PathElementType;
+        if (it.elementType == E::closePath) continue;
+        if (! ok (it.x1) || ! ok (it.y1)) return false;
+        if (it.elementType == E::quadraticTo || it.elementType == E::cubicTo)
+            if (! ok (it.x2) || ! ok (it.y2)) return false;
+        if (it.elementType == E::cubicTo && (! ok (it.x3) || ! ok (it.y3))) return false;
+    }
+    return true;
+}
+
 inline juce::Colour bg        { 0xff0d0f13 };
 inline juce::Colour panel     { 0xff151920 };
 inline juce::Colour panel2    { 0xff1b2029 };
@@ -61,6 +81,7 @@ inline juce::Colour fxHeadphone  { 0xff7c9cff };
 inline juce::Colour fxVoice      { 0xffb8f060 };   // Studio Voice
 inline juce::Colour fxSaturation { 0xffff5a3c };
 inline juce::Colour fxMatch      { 0xff5c9dff };   // Match EQ
+inline juce::Colour fxSidechain  { 0xffe6c35a };   // Sidechain EQ
 /** Colour of each stem of the Stems effect (vocals, drums, bass, guitar, rest). */
 inline juce::Colour stemColour (int s)
 {

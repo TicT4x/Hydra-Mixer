@@ -22,12 +22,13 @@ class LinkService : Service() {
         const val ACTION_STOP = "de.hydra.link.STOP"
         const val EXTRA_TEXT = "text"
         const val EXTRA_MIC = "mic"
+        const val EXTRA_CAMERA = "camera"
         private const val CHANNEL = "link"
         private const val ID = 1
 
-        fun update(context: Context, text: String, mic: Boolean) {
+        fun update(context: Context, text: String, mic: Boolean, camera: Boolean = false) {
             val i = Intent(context, LinkService::class.java).setAction(ACTION_UPDATE)
-                .putExtra(EXTRA_TEXT, text).putExtra(EXTRA_MIC, mic)
+                .putExtra(EXTRA_TEXT, text).putExtra(EXTRA_MIC, mic).putExtra(EXTRA_CAMERA, camera)
             if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(i) else context.startService(i)
         }
 
@@ -63,15 +64,19 @@ class LinkService : Service() {
             getSharedPreferences("hydra", Context.MODE_PRIVATE).edit().putString("hydra", "").apply()
             NativeLink.listen("", "")
             NativeLink.stopSending()
+            CameraSender.disable()
             stopSelf()
             return START_NOT_STICKY
         }
         val text = intent?.getStringExtra(EXTRA_TEXT) ?: getString(R.string.app_name)
         val mic = intent?.getBooleanExtra(EXTRA_MIC, false) ?: false
+        val camera = intent?.getBooleanExtra(EXTRA_CAMERA, false) ?: false
         val n = notification(text)
         if (Build.VERSION.SDK_INT >= 30) {
             var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
             if (mic) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            // The camera may only open in the background if the service has this type (started while the app is open).
+            if (camera) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
             startForeground(ID, n, type)
         } else if (Build.VERSION.SDK_INT >= 29) {
             startForeground(ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)

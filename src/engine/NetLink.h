@@ -189,6 +189,21 @@ public:
     /** Counters of the stream an input of this hub receives (tests). */
     StreamStats getStats (const Source&) const;
 
+    //--------------------------------------------------------------------------
+    // Video (phone cameras, engine/PhoneCamera.h)
+    /** Gets the Video / VideoInfo / CamCaps packets of paired devices: on the network thread, under the hub's lock
+        (copy and return; never call back into the hub from there). */
+    enum class VideoPacket { frame, info, caps };
+    struct VideoHandler
+    {
+        virtual ~VideoHandler() = default;
+        virtual void videoPacket (uint64_t device, const juce::String& sender, VideoPacket type, const uint8_t* body, int bytes, double nowMs) = 0;
+    };
+    void setVideoHandler (VideoHandler*);
+    /** Sends a VideoCtl packet (its body; settings = a CamSet packet) to a paired device. Not from inside
+        VideoHandler::videoPacket. */
+    bool sendVideoControl (uint64_t device, const uint8_t* body, int bytes, bool settings = false);
+
     /** Tests: faults on received audio packets (applied before anything else). */
     struct Faults
     {
@@ -196,6 +211,7 @@ public:
         std::atomic<int> swapEvery { 0 };     // hold every n-th audio packet back and deliver it after the next one
         std::atomic<int> replayEvery { 0 };   // deliver every n-th packet twice (raw, as received)
         std::atomic<int> corruptEvery { 0 };  // flip a byte in every n-th packet
+        std::atomic<int> videoDropPercent { 0 };   // lose this share of the video packets
     };
     Faults faults;
 

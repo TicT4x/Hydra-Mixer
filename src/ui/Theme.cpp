@@ -49,6 +49,7 @@ void apply (Style s)
     fxVoice      = pick (0xffb8f060, 0xff5c9a12);
     fxSaturation = pick (0xffff5a3c, 0xffd8401f);
     fxMatch      = pick (0xff5c9dff, 0xff2f6fd6);
+    fxSidechain  = pick (0xffe6c35a, 0xffa8841a);
     fx           = pick (0xff6cacfa, 0xff3b82e0);
 }
 

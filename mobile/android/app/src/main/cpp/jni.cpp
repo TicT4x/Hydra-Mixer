@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <vector>
 #include <string>
 
 using namespace hydra;
@@ -174,6 +175,61 @@ JNIEXPORT void JNICALL Java_de_hydra_link_NativeLink_forget (JNIEnv* env, jclass
     endpoint.forget (parseHex (str (env, id)));
 }
 
+/** Camera on: tells the Hydra (by name) once a second that a camera is there; returns an error text or "". */
+JNIEXPORT jstring JNICALL Java_de_hydra_link_NativeLink_startVideo (JNIEnv* env, jclass, jstring host, jint port, jint width, jint height, jint fps)
+{
+    lite::VideoSettings v;
+    v.host = str (env, host);
+    v.port = port;
+    v.width = width;
+    v.height = height;
+    v.fps = fps;
+    std::string err;
+    endpoint.startVideo (v, err);
+    return jstr (env, err);
+}
+
+JNIEXPORT void JNICALL Java_de_hydra_link_NativeLink_stopVideo (JNIEnv*, jclass)
+{
+    endpoint.stopVideo();
+}
+
+/** What Hydra wants: bit 0 = send, bit 1 = key frame now, bit 2 = over the USB cable, bits 8.. = the height the app chose (0 = unknown). */
+JNIEXPORT jint JNICALL Java_de_hydra_link_NativeLink_videoWish (JNIEnv*, jclass)
+{
+    const auto w = endpoint.getVideoWish();
+    return (w.want ? 1 : 0) | (w.keyFrame ? 2 : 0) | (w.usb ? 4 : 0) | (std::max (0, w.maxHeight) << 8);
+}
+
+/** One encoder output buffer (direct ByteBuffer from MediaCodec). rotation = quarter turns clockwise to upright. */
+JNIEXPORT void JNICALL Java_de_hydra_link_NativeLink_pushVideo (JNIEnv* env, jclass, jobject buffer, jint offset, jint size, jboolean key,
+                                                               jboolean config, jint width, jint height, jint rotation, jlong timeUs)
+{
+    auto* p = buffer != nullptr ? (const uint8_t*) env->GetDirectBufferAddress (buffer) : nullptr;
+    if (p == nullptr || size <= 0) return;
+    endpoint.pushVideo (p + offset, size, key, config, width, height, rotation, (int64_t) timeUs);
+}
+
+/** The camera's settings as the app describes them (control list, engine/NetLink.cpp CamCaps). */
+JNIEXPORT void JNICALL Java_de_hydra_link_NativeLink_cameraControls (JNIEnv* env, jclass, jbyteArray list)
+{
+    if (list == nullptr) return;
+    const jsize n = env->GetArrayLength (list);
+    std::vector<uint8_t> v ((size_t) n);
+    if (n > 0) env->GetByteArrayRegion (list, 0, n, (jbyte*) v.data());
+    endpoint.setCameraControls (v.data(), (int) v.size());
+}
+
+/** What Hydra set since the last call (u8 count, per entry u8 id, u8 values, f32 each), or null. */
+JNIEXPORT jbyteArray JNICALL Java_de_hydra_link_NativeLink_cameraSettings (JNIEnv* env, jclass)
+{
+    const auto s = endpoint.takeCameraSettings();
+    if (s.empty()) return nullptr;
+    auto a = env->NewByteArray ((jsize) s.size());
+    if (a != nullptr) env->SetByteArrayRegion (a, 0, (jsize) s.size(), (const jbyte*) s.data());
+    return a;
+}
+
 /** Everything the UI shows, as JSON (polled ~10x per second). */
 JNIEXPORT jstring JNICALL Java_de_hydra_link_NativeLink_state (JNIEnv* env, jclass)
 {
@@ -239,7 +295,11 @@ JNIEXPORT jstring JNICALL Java_de_hydra_link_NativeLink_state (JNIEnv* env, jcla
        + ",\"device\":" + num (audio.isInputRunning() ? 1000.0 * audio.inBurst / std::max (8000, audio.inRate) : 0.0)
        + ",\"deviceId\":" + std::to_string (audio.isInputRunning() ? audio.inDevice : 0)
        + ",\"muted\":" + b (endpoint.micMuted.load())
-       + ",\"exclusive\":" + b (audio.inExclusive) + "}}";
+       + ",\"exclusive\":" + b (audio.inExclusive) + "}";
+    const auto v = endpoint.getVideoStats();
+    j += ",\"video\":{\"on\":" + std::string (b (v.on)) + ",\"reachable\":" + b (v.reachable) + ",\"usb\":" + b (v.usb)
+       + ",\"frames\":" + std::to_string (v.frames) + ",\"dropped\":" + std::to_string (v.dropped)
+       + ",\"lost\":" + std::to_string (v.hydraLost) + ",\"kbps\":" + num (v.kbps) + "}}";
     return jstr (env, j);
 }
 } // extern "C"

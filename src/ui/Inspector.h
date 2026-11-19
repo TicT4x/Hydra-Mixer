@@ -171,6 +171,7 @@ std::unique_ptr<juce::Component> makeStemsPanel (UiContext&, ChannelFx&);
 std::unique_ptr<juce::Component> makeUtilityPanel (UiContext&, UtilityFx&);
 std::unique_ptr<juce::Component> makeTransposePanel (UiContext&, ChannelFx&);
 std::unique_ptr<juce::Component> makeCompPanel (UiContext&, CompFx&);
+std::unique_ptr<juce::Component> makeSidechainPanel (UiContext&, int channel, SidechainFx&);
 /** The effect chain of a channel as in the inspector (the recorder window shows it for its tracks). */
 std::unique_ptr<juce::Component> makeFxRack (UiContext&, int channel, std::function<void()> scanPlugins);
 void updateFxRackMeters (juce::Component* rack);

@@ -2732,6 +2732,409 @@ public:
 };
 
 //==============================================================================
+// Sidechain EQ (18.11.): another channel (the key) turns this one down where it is loud.
+namespace scui
+{
+juce::String sourceLabel (const Engine& e, int src)
+{
+    if (! Engine::isSidechainSource (src)) return "Choose the key channel";
+    const auto name = e.channelName (src);
+    return "Key: " + channelCode (src) + (name.isNotEmpty() && name != channelCode (src) ? "  " + name : juce::String());
+}
+
+/** Menu of the channels that can be the key (active inputs, then outputs; not this channel). */
+void showSourceMenu (UiContext& ctx, int channel, SidechainFx& sc, juce::Component& target)
+{
+    auto& e = ctx.engine;
+    juce::PopupMenu m;
+    m.addSectionHeader ("Make room for ...");
+    const int cur = sc.sourceChannel();
+    m.addItem ("None", true, cur < 0, [&sc] { sc.source->set (0.0f); });
+    auto addRange = [&] (int from, int to, const juce::String& header)
+    {
+        bool any = false;
+        for (int ch = from; ch < to; ++ch)
+        {
+            if (ch == channel || ! e.isChannelActive (ch)) continue;
+            if (! any) { m.addSeparator(); m.addSectionHeader (header); any = true; }
+            const auto name = e.channelName (ch);
+            m.addItem (channelCode (ch) + "   " + name, true, cur == ch, [&sc, ch] { sc.source->set ((float) (ch + 1)); });
+        }
+    };
+    addRange (0, kMaxInputs, "Inputs");
+    addRange (kMaxInputs, kMaxInputs + kMaxBuses, "Outputs");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target));
+}
+
+/** Live curve of a Sidechain EQ: what it cuts right now (filled), in Auto mode the key's level per band (faint bars)
+    and the LOW..HIGH region, in Bands mode each band's range at full key (dashed) and its dot. Repaints only when
+    something it shows changed (checked 30 Hz). */
+class Graph final : public juce::Component, private juce::Timer
+{
+public:
+    explicit Graph (SidechainFx& f, bool large) : fx (f), big (large)
+    {
+        setInterceptsMouseClicks (false, false);
+        // Frequencies and curves before the first paint: with freqs still 0, xOf gave -inf, the dashed stroke of
+        // that path never ended (Path grew to ~6 GB and Hydra crashed, 19.11.).
+        for (int i = 0; i < kPoints; ++i) freqs[(size_t) i] = (float) (20.0 * std::pow (1000.0, (double) i / (kPoints - 1)));
+        timerCallback();
+        startTimerHz (30);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        g.setColour (theme::bg);
+        g.fillRoundedRectangle (r, 4.0f);
+        r = r.reduced (3.0f, 3.0f);
+        const auto st = fx.settings();
+        const float bottom = shownBottom, top = shownTop;
+        auto xOf = [&] (double f) { return r.getX() + r.getWidth() * (float) (std::log (f / 20.0) / std::log (1000.0)); };
+        auto yOf = [&] (float db) { return juce::jmap (juce::jlimit (bottom, top, db), top, bottom, r.getY(), r.getBottom()); };
+        const auto c = theme::fxSidechain;
+
+        // Grid: 100 Hz, 1 kHz, 10 kHz; 0 dB.
+        g.setColour (theme::textFaint.withAlpha (0.18f));
+        for (double f : { 100.0, 1000.0, 10000.0 }) g.drawVerticalLine (juce::roundToInt (xOf (f)), r.getY(), r.getBottom());
+        g.setColour (theme::textFaint.withAlpha (0.45f));
+        g.drawHorizontalLine (juce::roundToInt (yOf (0.0f)), r.getX(), r.getRight());
+
+        const bool autoMode = st.mode == dsp::SidechainEqSettings::autoMode;
+        if (autoMode)
+        {
+            // Region that may be cut, and the key level per band (how loud the key is there).
+            const float x0 = xOf (juce::jmin (st.loHz, st.hiHz)), x1 = xOf (juce::jmax (st.loHz, st.hiHz));
+            g.setColour (c.withAlpha (0.06f));
+            g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x0, r.getY(), x1, r.getBottom()));
+            const float bw = r.getWidth() / (float) dsp::SidechainEq::kAutoBands;
+            for (int b = 0; b < dsp::SidechainEq::kAutoBands; ++b)
+            {
+                const float key = juce::jlimit (0.0f, 1.0f, (fx.dsp.shownAutoKey[(size_t) b].load() - st.sensDb) / dsp::SidechainEq::kKneeDb);
+                if (key <= 0.0f) continue;
+                const float x = xOf (dsp::SidechainEq::autoFreq (b));
+                g.setColour (theme::textFaint.withAlpha (0.22f));
+                g.fillRect (x - bw * 0.3f, r.getBottom() - r.getHeight() * 0.35f * key, bw * 0.6f, r.getHeight() * 0.35f * key);
+            }
+        }
+        else
+        {
+            // What each band does at full key (dashed), its spot.
+            juce::Path full;
+            for (int i = 0; i < kPoints; ++i)
+            {
+                const float x = xOf (freqs[(size_t) i]), y = yOf (fullDb[(size_t) i]);
+                if (i == 0) full.startNewSubPath (x, y); else full.lineTo (x, y);
+            }
+            juce::Path dashed;
+            const float dash[] = { 3.0f, 3.0f };
+            if (theme::dashable (full)) juce::PathStrokeType (1.0f).createDashedStroke (dashed, full, dash, 2);
+            g.setColour (c.withAlpha (0.55f));
+            g.fillPath (dashed);
+            for (int b = 0; b < dsp::SidechainEqSettings::kBands; ++b)
+            {
+                const auto& band = st.bands[(size_t) b];
+                if (! band.on) continue;
+                const float x = xOf (band.freq), y = yOf (band.rangeDb * st.amount);
+                g.setColour (theme::bandColour (b));
+                g.fillEllipse (x - 3.0f, y - 3.0f, 6.0f, 6.0f);
+            }
+        }
+
+        // The cut right now.
+        juce::Path curve, area;
+        for (int i = 0; i < kPoints; ++i)
+        {
+            const float x = xOf (freqs[(size_t) i]), y = yOf (liveDb[(size_t) i]);
+            if (i == 0) { curve.startNewSubPath (x, y); area.startNewSubPath (x, yOf (0.0f)); }
+            else curve.lineTo (x, y);
+            area.lineTo (x, y);
+        }
+        area.lineTo (xOf (freqs.back()), yOf (0.0f));
+        area.closeSubPath();
+        g.setColour (c.withAlpha (fx.on->isOn() ? 0.28f : 0.10f));
+        g.fillPath (area);
+        g.setColour (fx.on->isOn() ? c : c.withAlpha (0.4f));
+        g.strokePath (curve, juce::PathStrokeType (big ? 2.0f : 1.5f));
+
+        if (big)
+        {
+            g.setFont (theme::font (10.0f));
+            g.setColour (theme::textFaint);
+            for (double f : { 100.0, 1000.0, 10000.0 })
+                g.drawText (f >= 1000.0 ? juce::String ((int) (f / 1000.0)) + "k" : juce::String ((int) f),
+                            juce::Rectangle<float> (xOf (f) + 3.0f, r.getBottom() - 13.0f, 30.0f, 12.0f), juce::Justification::centredLeft);
+            for (float db : { 0.0f, bottom * 0.5f, bottom })
+                g.drawText (juce::String (juce::roundToInt (db)) + " dB", juce::Rectangle<float> (r.getX() + 3.0f, yOf (db) - (db == bottom ? 13.0f : 1.0f), 50.0f, 12.0f),
+                            juce::Justification::centredLeft);
+        }
+        if (fx.sourceChannel() < 0)
+        {
+            g.setColour (theme::textDim);
+            g.setFont (theme::font (big ? 12.0f : 10.5f));
+            g.drawFittedText ("Choose the channel to make room for", getLocalBounds().reduced (6), juce::Justification::centred, 2);
+        }
+    }
+
+private:
+    static constexpr int kPoints = 96;
+
+    void timerCallback() override
+    {
+        const auto st = fx.settings();
+        // Signature of what is shown: the live gains (0.1 dB steps), the settings, the key bars.
+        uint64_t sig = 1469598103934665603ull;
+        auto mix = [&sig] (int64_t v) { sig = (sig ^ (uint64_t) v) * 1099511628211ull; };
+        for (auto& a : fx.dsp.shownAuto) mix (juce::roundToInt (a.load() * 10.0f));
+        for (auto& a : fx.dsp.shownBand) mix (juce::roundToInt (a.load() * 10.0f));
+        if (st.mode == dsp::SidechainEqSettings::autoMode)
+            for (auto& a : fx.dsp.shownAutoKey) mix (juce::roundToInt (juce::jlimit (0.0f, 1.0f, (a.load() - st.sensDb) / dsp::SidechainEq::kKneeDb) * 20.0f));
+        for (auto* p : { fx.on, fx.source, fx.mode, fx.amount, fx.depth, fx.sens, fx.lo, fx.hi }) mix ((int64_t) p->getVersion());
+        for (auto& b : fx.bands) for (auto* p : { b.on, b.type, b.freq, b.q, b.range }) mix ((int64_t) p->getVersion());
+        if (sig == shownSig) return;
+        shownSig = sig;
+        fx.dsp.response (freqs.data(), liveDb.data(), kPoints, st, true);
+        fx.dsp.response (freqs.data(), fullDb.data(), kPoints, st, false);
+        // Scale: down to the deepest cut that can happen (at least -6 dB), up to the highest boost (at least +2 dB).
+        float lowest = st.mode == dsp::SidechainEqSettings::autoMode ? -st.depthDb * st.amount : 0.0f, highest = 0.0f;
+        for (int i = 0; i < kPoints; ++i) { lowest = juce::jmin (lowest, fullDb[(size_t) i], liveDb[(size_t) i]); highest = juce::jmax (highest, fullDb[(size_t) i], liveDb[(size_t) i]); }
+        shownBottom = juce::jmin (-6.0f, std::floor ((lowest - 1.0f) / 3.0f) * 3.0f);
+        shownTop = juce::jmax (2.0f, std::ceil ((highest + 1.0f) / 3.0f) * 3.0f);
+        repaint();
+    }
+
+    SidechainFx& fx;
+    bool big;
+    std::array<float, kPoints> freqs {}, liveDb {}, fullDb {};
+    float shownBottom = -9.0f, shownTop = 2.0f;
+    uint64_t shownSig = 0;
+};
+
+/** Settings window: key, mode, timing, the live curve; Auto: depth, sensitivity, region; Bands: six band columns. */
+class Panel final : public AdvancedPanel
+{
+public:
+    Panel (UiContext& c, int ch, SidechainFx& f)
+        : ctx (c), channel (ch), fx (f), graph (f, true),
+          on (c, *f.on, "ON", theme::fxSidechain),
+          mode (c, *f.mode, theme::fxSidechain, { "AUTO", "BANDS" }),
+          amount (c, *f.amount, "AMOUNT", theme::fxSidechain), attack (c, *f.attack, "ATTACK", theme::fxSidechain),
+          release (c, *f.release, "RELEASE", theme::fxSidechain),
+          depth (c, *f.depth, "DEPTH", theme::fxSidechain), sens (c, *f.sens, "SENSITIVITY", theme::fxSidechain),
+          lo (c, *f.lo, "LOW", theme::fxSidechain), hi (c, *f.hi, "HIGH", theme::fxSidechain)
+    {
+        showValues ({ &amount, &attack, &release, &depth, &sens, &lo, &hi });
+        for (juce::Component* x : std::initializer_list<juce::Component*> { &graph, &on, &mode, &source, &amount, &attack, &release,
+                                                                           &depth, &sens, &lo, &hi, &info })
+            addAndMakeVisible (x);
+        source.onClick = [this] { showSourceMenu (ctx, channel, fx, source); };
+        source.setTooltip ("The channel that should be heard better (e.g. your microphone): while it is loud, this channel is turned down where it has its energy");
+        mode.setTooltip ("AUTO: cuts exactly where the key is loud right now (spectral). BANDS: up to six bands you set, each listens to the key in its own region");
+        depth.setTooltip ("Deepest cut (Auto): reached when the key is 12 dB above the sensitivity in a band");
+        sens.setTooltip ("Key level (per band) from which cutting starts. Lower = reacts to quieter keys");
+        lo.setTooltip ("Lowest frequency that may be cut (Auto)");
+        hi.setTooltip ("Highest frequency that may be cut (Auto)");
+        amount.setTooltip ("How much of it is applied: 0 % = nothing");
+        attack.setTooltip ("How fast it cuts when the key gets loud");
+        release.setTooltip ("How fast it comes back when the key gets quiet");
+        info.setText ("Sidechain EQ\nMakes room for another channel (the key): while the key is loud, this channel is turned down "
+                      "where the key has its energy, so the key can be heard better. E.g. on the music: key = your microphone.\n\n"
+                      "AUTO: 24 bands follow the key's spectrum (like Trackspacer).\nBANDS: up to six bands (bell / shelves) with their "
+                      "own frequency, Q, range and threshold; a positive range boosts instead.\n\n"
+                      "The key is taken after the key channel's effects (before its fader). Zero latency.");
+        for (int b = 0; b < dsp::SidechainEqSettings::kBands; ++b)
+        {
+            auto& bp = f.bands[(size_t) b];
+            const auto bc = theme::bandColour (b);
+            auto col = std::make_unique<BandColumn>();
+            col->on = std::make_unique<Toggle> (c, *bp.on, "ON", bc);
+            col->type = std::make_unique<ChoiceSegments> (c, *bp.type, bc, juce::StringArray { "BELL", "LOW", "HIGH" });
+            col->freq = std::make_unique<Knob> (c, *bp.freq, "FREQ", bc);
+            col->q = std::make_unique<Knob> (c, *bp.q, "Q", bc);
+            col->range = std::make_unique<Knob> (c, *bp.range, "RANGE", bc);
+            col->thr = std::make_unique<Knob> (c, *bp.thr, "THRESH", bc);
+            col->type->setTooltip ("Bell, low shelf or high shelf; it listens to the key in the same region");
+            col->range->setTooltip ("Gain at full key: negative = cut (makes room), positive = boost");
+            col->thr->setTooltip ("Key level in this band's region from which it starts (full range 12 dB above)");
+            showValues ({ col->freq.get(), col->q.get(), col->range.get(), col->thr.get() });
+            for (juce::Component* x : std::initializer_list<juce::Component*> { col->on.get(), col->type.get(), col->freq.get(), col->q.get(),
+                                                                               col->range.get(), col->thr.get() })
+                addChildComponent (x);
+            columns.push_back (std::move (col));
+        }
+        shownMode = -1;
+        tick();
+        setSize (kWidth, heightFor (juce::roundToInt (f.mode->get())));
+    }
+
+    void resized() override
+    {
+        cards.clear();
+        auto r = getLocalBounds().reduced (kPad);
+        auto top = r.removeFromTop (kTop);
+        auto keyCard = top.removeFromLeft (330);
+        {
+            auto k = card (keyCard, "Key");
+            on.setBounds (captionSlot (keyCard, 44));
+            info.setBounds (captionSlot (keyCard, 20, 52).withSizeKeepingCentre (InfoButton::kSize, InfoButton::kSize));
+            source.setBounds (k.removeFromTop (24));
+            k.removeFromTop (6);
+            mode.setBounds (k.removeFromTop (22));
+            k.removeFromTop (6);
+            rowLayout (k.withSizeKeepingCentre (k.getWidth(), juce::jmin (k.getHeight(), kKnobs)), { &amount, &attack, &release });
+        }
+        top.removeFromLeft (kGap);
+        graph.setBounds (card (top, "Now"));
+        r.removeFromTop (kGap);
+
+        const bool bands = shownMode == dsp::SidechainEqSettings::bandsMode;
+        for (juce::Component* x : std::initializer_list<juce::Component*> { &depth, &sens, &lo, &hi }) x->setVisible (! bands);
+        if (! bands)
+        {
+            rowLayout (card (r.removeFromTop (kCardHeight), "Auto"), { &depth, &sens, &lo, &hi });
+            return;
+        }
+        const int n = (int) columns.size();
+        const int w = (r.getWidth() - kGap * (n - 1)) / n;
+        for (int b = 0; b < n; ++b)
+        {
+            auto& col = *columns[(size_t) b];
+            auto area = r.removeFromLeft (w);
+            r.removeFromLeft (kGap);
+            auto k = card (area, "Band " + juce::String (b + 1));
+            col.on->setBounds (captionSlot (area, 40));
+            col.type->setBounds (k.removeFromTop (20));
+            k.removeFromTop (4);
+            auto row1 = k.removeFromTop (k.getHeight() / 2);
+            rowLayout (row1, { col.freq.get(), col.q.get() }, 2);
+            rowLayout (k, { col.range.get(), col.thr.get() }, 2);
+        }
+    }
+
+    void tick() override
+    {
+        source.text = sourceLabel (ctx.engine, fx.sourceChannel());
+        source.colour = fx.sourceChannel() < 0 ? theme::warn : theme::text;
+        source.repaint();
+        const int m = juce::roundToInt (fx.mode->get());
+        if (m != shownMode)
+        {
+            shownMode = m;
+            for (auto& col : columns)
+                for (juce::Component* x : std::initializer_list<juce::Component*> { col->on.get(), col->type.get(), col->freq.get(), col->q.get(),
+                                                                                   col->range.get(), col->thr.get() })
+                    x->setVisible (m == dsp::SidechainEqSettings::bandsMode);
+            if (auto* w = findParentComponentOfClass<juce::ResizableWindow>()) w->setContentComponentSize (kWidth, heightFor (m));
+            else setSize (kWidth, heightFor (m));
+            resized();
+            repaint();
+        }
+        // Bands that are off are dimmed.
+        for (size_t b = 0; b < columns.size(); ++b)
+        {
+            const float a = fx.bands[b].on->isOn() ? 1.0f : 0.4f;
+            for (juce::Component* x : std::initializer_list<juce::Component*> { columns[b]->type.get(), columns[b]->freq.get(), columns[b]->q.get(),
+                                                                               columns[b]->range.get(), columns[b]->thr.get() })
+                if (x->getAlpha() != a) x->setAlpha (a);
+        }
+    }
+
+private:
+    static constexpr int kWidth = 900, kTop = 200, kBandsHeight = kCaption + 20 + 4 + 2 * 92 + 8;
+    static int heightFor (int m)
+    {
+        return 2 * kPad + kTop + kGap + (m == dsp::SidechainEqSettings::bandsMode ? kBandsHeight : kCardHeight);
+    }
+    struct BandColumn
+    {
+        std::unique_ptr<Toggle> on;
+        std::unique_ptr<ChoiceSegments> type;
+        std::unique_ptr<Knob> freq, q, range, thr;
+    };
+
+    UiContext& ctx;
+    int channel;
+    SidechainFx& fx;
+    Graph graph;
+    Toggle on;
+    ChoiceSegments mode;
+    Chip source;
+    Knob amount, attack, release, depth, sens, lo, hi;
+    InfoButton info;
+    std::vector<std::unique_ptr<BandColumn>> columns;
+    int shownMode = -1;
+};
+} // namespace scui
+
+/** Sidechain EQ block: key channel (chip), AUTO / BANDS, the live curve, AMOUNT (+ DEPTH in Auto). */
+class SidechainUnit final : public juce::Component, private juce::Timer
+{
+public:
+    SidechainUnit (UiContext& c, int ch, SidechainFx& f, const juce::String& title)
+        : ctx (c), channel (ch), fx (f), section (title, theme::fxSidechain), graph (f, false),
+          on (c, *f.on, "ON", theme::fxSidechain), mode (c, *f.mode, theme::fxSidechain, { "AUTO", "BANDS" }),
+          amount (c, *f.amount, "AMOUNT", theme::fxSidechain), depth (c, *f.depth, "DEPTH", theme::fxSidechain)
+    {
+        addAndMakeVisible (section);
+        for (juce::Component* x : std::initializer_list<juce::Component*> { &on, &source, &mode, &graph, &amount, &depth })
+            section.addAndMakeVisible (x);
+        section.enableGear ([this, title]
+        {
+            ctx.openPanel (std::make_unique<scui::Panel> (ctx, channel, fx), title + "  -  " + ctx.engine.channelName (channel));
+        });
+        source.onClick = [this] { scui::showSourceMenu (ctx, channel, fx, source); };
+        source.setTooltip ("The channel that should be heard better (e.g. your microphone): while it is loud, this one is turned down where it has its energy");
+        mode.setTooltip ("AUTO: cuts exactly where the key is loud (spectral). BANDS: your own dynamic bands (settings window)");
+        amount.setTooltip ("How much room it makes: 0 % = nothing");
+        depth.setTooltip ("Deepest cut (Auto)");
+        tick();
+        startTimerHz (5);
+    }
+
+    Section& getSection() noexcept { return section; }
+
+    void resized() override
+    {
+        section.setBounds (getLocalBounds());
+        on.setBounds (section.headerSlot());
+        auto r = section.content();
+        source.setBounds (r.removeFromTop (22));
+        r.removeFromTop (4);
+        mode.setBounds (r.removeFromTop (20));
+        r.removeFromTop (6);
+        const bool autoMode = shownMode == dsp::SidechainEqSettings::autoMode;
+        auto knobs = r.removeFromRight (autoMode ? 112 : 56);
+        const int kh = juce::jmin (knobs.getHeight(), 66);
+        if (autoMode) depth.setBounds (knobs.removeFromRight (56).withSizeKeepingCentre (56, kh));
+        amount.setBounds (knobs.withSizeKeepingCentre (56, kh));
+        depth.setVisible (autoMode);
+        r.removeFromRight (4);
+        graph.setBounds (r);
+        graph.setVisible (r.getHeight() >= 16);
+    }
+
+private:
+    void timerCallback() override { tick(); }
+    void tick()
+    {
+        const auto text = scui::sourceLabel (ctx.engine, fx.sourceChannel());
+        if (text != source.text) { source.text = text; source.colour = fx.sourceChannel() < 0 ? theme::warn : theme::text; source.repaint(); }
+        if (const int m = juce::roundToInt (fx.mode->get()); m != shownMode) { shownMode = m; resized(); }
+    }
+
+    UiContext& ctx;
+    int channel;
+    SidechainFx& fx;
+    Section section;
+    scui::Graph graph;
+    Toggle on;
+    Chip source;
+    ChoiceSegments mode;
+    Knob amount, depth;
+    int shownMode = -1;
+};
+
+//==============================================================================
 /** What Transpose's listener is doing / found, for the block and the window. */
 struct TransposeStatus
 {
@@ -3243,6 +3646,15 @@ std::unique_ptr<BuiltUnit> makeBuiltinUnit (UiContext& ctx, int channel, Fx f, i
                 auto s = std::make_unique<SaturationUnit> (ctx, e.fxOf (channel).saturations[(size_t) k], title);
                 sec = &s->section;
                 u.width = 250;
+                u.comp = std::move (s);
+                break;
+            }
+            case Fx::sidechain:
+            {
+                if (k >= kScInstances) break;
+                auto s = std::make_unique<SidechainUnit> (ctx, channel, e.fxOf (channel).sidechains[(size_t) k], title);
+                sec = &s->getSection();
+                u.width = 280;
                 u.comp = std::move (s);
                 break;
             }
@@ -5002,6 +5414,7 @@ std::unique_ptr<juce::Component> makeStemsPanel (UiContext& c, ChannelFx& s) { r
 std::unique_ptr<juce::Component> makeUtilityPanel (UiContext& c, UtilityFx& u) { return std::make_unique<UtilityPanel> (c, u); }
 std::unique_ptr<juce::Component> makeTransposePanel (UiContext& c, ChannelFx& s) { return std::make_unique<TransposePanel> (c, s.transpose); }
 std::unique_ptr<juce::Component> makeCompPanel (UiContext& c, CompFx& f) { return std::make_unique<CompPanel> (c, f); }
+std::unique_ptr<juce::Component> makeSidechainPanel (UiContext& c, int ch, SidechainFx& f) { return std::make_unique<scui::Panel> (c, ch, f); }
 std::unique_ptr<juce::Component> makeFxRack (UiContext& c, int channel, std::function<void()> scan)
 {
     return std::make_unique<FxRack> (c, channel, std::move (scan));
@@ -5388,7 +5801,7 @@ void EqGraph::paint (juce::Graphics& g)
         {
             juce::Path dashed;
             const float dash[2] = { 4.0f, 4.0f };
-            juce::PathStrokeType (1.2f).createDashedStroke (dashed, otherCurve, dash, 2);
+            if (theme::dashable (otherCurve)) juce::PathStrokeType (1.2f).createDashedStroke (dashed, otherCurve, dash, 2);
             g.setColour (graphDim.withAlpha (0.8f));
             g.fillPath (dashed);
         }
@@ -5417,7 +5830,7 @@ void EqGraph::paint (juce::Graphics& g)
         {
             juce::Path dashed;
             const float dash[2] = { 5.0f, 4.0f };
-            juce::PathStrokeType (1.8f).createDashedStroke (dashed, matchPreview, dash, 2);
+            if (theme::dashable (matchPreview)) juce::PathStrokeType (1.8f).createDashedStroke (dashed, matchPreview, dash, 2);
             g.setColour (lightGraph ? juce::Colour (0xff1c2330).withAlpha (0.85f) : juce::Colours::white.withAlpha (0.85f));
             g.fillPath (dashed);
         }

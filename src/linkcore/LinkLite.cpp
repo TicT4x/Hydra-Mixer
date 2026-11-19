@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <map>
 #include <mutex>
 #include <random>
@@ -42,7 +43,7 @@ namespace
 {
 // Packet format v1: see the comment at the top of engine/NetLink.cpp (must stay identical).
 constexpr uint8_t kVersion = 1;
-enum PacketType : uint8_t { tAudio = 1, tInfo = 2, tAnnounce = 3, tFeedback = 4, tBye = 5, tPair = 6 };
+enum PacketType : uint8_t { tAudio = 1, tInfo = 2, tAnnounce = 3, tFeedback = 4, tBye = 5, tPair = 6, tVideo = 7, tVideoInfo = 8, tVideoCtl = 9, tCamCaps = 10, tCamSet = 11 };
 enum PairOp : uint8_t { opRequest = 1, opAnswer = 2, opUnpair = 3 };
 enum PairResult : uint8_t { resDenied = 0, resAllowed = 1, resWaiting = 2 };
 constexpr int kHeader = 24, kAudioHeader = 16, kTagBytes = 16;
@@ -52,6 +53,10 @@ constexpr int kMaxName = 63;
 constexpr int kHold = 4;
 constexpr int kOpusFrames = 240;   // 5 ms
 constexpr int kMaxChunk = 4096;
+constexpr int kVideoHeader = 24;
+constexpr int kVideoPayload = kMaxPacket - kHeader - kVideoHeader - kTagBytes;
+constexpr size_t kVideoQueueBytes = 1536 * 1024;   // more waiting than this: drop it, start again at a key frame
+constexpr size_t kVideoQueueBytesUsb = 12u << 20;  // over the USB cable (4K key frames at high bit rates)
 
 double nowMs()
 {
@@ -354,6 +359,7 @@ struct Remote
     int port = 0, remotePort = 0;
     bool announced = false;
     double lastSeen = 0;
+    double usbSeen = -1.0e9;   // last packet over a USB cable (tethering): that way is kept while it lasts
     uint64_t device = 0;
     std::map<uint32_t, Rx> rx;
 };
@@ -445,6 +451,7 @@ struct Endpoint::Impl
     uint64_t instance = 0, counter = 0;
     std::map<uint64_t, Remote> remotes;
     std::vector<sockaddr_in> broadcasts, manualPeers;
+    std::vector<std::pair<uint32_t, uint32_t>> usbNets;   // (network, mask) of USB tethering interfaces
     std::atomic<uint32_t> changes { 0 };
     double nextAnnounce = 0, lastIfScan = -1.0e9;
     std::string hint;
@@ -491,6 +498,28 @@ struct Endpoint::Impl
     OpusEncoder* enc = nullptr;
     std::vector<float> encInter, txL, txR;
     double fbLoss = -1, fbBuffer = -1, fbAt = -1.0e9;
+
+    // Video (phone camera -> Hydra Camera)
+    struct VideoFrame { std::vector<uint8_t> data; uint32_t id = 0, time = 0; int parts = 0, next = 0, width = 0, height = 0, rotation = 0; bool key = false; };
+    VideoSettings video;
+    bool videoOn = false, videoToValid = false, videoByName = false, videoWaitKey = true;
+    sockaddr_in videoTo {};
+    uint32_t videoStream = 1, videoFrameId = 0;
+    std::deque<VideoFrame> videoQueue;
+    size_t videoQueued = 0;
+    std::vector<uint8_t> videoConfig;
+    VideoWish wish;
+    double wishAt = -1.0e9, lastVideoInfo = -1.0e9, lastVideoPush = -1.0e9, videoBudgetAt = 0, videoBudget = 0;
+    VideoStats vstats;
+    // Camera controls (CamCaps / CamSet, engine/NetLink.cpp): the list the app describes, what Hydra set
+    std::vector<uint8_t> camList, camSettings;
+    uint16_t camListRevision = 0;
+    uint64_t camSetInstance = 0;
+    uint32_t camSetRevision = 0, camTaken = 0, camApplied = 0;   // taken by the app / confirmed with its new list
+    bool camSetNew = false, camCapsDue = false;
+    double lastCamCaps = -1.0e9;
+    uint64_t vbytes = 0, vbytesMark = 0;
+    double vbytesAt = 0;
 
     ~Impl()
     {
@@ -585,6 +614,7 @@ struct Endpoint::Impl
     void scanInterfaces()
     {
         broadcasts.clear();
+        usbNets.clear();
        #ifndef _WIN32
         ifaddrs* list = nullptr;
         if (getifaddrs (&list) != 0) return;
@@ -596,6 +626,9 @@ struct Endpoint::Impl
             const uint32_t mask = i->ifa_netmask != nullptr ? ntohl (((sockaddr_in*) i->ifa_netmask)->sin_addr.s_addr) : 0xFFFFFF00u;
             if (! isLanIp (ip)) continue;   // mobile data: never
             broadcasts.push_back (makeAddr ((ip & mask) | ~mask, cfg.port));
+            // USB tethering (Android: rndis0, usb0, ncm0): the cable to the PC.
+            const std::string nm = i->ifa_name != nullptr ? i->ifa_name : "";
+            if (nm.rfind ("rndis", 0) == 0 || nm.rfind ("usb", 0) == 0 || nm.rfind ("ncm", 0) == 0) usbNets.push_back ({ ip & mask, mask });
         }
         freeifaddrs (list);
        #endif
@@ -624,7 +657,7 @@ struct Endpoint::Impl
             PollFd f {};
             f.fd = sock;
             f.events = POLLIN;
-            int timeout = sending ? 1 : 20;
+            int timeout = (sending || ! videoQueue.empty()) ? 1 : 20;
             pollSockets (&f, 1, timeout);
             std::lock_guard<std::mutex> l (lock);
             const double now = nowMs();
@@ -639,6 +672,7 @@ struct Endpoint::Impl
             flushHeld (now);
             housekeeping (now);
             serviceTx();
+            serviceVideo (now);
         }
     }
 
@@ -658,7 +692,10 @@ struct Endpoint::Impl
 
         auto& r = remotes[inst];
         if (r.instance == 0) { r.instance = inst; ++changes; }
-        r.from = from;
+        // A Hydra heard over Wi-Fi and the USB cable (it announces into every network): keep to the cable while
+        // it is there, else everything would flip between both ways with every announce.
+        if (isUsb (ntohl (from.sin_addr.s_addr))) { r.usbSeen = now; r.from = from; }
+        else if (now - r.usbSeen > 5000.0) r.from = from;
         r.lastSeen = now;
         Reader p { b + kHeader, n - kHeader };
         switch (type)
@@ -682,6 +719,8 @@ struct Endpoint::Impl
             case tInfo:     onInfo (r, p, now); break;
             case tAudio:    onAudio (r, p, now); break;
             case tFeedback: onFeedback (p); break;
+            case tVideoCtl: onVideoCtl (r, p, now); break;
+            case tCamSet:   onCamSet (r, p); break;
             case tBye:
             {
                 const uint32_t id = p.u32();
@@ -696,6 +735,13 @@ struct Endpoint::Impl
 
     //--------------------------------------------------------------------------
     // Pairing
+    bool isUsb (uint32_t ip) const
+    {
+        for (auto& [net, mask] : usbNets) if ((ip & mask) == net) return true;
+        return false;
+    }
+    bool videoOverUsb() const { return videoToValid && isUsb (ntohl (videoTo.sin_addr.s_addr)); }
+
     bool trusts (const Remote& r) const { return ! cfg.pairing || (r.device != 0 && trusted.count (r.device) > 0); }
 
     template <typename Extra>
@@ -1106,6 +1152,43 @@ struct Endpoint::Impl
             }
         }
 
+        if (videoOn)
+        {
+            if (videoByName)
+                for (auto& [inst, r] : remotes)
+                    if (r.announced && sameName (r.name, video.host) && now - r.lastSeen < 6000.0)
+                    {
+                        videoTo = makeAddr (ntohl (r.from.sin_addr.s_addr), r.port > 0 ? r.port : video.port);
+                        videoToValid = true;
+                    }
+            if (wish.want && now - wishAt > 3000.0) wish.want = false;   // Hydra went quiet: stop the encoder
+            if (videoToValid && now - lastVideoInfo >= 1000.0)
+            {
+                lastVideoInfo = now;
+                const bool active = now - lastVideoPush < 500.0;
+                sendPacket (tVideoInfo, videoTo, [&] (Writer& w)
+                {
+                    w.u32 (videoStream);
+                    w.u16 ((uint32_t) video.width); w.u16 ((uint32_t) video.height);
+                    w.u8 ((uint32_t) video.fps); w.u8 (active ? 1 : 0);
+                    w.str (video.stream);
+                    w.str (name);
+                });
+            }
+            if (videoToValid && ! camList.empty() && (camCapsDue || now - lastCamCaps >= 2000.0))
+            {
+                lastCamCaps = now;
+                camCapsDue = false;
+                sendCamCaps();
+            }
+            if (now - vbytesAt >= 1000.0)
+            {
+                vstats.kbps = vbytesAt > 0 ? (double) (vbytes - vbytesMark) * 8.0 / (now - vbytesAt) : 0.0;
+                vbytesMark = vbytes;
+                vbytesAt = now;
+            }
+        }
+
         if (sending)
         {
             // Sending to a Hydra by its name: follow it to its current address.
@@ -1172,6 +1255,106 @@ struct Endpoint::Impl
                 for (int c = 0; c < send.channels; ++c) encInter[(size_t) (i * send.channels + c)] = planar[c][i];
             const int bytes = enc != nullptr ? opus_encode_float (enc, encInter.data(), txFrames, payload, kMaxPayload) : -1;
             if (bytes > 0) sendAudio (payload, bytes, txFrames);
+        }
+    }
+
+    //--------------------------------------------------------------------------
+    // Video
+    void onVideoCtl (Remote& r, Reader& b, double now)
+    {
+        const uint32_t id = b.u32();
+        const bool want = b.u8() != 0;
+        bool key = b.u8() != 0;
+        const int maxH = (int) b.u16();
+        const uint32_t rec = b.u32(), lost = b.u32();
+        if (! b.ok || ! videoOn || ! trusts (r)) return;
+        if (id != 0 && id != videoStream) return;
+        if (! (videoToValid && r.from.sin_addr.s_addr == videoTo.sin_addr.s_addr) && ! sameName (r.name, video.host)) return;
+        if (want && ! wish.want) { key = true; videoWaitKey = true; }   // starting: begin with a key frame
+        wish.want = want;
+        wish.keyFrame = wish.keyFrame || key;
+        wish.maxHeight = maxH;
+        wishAt = now;
+        vstats.hydraReceived += rec;
+        vstats.hydraLost += lost;
+        if (! want) { videoQueue.clear(); videoQueued = 0; }
+    }
+
+    /** Hydra changed camera settings: the newest revision of this Hydra instance wins (it carries everything not
+        confirmed yet), older or repeated ones are ignored. */
+    void onCamSet (Remote& r, Reader& b)
+    {
+        const uint32_t id = b.u32();
+        const uint32_t rev = b.u32();
+        if (! b.ok || ! videoOn || ! trusts (r) || b.restBytes() < 1) return;
+        if (id != 0 && id != videoStream) return;
+        if (! (videoToValid && r.from.sin_addr.s_addr == videoTo.sin_addr.s_addr) && ! sameName (r.name, video.host)) return;
+        if (r.instance == camSetInstance && (int32_t) (rev - camSetRevision) <= 0)
+        {
+            if (rev == camApplied) camCapsDue = true;   // the confirmation got lost: say it again
+            return;
+        }
+        camSetInstance = r.instance;
+        camSetRevision = rev;
+        camSettings.assign (b.rest(), b.rest() + b.restBytes());
+        camSetNew = true;
+    }
+
+    /** The control list in parts of at most 1000 bytes; Hydra puts them together by the list revision. */
+    void sendCamCaps()
+    {
+        constexpr int kPart = 1000;
+        const int parts = std::max (1, (int) ((camList.size() + kPart - 1) / kPart));
+        if (parts > 255) return;
+        for (int part = 0; part < parts; ++part)
+        {
+            const int offset = part * kPart;
+            const int len = std::min (kPart, (int) camList.size() - offset);
+            sendPacket (tCamCaps, videoTo, [&] (Writer& w)
+            {
+                w.u32 (videoStream);
+                w.u32 (camApplied);
+                w.u16 (camListRevision);
+                w.u8 ((uint32_t) part);
+                w.u8 ((uint32_t) parts);
+                for (int i = 0; i < len; ++i) w.u8 (camList[(size_t) (offset + i)]);
+            });
+        }
+    }
+
+    /** Sends queued frame parts, paced: at most ~8 packets per millisecond (a key frame does not hit the Wi-Fi as one burst). */
+    void serviceVideo (double now)
+    {
+        if (videoQueue.empty()) return;
+        if (! videoOn || ! videoToValid) { videoQueue.clear(); videoQueued = 0; return; }
+        // Over the USB cable much more fits (the high bit rates of the USB quality), no Wi-Fi to spare.
+        const bool usb = videoOverUsb();
+        videoBudget = std::min (usb ? 160.0 : 24.0, videoBudget + (now - videoBudgetAt) * (usb ? 48.0 : 8.0));
+        videoBudgetAt = now;
+        while (videoBudget >= 1.0 && ! videoQueue.empty())
+        {
+            auto& f = videoQueue.front();
+            const int part = f.next++;
+            const int offset = part * kVideoPayload;
+            const int len = std::min (kVideoPayload, (int) f.data.size() - offset);
+            sendPacket (tVideo, videoTo, [&] (Writer& w)
+            {
+                w.u32 (videoStream); w.u32 (f.id);
+                w.u16 ((uint32_t) part); w.u16 ((uint32_t) f.parts);
+                w.u8 ((f.key ? 1u : 0u) | (f.key && ! videoConfig.empty() ? 2u : 0u)); w.u8 (1);
+                w.u16 ((uint32_t) f.width); w.u16 ((uint32_t) f.height);
+                w.u8 ((uint32_t) (f.rotation & 3)); w.u8 (0);
+                w.u32 (f.time);
+                for (int i = 0; i < len; ++i) w.u8 (f.data[(size_t) (offset + i)]);
+            });
+            vbytes += (uint64_t) len + kHeader + kVideoHeader + 28;   // + IP/UDP
+            videoBudget -= 1.0;
+            if (f.next >= f.parts)
+            {
+                videoQueued -= f.data.size();
+                videoQueue.pop_front();
+                ++vstats.frames;
+            }
         }
     }
 
@@ -1483,6 +1666,142 @@ TxStats Endpoint::getTxStats()
     s.lossPercent = s.heard ? m.fbLoss : -1;
     s.bufferMs = s.heard ? m.fbBuffer : -1;
     if (auto* p = m.txLive.load()) s.peak = p->peak.exchange (0.0f);
+    return s;
+}
+
+//==============================================================================
+bool Endpoint::startVideo (const VideoSettings& settings, std::string& error)
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    auto& m = *impl;
+    if (! m.running.load()) { error = "Hydra Link is not running"; return false; }
+    m.video = settings;
+    m.video.stream = cleanName (settings.stream.empty() ? std::string ("Camera") : settings.stream);
+    uint32_t ip = 0;
+    m.videoByName = ! parseIp (settings.host, ip);
+    m.videoToValid = false;
+    if (! m.videoByName)
+    {
+        if (! isLanIp (ip)) { error = "Only Hydras in the local network"; return false; }
+        m.videoTo = makeAddr (ip, settings.port);
+        m.videoToValid = true;
+    }
+    else
+        for (auto& [inst, r] : m.remotes)
+            if (r.announced && sameName (r.name, settings.host))
+            {
+                m.videoTo = makeAddr (ntohl (r.from.sin_addr.s_addr), r.port > 0 ? r.port : settings.port);
+                m.videoToValid = true;
+            }
+    if (! m.videoOn)
+    {
+        m.videoStream = (uint32_t) random64() | 1;
+        m.wish = {};
+        m.vstats = {};
+        m.videoWaitKey = true;
+    }
+    m.videoOn = true;
+    m.lastVideoInfo = -1.0e9;
+    return true;
+}
+
+void Endpoint::stopVideo()
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    auto& m = *impl;
+    m.videoOn = false;
+    m.wish = {};
+    m.camList.clear();
+    m.camSettings.clear();
+    m.camSetNew = false;
+    m.videoQueue.clear();
+    m.videoQueued = 0;
+    m.videoConfig.clear();
+}
+
+VideoWish Endpoint::getVideoWish()
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    auto w = impl->wish;
+    w.usb = impl->videoOverUsb();
+    impl->wish.keyFrame = false;
+    return w;
+}
+
+void Endpoint::pushVideo (const uint8_t* data, int bytes, bool keyFrame, bool config, int width, int height, int rotation, int64_t timeUs)
+{
+    if (data == nullptr || bytes <= 0) return;
+    std::lock_guard<std::mutex> l (impl->lock);
+    auto& m = *impl;
+    if (! m.videoOn) return;
+    if (config) { m.videoConfig.assign (data, data + bytes); return; }
+    if (! m.wish.want || ! m.videoToValid) return;
+    m.lastVideoPush = nowMs();
+    if (m.videoWaitKey && ! keyFrame) return;   // after a drop: nothing until the next key frame
+    if (m.videoQueued + (size_t) bytes > (m.videoOverUsb() ? kVideoQueueBytesUsb : kVideoQueueBytes))
+    {
+        // The network cannot keep up: throw away what waits and start again at a key frame.
+        m.vstats.dropped += (uint32_t) m.videoQueue.size() + 1;
+        m.videoQueue.clear();
+        m.videoQueued = 0;
+        m.videoWaitKey = true;
+        m.wish.keyFrame = true;
+        return;
+    }
+    Impl::VideoFrame f;
+    // A key frame carries the codec config in front unless the encoder put it there already (starts with an SPS).
+    auto startsWithSps = [&]
+    {
+        int i = 0;
+        while (i < bytes && i < 4 && data[i] == 0) ++i;
+        return i >= 2 && i < bytes - 1 && data[i] == 1 && (data[i + 1] & 0x1F) == 7;
+    };
+    if (keyFrame && ! m.videoConfig.empty() && ! startsWithSps()) f.data = m.videoConfig;
+    f.data.insert (f.data.end(), data, data + bytes);
+    f.id = ++m.videoFrameId;
+    f.key = keyFrame;
+    f.width = width;
+    f.height = height;
+    f.rotation = rotation;
+    f.time = (uint32_t) timeUs;
+    f.parts = (int) ((f.data.size() + kVideoPayload - 1) / kVideoPayload);
+    if (f.parts > 65535) return;
+    if (keyFrame) m.videoWaitKey = false;
+    m.videoQueued += f.data.size();
+    m.videoQueue.push_back (std::move (f));
+}
+
+void Endpoint::setCameraControls (const uint8_t* list, int bytes)
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    auto& m = *impl;
+    std::vector<uint8_t> v (list, list + std::max (0, bytes));
+    // The list after taking settings confirms them: Hydra then shows the list's values again (sent together, so
+    // Hydra never sees the confirmation with the old values).
+    const bool confirms = m.camApplied != m.camTaken;
+    m.camApplied = m.camTaken;
+    if (v == m.camList && ! confirms) return;
+    if (v != m.camList) { m.camList = std::move (v); ++m.camListRevision; }
+    m.camCapsDue = true;
+}
+
+std::vector<uint8_t> Endpoint::takeCameraSettings()
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    auto& m = *impl;
+    if (! m.camSetNew) return {};
+    m.camSetNew = false;
+    m.camTaken = m.camSetRevision;   // confirmed with the next setCameraControls
+    return std::move (m.camSettings);
+}
+
+VideoStats Endpoint::getVideoStats()
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    auto s = impl->vstats;
+    s.on = impl->videoOn;
+    s.reachable = impl->videoToValid;
+    s.usb = impl->videoOverUsb();
     return s;
 }
 } // namespace hydra::lite

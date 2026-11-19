@@ -1,15 +1,108 @@
 #include "Denoiser.h"
 #include <rnnoise.h>
-#if defined (__AVX2__)
- #include <immintrin.h>
+#include <immintrin.h>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+#include <unordered_set>
+#ifndef NOMINMAX
+ #define NOMINMAX
 #endif
+#include <windows.h>
+#include <avrt.h>
+#pragma comment (lib, "avrt.lib")
 
 namespace hydra::dsp
 {
+namespace
+{
+/** The one thread that computes the RNNoise frames of all denoisers (see Denoiser). Woken per frame by the audio
+    thread (one SetEvent every 10 ms per denoiser in use), MMCSS "Pro Audio" high: below the engine's audio thread
+    (critical), above everything else. Sleeps without frames. */
+class WorkerPool
+{
+public:
+    static WorkerPool& get() { static WorkerPool p; return p; }
+
+    void add (Denoiser* d)
+    {
+        std::lock_guard<std::mutex> l (lock);
+        known.insert (d);
+        if (! worker.joinable()) worker = std::thread ([this] { run(); });
+    }
+    /** Message thread (destructor): after this the worker never touches d again. */
+    void remove (Denoiser* d)
+    {
+        std::unique_lock<std::mutex> l (lock);
+        known.erase (d);
+        idleAgain.wait (l, [&] { return busy != d; });
+    }
+    /** Audio thread: no lock, no allocation; one SetEvent. */
+    void submit (Denoiser* d) noexcept
+    {
+        const uint32_t i = writeIndex.fetch_add (1, std::memory_order_relaxed);
+        slots[i & kMask].store (d, std::memory_order_release);
+        SetEvent (wake);
+    }
+
+private:
+    static constexpr uint32_t kSlots = 256, kMask = kSlots - 1;   // a denoiser has at most one frame queued
+
+    WorkerPool() : wake (CreateEventW (nullptr, FALSE, FALSE, nullptr)) {}
+    ~WorkerPool()
+    {
+        stopping = true;
+        SetEvent (wake);
+        if (worker.joinable()) worker.join();
+        CloseHandle (wake);
+    }
+
+    void run()
+    {
+        DWORD task = 0;
+        if (HANDLE mmcss = AvSetMmThreadCharacteristicsW (L"Pro Audio", &task)) AvSetMmThreadPriority (mmcss, AVRT_PRIORITY_HIGH);
+        else SetThreadPriority (GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+        while (! stopping)
+        {
+            WaitForSingleObject (wake, 200);
+            for (;;)
+            {
+                Denoiser* d = slots[readIndex & kMask].exchange (nullptr, std::memory_order_acquire);
+                if (d == nullptr) break;   // empty (or the producer has not stored it yet: it signals again)
+                ++readIndex;
+                {
+                    std::lock_guard<std::mutex> l (lock);
+                    if (known.count (d) == 0 || ! d->claimJob()) continue;   // gone, or the audio thread took it back
+                    busy = d;
+                }
+                d->runJob();
+                {
+                    std::lock_guard<std::mutex> l (lock);
+                    busy = nullptr;
+                }
+                idleAgain.notify_all();
+            }
+        }
+    }
+
+    std::atomic<Denoiser*> slots[kSlots] {};
+    std::atomic<uint32_t> writeIndex { 0 };
+    uint32_t readIndex = 0;   // worker
+    HANDLE wake;
+    std::atomic<bool> stopping { false };
+    std::mutex lock;
+    std::condition_variable idleAgain;
+    std::unordered_set<Denoiser*> known;
+    Denoiser* busy = nullptr;
+    std::thread worker;
+};
+} // namespace
 void Denoiser::Channel::clear() noexcept
 {
     if (st != nullptr) rnnoise_init (st, nullptr);
     std::fill (std::begin (fifo), std::end (fifo), 0.0f);
+    std::fill (std::begin (jobIn), std::end (jobIn), 0.0f);
+    std::fill (std::begin (jobOut), std::end (jobOut), 0.0f);
     std::fill (std::begin (nativeOut), std::end (nativeOut), 0.0f);
     std::fill (delay.begin(), delay.end(), 0.0f);
     std::fill (std::begin (z1), std::end (z1), 0.0);
@@ -25,10 +118,13 @@ Denoiser::Denoiser()
     jassert (RNNOISE_NB_GAIN_BANDS == kBands);
     for (auto& c : ch) c.st = rnnoise_create (nullptr);
     prepare (48000.0);
+    WorkerPool::get().add (this);
 }
 
 Denoiser::~Denoiser()
 {
+    WorkerPool::get().remove (this);
+    settleJob();
     for (auto& c : ch)
         if (c.st != nullptr) rnnoise_destroy (c.st);
 }
@@ -72,18 +168,19 @@ void Denoiser::configure (double sampleRate)
         const int outDelay = fromModel.getLatencyFrames() + 1;   // model samples
 
         // Native HQ: silence ahead of the model's output, enough that it never runs dry between two frames.
-        nativePreRoll = (int) std::ceil ((kFrame + outDelay) * ratio) + inDelay + kChunk + 2;
+        // With the worker the frame's audio comes one engine block later (extraDelay).
+        nativePreRoll = (int) std::ceil ((kFrame + outDelay) * ratio) + inDelay + kChunk + 2 + extraDelay;
         modelIn.allocate (2, 4096);
         modelOut.allocate (2, nativePreRoll + 2 * (int) std::ceil (kFrame * ratio) + 64);
 
         latency[UltraLow] = 0;
         latency[Low] = juce::roundToInt (0.01 * rate);
-        latency[Aligned] = juce::roundToInt (0.02 * rate) + inDelay;   // also waits for the resampled copy
+        latency[Aligned] = juce::roundToInt (0.02 * rate) + inDelay + extraDelay;   // also waits for the resampled copy
         latency[Native] = juce::roundToInt ((2 * kFrame + outDelay) * ratio) + inDelay + nativePreRoll;
     }
     else
     {
-        for (int m = 0; m < NumModes; ++m) latency[m] = latencyForMode (m);
+        for (int m = 0; m < NumModes; ++m) latency[m] = latencyForMode (m) + (m >= Aligned ? extraDelay : 0);
     }
 
     const int delaySize = juce::nextPowerOfTwo (juce::jmax (2048, latency[Native] + 8));
@@ -91,18 +188,23 @@ void Denoiser::configure (double sampleRate)
     for (auto& c : ch) c.delay.assign ((size_t) delaySize, 0.0f);
 }
 
-void Denoiser::prepare (double sampleRate)
+void Denoiser::prepare (double sampleRate, int block)
 {
+    settleJob();
+    engineBlock = juce::jmax (0, block);
+    extraDelay = engineBlock;   // Aligned / Native: the time the worker has for a frame
     configure (sampleRate);
     reset();
 }
 
 void Denoiser::reset() noexcept
 {
+    settleJob();
     for (auto& c : ch) c.clear();
     pos = 0;
     writePos = 0;
-    frameVad = 0.0f;
+    nativePos = kFrame;
+    applyIn = 0;
     vad.store (0.0f);
     if (resampled)
     {
@@ -115,24 +217,93 @@ void Denoiser::reset() noexcept
     }
 }
 
-void Denoiser::startFrame (Channel& c) noexcept
+bool Denoiser::claimJob() noexcept
 {
-    if (mode == Native)
+    int q = queued;
+    return jobState.compare_exchange_strong (q, running, std::memory_order_acq_rel);
+}
+
+void Denoiser::runJob() noexcept
+{
+    // Worker thread, or the audio thread when it computes the frame itself. Only touches the job's buffers and the
+    // RNNoise states (nobody else uses them while a job is in flight).
+    float v = 0.0f;
+    for (int c = 0; c < jobChans; ++c)
     {
-        const float v = rnnoise_process_frame (c.st, c.nativeOut, c.fifo);
-        for (auto& s : c.nativeOut) s *= (1.0f / 32768.0f);
-        frameVad = juce::jmax (frameVad, v);
-        return;
+        auto& C = ch[c];
+        if (jobMode == Native)
+        {
+            v = juce::jmax (v, rnnoise_process_frame (C.st, C.jobOut, C.jobIn));
+            for (auto& x : C.jobOut) x *= (1.0f / 32768.0f);
+        }
+        else
+            v = juce::jmax (v, rnnoise_process_frame_gains (C.st, C.jobGains, C.jobIn));
     }
+    jobVad = v;
+    jobState.store (done, std::memory_order_release);
+}
 
-    float g[kBands];
-    frameVad = juce::jmax (frameVad, rnnoise_process_frame_gains (c.st, g, c.fifo));
+void Denoiser::settleJob() noexcept
+{
+    int q = queued;
+    jobState.compare_exchange_strong (q, idle, std::memory_order_acq_rel);   // not started: cancelled
+    while (jobState.load (std::memory_order_acquire) == running) _mm_pause();   // the worker finishes it
+    jobState.store (idle, std::memory_order_release);
+    pending = false;
+}
 
-    // y = g[31] * x + sum_j (g[j] - g[j+1]) * LP_j(x)  -> telescoping, exact when all gains are equal
-    for (int j = 0; j < kXover; ++j)
-        c.wStep[j] = ((double) (g[j] - g[j + 1]) - c.w[j]) * rampInv;
-    c.wLastStep = ((double) g[kBands - 1] - c.wLast) * rampInv;
-    c.rampLeft = ramp;
+void Denoiser::submitFrame (int chans, bool realtime) noexcept
+{
+    for (int c = 0; c < chans; ++c) std::memcpy (ch[c].jobIn, ch[c].fifo, sizeof (ch[c].fifo));
+    jobChans = chans;
+    jobMode = mode;
+    pending = true;
+    applyIn = mode >= Aligned ? extraDelay : 0;
+    if (realtime && engineBlock > 0)
+    {
+        jobState.store (queued, std::memory_order_release);
+        WorkerPool::get().submit (this);
+    }
+    else
+    {
+        jobState.store (running, std::memory_order_relaxed);
+        runJob();
+    }
+}
+
+void Denoiser::applyFrame (bool force) noexcept
+{
+    if (jobState.load (std::memory_order_acquire) != done)
+    {
+        if (! force) return;   // Ultra Low / Low: the gains start as soon as they are there
+        if (claimJob()) runJob();   // still queued: the audio thread computes it itself
+        else while (jobState.load (std::memory_order_acquire) != done) _mm_pause();   // the worker is on it
+    }
+    if (jobMode == Native)
+    {
+        if (resampled)
+        {
+            const float* out[2] = { ch[0].jobOut, jobChans > 1 ? ch[1].jobOut : nullptr };
+            fromModel.push (out, kFrame, modelOut);
+        }
+        else
+            for (int c = 0; c < jobChans; ++c) std::memcpy (ch[c].nativeOut, ch[c].jobOut, sizeof (ch[c].jobOut));
+        nativePos = 0;
+    }
+    else
+        for (int c = 0; c < jobChans; ++c)
+        {
+            // y = g[31] * x + sum_j (g[j] - g[j+1]) * LP_j(x)  -> telescoping, exact when all gains are equal
+            auto& C = ch[c];
+            const float* g = C.jobGains;
+            for (int j = 0; j < kXover; ++j)
+                C.wStep[j] = ((double) (g[j] - g[j + 1]) - C.w[j]) * rampInv;
+            C.wLastStep = ((double) g[kBands - 1] - C.wLast) * rampInv;
+            C.rampLeft = ramp;
+        }
+    vad.store (jobVad, std::memory_order_relaxed);
+    jobState.store (idle, std::memory_order_release);
+    pending = false;
 }
 
 inline float Denoiser::filterbank (Channel& c, float in) noexcept
@@ -193,21 +364,24 @@ void Denoiser::process (float* l, float* r, int n, const DenoiserSettings& s, bo
 
     const float wet = juce::jlimit (0.0f, 1.0f, s.amount);
     float* io[2] = { l, r };
-    if (resampled) processResampled (io, n, wet, 1.0f - wet, stereo ? 2 : 1);
-    else           process48k (io, n, wet, 1.0f - wet, stereo ? 2 : 1);
+    if (resampled) processResampled (io, n, wet, 1.0f - wet, stereo ? 2 : 1, s.realtime);
+    else           process48k (io, n, wet, 1.0f - wet, stereo ? 2 : 1, s.realtime);
 
     if (! stereo)
         std::memcpy (r, l, (size_t) n * sizeof (float));
 }
 
-void Denoiser::process48k (float** io, int n, float wet, float dry, int chans) noexcept
+void Denoiser::process48k (float** io, int n, float wet, float dry, int chans, bool realtime) noexcept
 {
     const int delaySamples = latency[mode];
+    const bool exact = mode >= Aligned;   // Aligned / Native: the result is used exactly when due
     int i = 0;
     while (i < n)
     {
-        const int chunk = juce::jmin (n - i, kFrame - pos);
-        const int wp = writePos;
+        if (pending && applyIn <= 0) applyFrame (exact);
+        int chunk = juce::jmin (n - i, kFrame - pos);
+        if (pending && applyIn > 0) chunk = juce::jmin (chunk, applyIn);
+        const int wp = writePos, np = nativePos;
 
         for (int c = 0; c < chans; ++c)
         {
@@ -222,55 +396,51 @@ void Denoiser::process48k (float** io, int n, float wet, float dry, int chans) n
                 delay[w] = in;
                 const float d = delay[(w - delaySamples) & delayMask];
                 w = (w + 1) & delayMask;
-                const float y = mode == Native ? C.nativeOut[pos + k] : filterbank (C, d);
+                const float y = mode == Native ? (np + k < kFrame ? C.nativeOut[np + k] : 0.0f) : filterbank (C, d);
                 x[k] = y * wet + d * dry;
             }
         }
 
         writePos = (wp + chunk) & delayMask;
+        nativePos = juce::jmin (kFrame, np + chunk);
         pos += chunk;
         i += chunk;
+        if (pending) applyIn -= chunk;
 
         if (pos == kFrame)
         {
             pos = 0;
-            frameVad = 0.0f;
-            for (int c = 0; c < chans; ++c)
-                startFrame (ch[c]);
-            vad.store (frameVad, std::memory_order_relaxed);
+            if (pending) applyFrame (true);   // the previous frame was never used (worker very late): now
+            submitFrame (chans, realtime);
         }
     }
 }
 
-void Denoiser::processResampled (float** io, int n, float wet, float dry, int chans) noexcept
+void Denoiser::processResampled (float** io, int n, float wet, float dry, int chans, bool realtime) noexcept
 {
     const int delaySamples = latency[mode];
+    const bool exact = mode >= Aligned;
     float nativeWet[2][kChunk];
     int i = 0;
     while (i < n)
     {
-        const int chunk = juce::jmin (n - i, kChunk);
+        int chunk = juce::jmin (n - i, kChunk);
+        if (pending && applyIn > 0) chunk = juce::jmin (chunk, applyIn);
 
         // The model hears a 48 kHz copy of the input; a frame is ready every 10 ms.
         const float* in[2] = { io[0] + i, chans > 1 ? io[1] + i : nullptr };
         toModel.push (in, chunk, modelIn);
         while (modelIn.available() >= kFrame)
         {
+            if (pending) applyFrame (true);   // the previous frame was never used (worker very late): now
             float* frame[2] = { ch[0].fifo, ch[1].fifo };
             modelIn.read (frame, 2, kFrame);
-            frameVad = 0.0f;
             for (int c = 0; c < chans; ++c)
-            {
                 for (auto& v : ch[c].fifo) v *= 32768.0f; // RNNoise expects 16-bit scale
-                startFrame (ch[c]);
-            }
-            vad.store (frameVad, std::memory_order_relaxed);
-            if (mode == Native)
-            {
-                const float* out[2] = { ch[0].nativeOut, chans > 1 ? ch[1].nativeOut : nullptr };
-                fromModel.push (out, kFrame, modelOut);
-            }
+            submitFrame (chans, realtime);
         }
+        // Due now (computed in place without the worker: at once, as before): gains / Native audio for this chunk.
+        if (pending && applyIn <= 0) applyFrame (exact);
 
         if (mode == Native)
         {
@@ -297,6 +467,7 @@ void Denoiser::processResampled (float** io, int n, float wet, float dry, int ch
             }
         }
         writePos = (wp + chunk) & delayMask;
+        if (pending) applyIn -= chunk;
         i += chunk;
     }
 }

@@ -22,6 +22,7 @@ juce::Colour fxColour (Fx f)
         case Fx::headphone:  return theme::fxHeadphone;
         case Fx::voice:      return theme::fxVoice;
         case Fx::saturation: return theme::fxSaturation;
+        case Fx::sidechain:  return theme::fxSidechain;
         case Fx::denoiser:   return theme::good;
         default:             return theme::fx;
     }
@@ -36,6 +37,7 @@ juce::String placesOf (Fx f)
         case Fx::correction: return "for H outputs";
         case Fx::headphone:  return "for headphone outputs";
         case Fx::voice:      return "one knob for a studio voice";
+        case Fx::sidechain:  return "makes room for another channel";
         default:             return {};
     }
 }
@@ -59,7 +61,7 @@ std::vector<int> stemsInputs (const Engine& e)
 }
 
 // Order in the browser: the everyday effects first.
-const Fx kBrowserOrder[] = { Fx::voice, Fx::eq, Fx::comp, Fx::gate, Fx::limiter, Fx::saturation, Fx::utility, Fx::denoiser, Fx::transpose, Fx::stems, Fx::headphone, Fx::correction };
+const Fx kBrowserOrder[] = { Fx::voice, Fx::eq, Fx::comp, Fx::gate, Fx::limiter, Fx::saturation, Fx::sidechain, Fx::utility, Fx::denoiser, Fx::transpose, Fx::stems, Fx::headphone, Fx::correction };
 } // namespace
 
 //==============================================================================

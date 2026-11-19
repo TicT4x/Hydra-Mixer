@@ -160,6 +160,8 @@ bool Session::save (const juce::File& f) const
     if (prefs.netName.isNotEmpty()) app->setAttribute ("netName", prefs.netName);
     if (prefs.netPassword.isNotEmpty()) app->setAttribute ("netKey", protectedNetPassword (prefs.netPassword));
     if (! prefs.netPeers.isEmpty()) app->setAttribute ("netPeers", prefs.netPeers.joinIntoString (";"));
+    if (prefs.cameraEnabled) app->setAttribute ("cameraEnabled", true);
+    if (prefs.cameraPhone.isNotEmpty()) app->setAttribute ("cameraPhone", prefs.cameraPhone);
     app->setAttribute ("remoteEnabled", prefs.remoteEnabled);
     if (prefs.remotePort != remote::kDefaultPort) app->setAttribute ("remotePort", prefs.remotePort);
     if (prefs.remoteCode.isNotEmpty()) app->setAttribute ("remoteKey", protectedRemoteCode (prefs.remoteCode));
@@ -277,6 +279,8 @@ bool Session::load (const juce::File& f)
         prefs.netPeers = juce::StringArray::fromTokens (app->getStringAttribute ("netPeers"), ";", {});
         prefs.netPeers.trim();
         prefs.netPeers.removeEmptyStrings();
+        prefs.cameraEnabled = app->getBoolAttribute ("cameraEnabled", false);
+        prefs.cameraPhone = app->getStringAttribute ("cameraPhone");
         prefs.remoteEnabled = app->getBoolAttribute ("remoteEnabled", false);
         prefs.remotePort = juce::jlimit (1, 65535, app->getIntAttribute ("remotePort", remote::kDefaultPort));
         // Encrypted for this Windows user: on another PC / account it is empty and a new code is made.

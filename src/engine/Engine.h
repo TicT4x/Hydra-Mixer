@@ -8,6 +8,7 @@
 #include "core/Utility.h"
 #include "core/VoiceFx.h"
 #include "core/MatchEq.h"
+#include "core/SidechainEq.h"
 #include "IoStreams.h"
 #include "Stems.h"
 #include "Transpose.h"
@@ -155,6 +156,41 @@ struct SaturationFx
     dsp::SaturatorSettings settings() const noexcept { return { drive->get(), warmth->get() * 0.01f, mix->get() * 0.01f, output->get() }; }
 };
 
+/** Sidechain EQ (core/SidechainEq.h): the key channel (source, an input or a bus, after its effects) turns this
+    channel down where it is loud. Auto = spectral over LOW..HIGH, Bands = up to 6 dynamic bands. Two instances
+    per channel (kScInstances; the others have no parameters). */
+constexpr int kScInstances = 2;
+struct SidechainFx
+{
+    Param *on {}, *source {}, *mode {}, *amount {}, *depth {}, *sens {}, *lo {}, *hi {}, *attack {}, *release {};
+    struct BandParams { Param *on {}, *type {}, *freq {}, *q {}, *range {}, *thr {}; };
+    std::array<BandParams, dsp::SidechainEqSettings::kBands> bands {};
+    dsp::SidechainEq dsp;
+    uint64_t keySeen = 0;   // audio thread: stamp of the key block used last
+    /** Key channel (selection index), -1 = none. */
+    int sourceChannel() const noexcept { return juce::roundToInt (source->get()) - 1; }
+    dsp::SidechainEqSettings settings() const noexcept
+    {
+        dsp::SidechainEqSettings s;
+        s.mode = juce::roundToInt (mode->get());
+        s.amount = amount->get() * 0.01f;
+        s.depthDb = depth->get();
+        s.sensDb = sens->get();
+        s.loHz = lo->get(); s.hiHz = hi->get();
+        s.attackMs = attack->get(); s.releaseMs = release->get();
+        for (size_t b = 0; b < bands.size(); ++b)
+        {
+            auto& d = s.bands[b];
+            const auto& p = bands[b];
+            d.on = p.on->isOn();
+            d.type = juce::roundToInt (p.type->get());
+            d.freq = p.freq->get(); d.q = p.q->get();
+            d.rangeDb = p.range->get(); d.thrDb = p.thr->get();
+        }
+        return s;
+    }
+};
+
 /** Studio Voice (core/VoiceFx.h): one knob (amount) and a profile run a whole vocal chain; Engine::convertVoice
     replaces it with the real blocks (EQ, Gate, Compressor(s), Saturation, Limiter) at their current settings.
     Once per channel. "Learn my mic" (Engine::startVoiceLearn): ~8 s of speech are analysed (match::Analyzer), the
@@ -257,6 +293,15 @@ struct ChannelFx
     std::array<HeadphoneFx, kFxInstances> headphones;   // headphone correction (instances like the other effects)
     std::array<VoiceFx, kFxInstances> voices;           // Studio Voice
     std::array<SaturationFx, kFxInstances> saturations;
+    std::array<SidechainFx, kScInstances> sidechains;
+    /** Key for Sidechain EQs on other channels: this channel's signal after its chain (mono), written by the audio
+        thread while scUsers > 0 (Engine timer counts them; they also keep this channel's effects running). The
+        stamp says in which engine chunk it was written: a target that is processed earlier in the chunk uses the
+        previous one (one block later, irrelevant for an envelope). */
+    std::vector<float> scKey;
+    int scKeyN = 0;
+    uint64_t scKeyStamp = 0;
+    std::atomic<int> scUsers { 0 };
     /** A Match EQ learning its reference from this channel: its ring, written after this channel's chain. */
     std::atomic<SpscAudioRing*> refTap { nullptr };
     Param *fxBypass {};
@@ -483,8 +528,16 @@ public:
     {
         return juce::jmax (peakLast.load (std::memory_order_relaxed), peakWindow.load (std::memory_order_relaxed));
     }
+    /** Like getRecentPeak, but only the CPU time the audio thread itself used (its cycle count): what Hydra computes,
+        without the moments in which Windows or a driver held the thread up. */
+    float getRecentWorkPeak() const noexcept
+    {
+        return juce::jmax (workPeakLast.load (std::memory_order_relaxed), workPeakWindow.load (std::memory_order_relaxed));
+    }
     /** Callbacks so far that took longer than real time (each one is usually an audible click). Readers diff it. */
     uint64_t getOverloads() const noexcept { return overloads.load (std::memory_order_relaxed); }
+    /** Of those: the ones in which Hydra's own work was under half the block (the thread was held up, not busy). */
+    uint64_t getHeldUpOverloads() const noexcept { return heldUp.load (std::memory_order_relaxed); }
 
     /** Average DSP load (callback time / real time) like a DAW's CPU meter. Each reader owns one and
         calls update() regularly; the value covers the time since the previous reading (min. ~0.25 s). */
@@ -607,7 +660,14 @@ public:
         the correction. */
     std::vector<Fx> typicalFx (int channel) const;
     /** How many instances of f a channel can have (correction: 1). */
-    static int maxInstances (Fx f) noexcept { return f == Fx::stems || f == Fx::transpose || f == Fx::voice ? 1 : kFxInstances; }
+    static int maxInstances (Fx f) noexcept
+    {
+        return f == Fx::stems || f == Fx::transpose || f == Fx::voice ? 1 : f == Fx::sidechain ? kScInstances : kFxInstances;
+    }
+    /** Sidechain EQ: channels that can be a key (inputs and buses; value of the source parameter = channel + 1). */
+    static bool isSidechainSource (int channel) noexcept { return juce::isPositiveAndBelow (channel, kMaxInputs + kMaxBuses); }
+    /** Counts the Sidechain EQs listening to each channel (ChannelFx::scUsers). Engine timer; tests call it. */
+    void updateSidechains();
     PluginChain& chainFor (int channel) noexcept { return fxOf (channel).plugins; }
     const PluginChain& chainFor (int channel) const noexcept { return fxOf (channel).plugins; }
 
@@ -755,6 +815,11 @@ private:
     void audioDeviceError (const juce::String&) override;
 
     void processChunk (const Graph& g, const float* const* in, int numIn, float* const* out, int numOut, int offset, int n) noexcept;
+    uint64_t chunkStamp = 0;   // audio thread: counts processChunk calls (Sidechain EQ keys)
+    /** Sidechain EQ sources that name a channel follow it when channels are reordered (dest[slot] = new slot of an
+        input / bus), or go back to none when it is removed. Message thread. */
+    void remapSidechainSources (bool buses, const std::vector<int>& dest);
+    void clearSidechainSource (int channel);
     void createFxParams (ChannelFx&, const juce::String& idPrefix, const juce::String& namePrefix);
     /** Audio thread: a channel's effect chain in place (stereo: the denoiser treats both sides apart). */
     void runFxChain (ChannelFx&, float* l, float* r, int n, bool timed, bool stereo) noexcept;
@@ -827,8 +892,55 @@ private:
     std::atomic<float> cpuLoad { 0 };
     std::atomic<float> peakWindow { 0 }, peakLast { 0 }, overloadPeak { 0 };   // audio thread writes (see getRecentPeak)
     std::atomic<uint64_t> overloads { 0 };
+    // CPU time of the audio thread (QueryThreadCycleTime, in TSC cycles) next to the wall clock: a block that
+    // takes long while the thread computed little was held up by Windows / a driver (getRecentWorkPeak).
+    std::atomic<float> workPeakWindow { 0 }, workPeakLast { 0 }, overloadWork { 0 };   // audio thread writes
+    std::atomic<uint64_t> heldUp { 0 };
+    std::atomic<double> cyclesPerTick { 0.0 };   // TSC cycles per high-resolution tick, message thread (calibrateCycles)
+    uint64_t calibCycles = 0;                    // message thread
+    juce::int64 calibTicks = 0;
+    void calibrateCycles();
+    int settleBlocks = 0;
+    // The master's callback thread belongs to its driver and has whatever priority the driver gave it, while
+    // Hydra's own helpers (cable pump, Hydra Link, loopback / app capture) run as MMCSS "Pro Audio". Sharing a core
+    // they could hold the audio thread up (peaks of 30-40 % at 64 samples, user 18.11.). The audio thread joins
+    // "Pro Audio" at critical priority the first time each driver thread calls (raiseAudioThread).
+    unsigned long raisedThread = 0;                       // audio thread
+    void raiseAudioThread() noexcept;
+    std::atomic<int> audioThreadWas { 0 };                // its priority before (GetThreadPriority)
+    std::atomic<unsigned long> audioThreadError { 0 };    // GetLastError when joining MMCSS failed
+
+    // Peak trace for troubleshooting (always on, ~50 rdtsc per block): where the CPU time of the slowest block
+    // went, per channel, per effect kind and for the asynchronous streams. The message thread writes one line
+    // to hydra.log per 10 s with a real peak ("dsp peak: ..."). Times in TSC cycles, by the clock (spans).
+    static constexpr int kTrBus = kMaxInputs, kTrRec = kMaxInputs + kMaxBuses, kTrPull = kTrRec + 1,
+                         kTrPush = kTrRec + 2, kTrSlots = kTrRec + 3;
+    struct TraceBlock
+    {
+        uint64_t slot[kTrSlots] {};                       // per input / bus / recorder / streams in / out
+        uint64_t stage[DspTimes::numStages] {};           // per kind of effect, all channels
+        uint64_t work = 0, wall = 0;                      // thread CPU cycles / clock cycles of the whole block
+        int n = 0, pullMax = -1, pushMax = -1;            // samples; slowest single stream (index in the graph)
+        uint64_t pullMaxCyc = 0, pushMaxCyc = 0;
+        unsigned cpu0 = 0, cpu1 = 0;                      // processor at start / end (differ: the thread was moved)
+        const void* graph = nullptr;
+    };
+    struct TraceWindow
+    {
+        TraceBlock worstWork, worstWall;
+        uint64_t sumSlot[kTrSlots] {}, sumStage[DspTimes::numStages] {}, sumWork = 0, blocks = 0;
+    };
+    TraceBlock trCur;                                     // audio thread: the block running now
+    TraceWindow trWin;                                    // audio thread writes under trSeq (seqlock)
+    std::atomic<uint32_t> trSeq { 0 };
+    std::atomic<bool> trReset { false };
+    double trNextLog = 0.0;                               // message thread
+    void finishTrace (uint64_t work, uint64_t wall, int n, unsigned cpu0, unsigned cpu1, const void* graph) noexcept;
+    void updateTraceLog();
+    bool onAudioThread() const noexcept;
+    std::atomic<bool> audioThreadRaised { false }, audioThreadNews { false };   // message thread logs the news                        // audio thread: blocks after a start that do not count as overloads
     int peakFrames = 0;                                                        // audio thread
-    uint64_t overloadsLogged = 0;                                              // message thread
+    uint64_t overloadsLogged = 0, heldUpLogged = 0;                            // message thread
     double overloadLogTime = -1.0e9;
     std::atomic<uint64_t> busyTicks { 0 }, busyFrames { 0 };   // always counted (see LoadMeter), audio thread writes
     double ticksToSeconds = 1.0;

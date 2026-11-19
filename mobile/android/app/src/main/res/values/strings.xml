@@ -109,4 +109,21 @@
     <string name="mixer_waiting">Waiting until %1$s allows this phone (see the Audio page).</string>
     <string name="mixer_remote_off_title">Control is off</string>
     <string name="mixer_remote_off">%1$s does not allow control from phones right now: switch on Settings → Remote there.</string>
+    <string name="camera">Camera</string>
+    <string name="camera_card">Camera for Hydra (beta)</string>
+    <string name="camera_connect_first">Connect to a Hydra above first. Tap to switch the camera on already.</string>
+    <string name="camera_wait_connect">On: starts once this phone is connected to a Hydra.</string>
+    <string name="camera_off">Tap: Hydra can use this camera as webcam</string>
+    <string name="camera_ready">Ready. It only films while an app on %1$s shows \"Hydra Camera\".</string>
+    <string name="camera_sending">Sending %1$d × %2$d, %3$.1f Mbit/s</string>
+    <string name="camera_permission">Tap to allow the camera</string>
+    <string name="camera_denied">Hydra Link needs the camera permission for this.</string>
+    <string name="camera_front">Front camera</string>
+    <string name="camera_back">Back camera</string>
+    <string name="camera_hd">Full HD (1080p, about 8 Mbit/s; else 720p, 4 Mbit/s)</string>
+    <string name="camera_usb">Best picture: over the USB cable</string>
+    <string name="camera_usb_hint">Connect the phone to the PC with a cable and switch on \"USB tethering\" (tap here). Hydra Link then runs over the cable: up to 30 Mbit/s and more (Bit rate in Hydra), no Wi-Fi dropouts. Sound goes over it too.</string>
+    <string name="camera_usb_toast">Switch on \"USB tethering\" (Samsung: Mobile hotspot and tethering)</string>
+    <string name="camera_via_usb"> · USB</string>
+    <string name="camera_hint">On the PC: Hydra Settings → Network → Phone camera (beta, Windows 11). The picture goes to Teams, Zoom, Discord, OBS like any webcam. Camera, zoom, exposure, focus, white balance and modes can be set there too (Camera controls).</string>
 </resources>

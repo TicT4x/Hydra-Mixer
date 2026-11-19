@@ -2,6 +2,7 @@
 #include "MainComponent.h"
 #include "CableManager.h"
 #include "RecorderWindow.h"
+#include "CameraView.h"
 #include "state/VacCables.h"
 #include "state/ChannelClipboard.h"
 #include "state/Session.h"
@@ -195,12 +196,19 @@ DspMeter::DspMeter()
     setLoad (0.0f, 0.0f);
 }
 
-void DspMeter::setLoad (float l, float peak, int overloadsNow, uint64_t overloadsTotal)
+void DspMeter::setLoad (float l, float peak, int overloadsNow, uint64_t overloadsTotal, uint64_t heldUpTotal)
 {
     juce::String tip ("DSP load\nBar and number: average share of real time the audio engine needs (like a DAW's CPU meter).\n"
-                      "Lighter bar behind it: slowest single block of the last second, now " + juce::String (juce::roundToInt (peak * 100.0f)) + " %. "
-                      "Above 100 % a block was not ready in time: that clicks on all devices at once (red).");
-    if (overloadsTotal > 0) tip << "\nBlocks over 100 % since the start: " << juce::String ((juce::int64) overloadsTotal) << " (also in hydra.log)";
+                      "Lighter bar behind it: the most Hydra computed in a single block of the last second, now " + juce::String (juce::roundToInt (peak * 100.0f)) + " %. "
+                      "Red: a block was not ready in time, that clicks on all devices at once.");
+    if (overloadsTotal > 0)
+    {
+        tip << "\nBlocks not ready in time since the start: " << juce::String ((juce::int64) overloadsTotal) << " (also in hydra.log)";
+        // At small buffers most of them are moments in which Windows or a driver held the audio thread up.
+        if (heldUpTotal > 0)
+            tip << ", " << juce::String ((juce::int64) heldUpTotal) << " of them while Hydra had little to compute: the audio thread was held up "
+                   "by Windows or a driver. A bigger buffer of the master device helps against those, fewer effects do not.";
+    }
     tip << "\nClick: what uses it, per channel and plugin";
     setTooltip (tip);
     if (overloadsNow > 0) alarm = 1.0f;   // shown for ~3 s (fades in tick)
@@ -399,8 +407,10 @@ void TopBar::update()
         const auto ov = e.getOverloads();
         const int fresh = (int) juce::jmin ((uint64_t) 1000, ov - juce::jmin (ov, overloadsSeen));
         overloadsSeen = ov;
-        dsp.setLoad (demoMode ? demoDspLoad : cpuMeter.update (e), demoMode ? demoDspLoad * 1.4f : e.getRecentPeak(),
-                     demoMode ? 0 : fresh, demoMode ? 0 : ov);
+        // The lighter peak bar shows what Hydra computes (the audio thread's CPU time); a block that was late only
+        // because Windows / a driver held the thread up still turns the meter red, but no longer reads as Hydra busy.
+        dsp.setLoad (demoMode ? demoDspLoad : cpuMeter.update (e), demoMode ? demoDspLoad * 1.4f : e.getRecentWorkPeak(),
+                     demoMode ? 0 : fresh, demoMode ? 0 : ov, demoMode ? 0 : e.getHeldUpOverloads());
         dsp.tick();
     }
 
@@ -612,6 +622,7 @@ MainComponent::MainComponent (Engine& engine, MidiMapper& midi, Hotkeys& hotkeys
     ctx.openDevicePicker = [this] (int i) { openDevicePicker (i); };
     ctx.openCableManager = [this] { openCableManager(); };
     ctx.openRecorder = [this] { openRecorderWindow(); };
+    ctx.openCamera = [this] { openCameraWindow(); };
     ctx.prefsChanged = [this] { if (onPrefsChanged) onPrefsChanged(); };
     ctx.shutdown = [this]
     {
@@ -692,6 +703,22 @@ MainComponent::~MainComponent()
     corrWindow.reset();
     cableWindow.reset();
     recorderWindow.reset();
+    cameraWindow.reset();
+}
+
+void MainComponent::openCameraWindow()
+{
+    if (cameraWindow == nullptr)
+    {
+        auto view = makeCameraView (ctx);
+        const int w = view->getWidth(), h = view->getHeight();
+        auto& win = makeToolWindow (cameraWindow, "Hydra Mixer - Phone camera", view.release(), w, h, juce::DocumentWindow::allButtons);
+        win.setResizeLimits (820, 460, 8000, 4000);
+        // Closed = gone: the phone stops filming for it (the window counts as a watcher while it exists).
+        win.onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MainComponent> (this)] { if (safe != nullptr) safe->cameraWindow.reset(); }); };
+    }
+    cameraWindow->setVisible (true);
+    cameraWindow->toFront (true);
 }
 
 void MainComponent::openRecorderWindow()
@@ -1279,6 +1306,8 @@ void MainComponent::showToolsMenu()
     m.addItem ("Latency Finder...", run (&MainComponent::openLatencyFinder));
     m.addItem ("Sync Delay...", run (&MainComponent::openSyncDelay));
     m.addItem ("DSP Load...", run (&MainComponent::openDspView));
+    if (ctx.session != nullptr && ctx.session->prefs.cameraEnabled)
+        m.addItem ("Phone camera...", run (&MainComponent::openCameraWindow));
     // Room Correction (its effect block), the Cable Manager (Settings > Virtual Cables) and the recorder
     // (top bar / inspector) open where they belong, not from here.
     m.addSeparator();

@@ -34,7 +34,7 @@ import java.net.Inet4Address
     on the left (Mixer, Scenes, Audio) and the channels as vertical strips. Edge to edge: the bars keep clear of the
     status bar, the camera cut-out and the gesture area (window insets). */
 class MainActivity : Activity() {
-    companion object { const val REQ_MIC = 1 }
+    companion object { const val REQ_MIC = 1; const val REQ_CAMERA = 3 }
 
     lateinit var prefs: SharedPreferences
     private val handler = Handler(Looper.getMainLooper())
@@ -332,6 +332,7 @@ class MainActivity : Activity() {
                 prefs.edit().putString("name", edit.text.toString().trim().take(40)).apply()
                 NativeLink.listen("", "")
                 NativeLink.stopSending()
+                CameraSender.disable()
                 NativeLink.stop()
                 startLink()
                 updateService()
@@ -351,13 +352,15 @@ class MainActivity : Activity() {
         val tx = s.optJSONObject("tx")
         val listening = rx?.optBoolean("listening") == true
         val sending = forceMic || tx?.optBoolean("sending") == true
-        if (!listening && !sending) { LinkService.stop(this); return }
+        val camera = CameraSender.enabled
+        if (!listening && !sending && !camera) { LinkService.stop(this); return }
         val hydra = (rx?.optString("sender") ?: "").ifEmpty { (tx?.optString("to") ?: "").ifEmpty { prefs.getString("hydra", "") ?: "" } }
-        LinkService.update(this, getString(R.string.notif_connected, hydra), sending)
+        LinkService.update(this, getString(R.string.notif_connected, hydra), sending, camera)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         if (requestCode == REQ_MIC) audio.onMicPermission(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED)
+        if (requestCode == REQ_CAMERA) audio.onCameraPermission(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED)
     }
 
     private val tick = object : Runnable {

@@ -72,7 +72,7 @@ public:
     DspMeter();
     std::function<void()> onClick;
     /** average / peak: share of real time; overloadsNow: blocks over 100 % since the last call. */
-    void setLoad (float average, float peak, int overloadsNow = 0, uint64_t overloadsTotal = 0);
+    void setLoad (float average, float peak, int overloadsNow = 0, uint64_t overloadsTotal = 0, uint64_t heldUpTotal = 0);
     void tick();   // 4x per second: fades the overload warning
     void paint (juce::Graphics&) override;
     void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
@@ -202,6 +202,7 @@ public:
     void openDspView();
     void openSyncDelay();
     void openCableManager();
+    void openCameraWindow();
     /** Room measurement window; outputSelect = a hardware output to preset as speaker and target (-1 = none). */
     void openRoomMeasurement (int outputSelect = -1);
     /** Device selection window of a channel (input source / bus output); one window, follows the last strip. */
@@ -336,7 +337,7 @@ private:
     uint32_t shownUpdate = ~0u;
     bool installWhenReady = false;   // "Update now": install as soon as the download is done
 
-    std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow, latencyWindow, dspWindow, syncWindow, deviceWindow, corrWindow, panelWindow, cableWindow, recorderWindow;
+    std::unique_ptr<ToolWindow> settingsWindow, midiWindow, eqWindow, latencyWindow, dspWindow, syncWindow, deviceWindow, corrWindow, panelWindow, cableWindow, recorderWindow, cameraWindow;
     int shownSelBus = -1;     // bus selected with SEL as shown by the input faders
     uint32_t shownLayout = 0; // engine channel layout the strips were built for
     float uiScale = 1.0f;

@@ -109,6 +109,32 @@ struct SendSettings
     int channels = 1;          // 1 = mono microphone
 };
 
+/** The phone's camera as Hydra's webcam (engine/PhoneCamera.h): where to send it. */
+struct VideoSettings
+{
+    std::string host;          // a Hydra's announced name or an IPv4 address
+    int port = kDefaultPort;
+    std::string stream = "Camera";
+    int width = 1280, height = 720, fps = 30;
+};
+
+/** What Hydra wants from the camera (VideoCtl, once a second). */
+struct VideoWish
+{
+    bool want = false;        // an app uses Hydra Camera: encode and send (false for 3 s without word from Hydra)
+    bool keyFrame = false;    // Hydra lost a frame: send a key frame next (cleared by getVideoWish)
+    int maxHeight = 0;        // the size the app chose (0 = unknown)
+    bool usb = false;         // the Hydra is reached over the USB cable (tethering): high bit rates are fine
+};
+
+struct VideoStats
+{
+    bool on = false, reachable = false, usb = false;
+    uint32_t frames = 0, dropped = 0;   // sent / dropped here (send queue full)
+    uint32_t hydraReceived = 0, hydraLost = 0;
+    double kbps = 0;                    // over the last second
+};
+
 class Endpoint
 {
 public:
@@ -158,6 +184,25 @@ public:
     std::atomic<float> micGain { 1.0f };
     /** Sends silence (the stream stays, Hydra's input keeps running); the level meter still shows the microphone. */
     std::atomic<bool> micMuted { false };
+
+    //--------------------------------------------------------------------------
+    /** Camera on: tells the Hydra once a second that a camera is there (VideoInfo) and listens to what it wants. */
+    bool startVideo (const VideoSettings&, std::string& error);
+    void stopVideo();
+    /** Polled by the app (~10x per second): whether to run the encoder, and key frame requests since the last call. */
+    VideoWish getVideoWish();
+    /** One encoded frame (H.264 Annex B). config = codec config (SPS / PPS): kept and sent in front of every key frame,
+        so Hydra can start at any key frame. Any thread; the network thread sends the parts paced. rotation = quarter
+        turns clockwise that show the picture upright. */
+    void pushVideo (const uint8_t* data, int bytes, bool keyFrame, bool config, int width, int height, int rotation, int64_t timeUs);
+    VideoStats getVideoStats();
+    /** The camera's settings as the app describes them (the control list of a CamCaps packet, engine/NetLink.cpp):
+        sent to the Hydra every 2 s and at once when it changes. */
+    void setCameraControls (const uint8_t* list, int bytes);
+    /** What Hydra set since the last call: u8 count, per entry u8 id, u8 values, f32 each (empty: nothing new).
+        Polled by the app with getVideoWish. The app applies it and then calls setCameraControls with its new values:
+        that confirms it to Hydra (call it even if nothing changed). */
+    std::vector<uint8_t> takeCameraSettings();
 
     struct Impl;
 

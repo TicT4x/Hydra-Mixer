@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(HydraMixer VERSION 0.8.4 LANGUAGES C CXX)
+project(HydraMixer VERSION 0.8.5 LANGUAGES C CXX)
 # Pre-release part of the version ("beta.1"), empty for a normal release. A release with a suffix must be marked
 # as pre-release on GitHub: only users with "Include beta versions" get it as an update (state/Updater.h).
 set(HYDRA_VERSION_SUFFIX "")
@@ -89,6 +89,35 @@ function(hydra_use_stems target)
     endif()
 endfunction()
 
+# Hydra Camera (a phone's camera as webcam, Windows 11, no kernel driver): the camera source that Windows' Frame
+# Server loads (src/camera/HydraCamera.cpp, no JUCE, static runtime). Embedded in the exe as RCDATA 203; Hydra's
+# elevated helper copies it to Program Files and registers it (src/camera/VideoCodec.cpp, engine/PhoneCamera.h).
+add_library(HydraCamera SHARED src/camera/HydraCamera.cpp)
+set(HYDRA_CAMERA_DLL "${CMAKE_BINARY_DIR}/camera/HydraCamera.dll")
+set_target_properties(HydraCamera PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/camera"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/camera"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/camera"
+    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/camera"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/camera"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/camera")
+target_include_directories(HydraCamera PRIVATE "${CMAKE_SOURCE_DIR}/src/camera")
+target_compile_definitions(HydraCamera PRIVATE UNICODE _UNICODE)
+if(MSVC)
+    target_compile_options(HydraCamera PRIVATE /W3 /permissive- $<$<CONFIG:Release,RelWithDebInfo>:/O2>)
+endif()
+set(HYDRA_CAMERA_RC "${CMAKE_BINARY_DIR}/hydra_camera.rc")
+file(WRITE "${HYDRA_CAMERA_RC}.in" "203 RCDATA \"${HYDRA_CAMERA_DLL}\"
+")
+configure_file("${HYDRA_CAMERA_RC}.in" "${HYDRA_CAMERA_RC}" COPYONLY)
+set_source_files_properties("${HYDRA_CAMERA_RC}" PROPERTIES OBJECT_DEPENDS "${HYDRA_CAMERA_DLL}")
+# VideoCodec.cpp needs the Windows 11 SDK declarations: without JUCE's precompiled header (it sets an older target).
+set_source_files_properties("${CMAKE_SOURCE_DIR}/src/camera/VideoCodec.cpp" PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+function(hydra_use_camera target)
+    target_sources(${target} PRIVATE "${HYDRA_CAMERA_RC}")
+    add_dependencies(${target} HydraCamera)
+endfunction()
+
 # Hydra Remote: the web app for phones / tablets, compiled into the exe (src/remote/RemoteControl.cpp serves it).
 juce_add_binary_data(HydraRemoteData HEADER_NAME RemoteData.h NAMESPACE RemoteData
     SOURCES resources/remote/index.html resources/remote/manifest.webmanifest resources/icon.png)
@@ -118,6 +147,7 @@ file(GLOB_RECURSE HYDRA_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/*.h")
 # src/linkcore is the phone app's network core (mobile/android); here only in the tests (LinkLiteTest).
 list(FILTER HYDRA_SOURCES EXCLUDE REGEX "/src/linkcore/")
+list(FILTER HYDRA_SOURCES EXCLUDE REGEX "/src/camera/HydraCamera\.cpp$")   # the DLL above
 target_sources(HydraMixer PRIVATE ${HYDRA_SOURCES})
 target_include_directories(HydraMixer PRIVATE "${CMAKE_SOURCE_DIR}/src")
 # Signalsmith Stretch (MIT, header only) for Transpose; it includes "signalsmith-linear/..." (MIT, header only).
@@ -160,6 +190,7 @@ target_link_libraries(HydraMixer
         $<$<NOT:$<BOOL:${HYDRA_FAST}>>:juce::juce_recommended_lto_flags>)
 hydra_precompile_headers(HydraMixer)
 hydra_use_stems(HydraMixer)
+hydra_use_camera(HydraMixer)
 
 if(MSVC)
     # Realtime audio: aggressive optimisation, AVX2 vectorisation, fast float maths.
@@ -178,7 +209,7 @@ endif()
 if(EXISTS "${CMAKE_SOURCE_DIR}/tests")
 # Offline DSP tests (run: build\<cfg>\HydraTests_artefacts\<cfg>\HydraTests.exe)
 juce_add_console_app(HydraTests PRODUCT_NAME "HydraTests")
-target_sources(HydraTests PRIVATE tests/DenoiserTest.cpp tests/SessionTest.cpp tests/MidiRangeTest.cpp tests/AppCaptureTest.cpp tests/LedTest.cpp tests/RecorderTest.cpp tests/MultitrackTest.cpp tests/AsioSecondaryTest.cpp tests/UndoTest.cpp tests/ReorderTest.cpp tests/SceneTest.cpp tests/SyncDelayTest.cpp tests/RoomAnalysisTest.cpp tests/CorrectionTest.cpp tests/DeviceNamesTest.cpp tests/FxChainTest.cpp tests/CorrectionPoolTest.cpp tests/VacTest.cpp tests/VacStreamTest.cpp tests/NetLinkTest.cpp tests/RemoteTest.cpp tests/LinkLiteTest.cpp tests/StemsTest.cpp tests/TransposeTest.cpp tests/InstallTest.cpp tests/HeadphoneTest.cpp tests/VoiceTest.cpp tests/DspBench.cpp
+target_sources(HydraTests PRIVATE tests/DenoiserTest.cpp tests/SessionTest.cpp tests/MidiRangeTest.cpp tests/AppCaptureTest.cpp tests/LedTest.cpp tests/RecorderTest.cpp tests/MultitrackTest.cpp tests/AsioSecondaryTest.cpp tests/UndoTest.cpp tests/ReorderTest.cpp tests/SceneTest.cpp tests/SyncDelayTest.cpp tests/RoomAnalysisTest.cpp tests/CorrectionTest.cpp tests/DeviceNamesTest.cpp tests/FxChainTest.cpp tests/CorrectionPoolTest.cpp tests/VacTest.cpp tests/VacStreamTest.cpp tests/NetLinkTest.cpp tests/RemoteTest.cpp tests/LinkLiteTest.cpp tests/StemsTest.cpp tests/TransposeTest.cpp tests/InstallTest.cpp tests/HeadphoneTest.cpp tests/VoiceTest.cpp tests/SidechainTest.cpp tests/DspBench.cpp tests/EngineBench.cpp tests/CameraTest.cpp src/engine/PhoneCamera.cpp src/camera/VideoCodec.cpp
     src/core/StemDsp.cpp src/engine/Stems.cpp src/core/PitchShift.cpp src/core/KeyDetect.cpp src/engine/Transpose.cpp src/core/Denoiser.cpp src/core/RoomAnalysis.cpp src/core/Correction.cpp src/core/HeadphoneEq.cpp src/core/MatchEq.cpp src/core/HiResFir.cpp src/core/ParamEq.cpp src/engine/Engine.cpp src/engine/IoStreams.cpp src/engine/VacStream.cpp src/engine/NetLink.cpp src/core/NetCodec.cpp src/core/NetCrypto.cpp src/remote/QrCode.cpp src/remote/RemoteServer.cpp src/remote/RemoteControl.cpp src/linkcore/LinkLite.cpp src/engine/AsioSecondary.cpp src/engine/Recorder.cpp src/engine/RecProject.cpp src/engine/PluginChain.cpp
     src/midi/MidiMapper.cpp src/midi/Hotkeys.cpp src/state/Session.cpp src/state/RecorderProject.cpp src/state/CorrectionSync.cpp src/state/VoicemeeterImport.cpp src/state/UndoHistory.cpp src/state/Scenes.cpp src/state/RoomMeasurements.cpp src/state/DeviceNames.cpp src/state/ChannelClipboard.cpp src/state/Presets.cpp src/state/CorrectionPool.cpp src/state/VacControl.cpp src/state/VacCables.cpp src/state/Install.cpp src/state/Updater.cpp src/state/Autostart.cpp)
 target_include_directories(HydraTests PRIVATE "${CMAKE_SOURCE_DIR}/src" ${HYDRA_SIGNALSMITH_INCLUDES})
@@ -188,6 +219,7 @@ target_link_libraries(HydraTests PRIVATE juce::juce_audio_utils juce::juce_audio
                       PUBLIC juce::juce_recommended_config_flags)
 hydra_precompile_headers(HydraTests)
 hydra_use_stems(HydraTests)
+hydra_use_camera(HydraTests)
 if(HYDRA_STEMS)   # StemsTest compares the DLLs unpacked from the exe with these
     set_property(SOURCE tests/StemsTest.cpp APPEND PROPERTY COMPILE_DEFINITIONS "HYDRA_ORT_BIN=\"${HYDRA_ORT_DIR}/bin\"")
 endif()

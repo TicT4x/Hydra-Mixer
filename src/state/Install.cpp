@@ -1,5 +1,7 @@
 #include "Install.h"
 #include "Autostart.h"
+#include "engine/PhoneCamera.h"
+#include "camera/VideoCodec.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -276,6 +278,8 @@ void uninstall (bool keepSettings)
     startMenuLink().deleteFile();
     desktopLink().deleteFile();
     if (firewallAllows (installedExe())) requestFirewall (installedExe(), false);
+    // Hydra Camera (registered for the machine, administrator): unregister it and remove its DLL.
+    if (const auto cs = cam::setupState(); cs == cam::SetupState::ok || cs == cam::SetupState::outdated) cam::PhoneCamera::requestSetup (false);
     RegDeleteTreeW (HKEY_CURRENT_USER, kUninstallKey);
     if (! keepSettings) appDataDir().deleteRecursively();
     // This exe runs from the folder: a hidden cmd deletes it a moment after we quit.

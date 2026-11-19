@@ -995,6 +995,7 @@ void MeterView::update (float dt)
 
 void MeterView::paint (juce::Graphics& g)
 {
+    if (isOpaque()) g.fillAll (backdrop);
     auto r = getLocalBounds().toFloat();
     const float gap = 2.0f;
     if (horizontal)

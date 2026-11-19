@@ -100,19 +100,30 @@ void Analyzer::feed (const float* x, int n)
 
 double Analyzer::totalSeconds() const noexcept { return (double) samples / sr; }
 
-float Analyzer::noiseDb() const
+float Analyzer::levelAt (double fraction) const
 {
     if (frames.empty()) return -120.0f;
     std::vector<float> lv;
     lv.reserve (frames.size());
     for (auto& f : frames) lv.push_back (f.levelDb);
-    std::nth_element (lv.begin(), lv.begin() + (long) (lv.size() / 10), lv.end());
-    return lv[lv.size() / 10];
+    const auto k = (long) juce::jlimit ((size_t) 0, lv.size() - 1, (size_t) (fraction * (double) lv.size()));
+    std::nth_element (lv.begin(), lv.begin() + k, lv.end());
+    return lv[(size_t) k];
+}
+
+float Analyzer::noiseDb() const { return levelAt (0.1); }
+
+float Analyzer::gateDb() const
+{
+    // 12 dB above the pauses, but never more than 20 dB below the loud frames: a signal without pauses (a guitar played
+    // on, a voice that keeps going) has no noise floor in it, its quietest frames are the signal itself - the noise rule
+    // alone gated out everything (14.11., found in IR-Lab: "the file is almost silent" for a steady -18 dBFS recording).
+    return juce::jmax (juce::jmin (noiseDb() + 12.0f, levelAt (0.9) - 20.0f), -60.0f);
 }
 
 double Analyzer::activeSeconds() const
 {
-    const float gate = juce::jmax (noiseDb() + 12.0f, -60.0f);
+    const float gate = gateDb();
     int n = 0;
     for (auto& f : frames) if (f.levelDb > gate) ++n;
     return n * (double) kHop / sr;
@@ -121,7 +132,7 @@ double Analyzer::activeSeconds() const
 bool Analyzer::result (Curve& out, double minSeconds) const
 {
     if (activeSeconds() < minSeconds) return false;
-    const float gate = juce::jmax (noiseDb() + 12.0f, -60.0f);
+    const float gate = gateDb();
     std::array<double, kBands> pow {};
     int n = 0;
     for (auto& f : frames)
@@ -408,7 +419,7 @@ void FineAnalyzer::feed (const float* l, const float* r, int n)
 
 double FineAnalyzer::totalSeconds() const noexcept { return (double) samples / sr; }
 
-float FineAnalyzer::noiseDb() const
+float FineAnalyzer::levelAt (double fraction) const
 {
     long long total = 0;
     for (int c : counts) total += c;
@@ -417,14 +428,17 @@ float FineAnalyzer::noiseDb() const
     for (int s = 0; s < kLevels; ++s)
     {
         seen += counts[(size_t) s];
-        if (seen * 10 > total) return (float) s - 130.0f + 0.5f;   // the quietest 10 %
+        if ((double) seen > fraction * (double) total) return (float) s - 130.0f + 0.5f;
     }
     return 10.0f;
 }
 
+float FineAnalyzer::noiseDb() const { return levelAt (0.1); }   // the quietest 10 %
+
 int FineAnalyzer::gateStep() const
 {
-    const float gate = juce::jmax (noiseDb() + 12.0f, -60.0f);
+    // As Analyzer::gateDb: 12 dB above the pauses, but never more than 20 dB below the loud frames.
+    const float gate = juce::jmax (juce::jmin (noiseDb() + 12.0f, levelAt (0.9) - 20.0f), -60.0f);
     return juce::jlimit (0, kLevels, (int) std::ceil (gate + 130.0f));
 }
 

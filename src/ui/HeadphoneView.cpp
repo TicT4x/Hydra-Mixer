@@ -242,7 +242,7 @@ void drawCurves (juce::Graphics& g, juce::Rectangle<float> area, Engine& engine,
         {
             juce::Path d;
             const float dash[] = { 5.0f, 4.0f };
-            st.createDashedStroke (d, p, dash, 2);
+            if (theme::dashable (p)) st.createDashedStroke (d, p, dash, 2);
             g.fillPath (d);
         }
         else

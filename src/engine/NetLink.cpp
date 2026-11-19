@@ -40,9 +40,27 @@ namespace
    Pair:      u8 op (1 request, 2 answer, 3 unpair), u64 from device, u64 to device, u8 kind, str name,
               answer only: u8 result (0 denied, 1 allowed, 2 still asking the user), u16 remote port, str remote code
               (port + code only for an allowed phone)   (since 10.11.)
+   Video:     u32 stream id, u32 frame, u16 part, u16 parts, u8 flags (bit 0 key frame, bit 1 codec config included),
+              u8 codec (1 = H.264 Annex B), u16 width, u16 height, u8 rotation (quarter turns clockwise to show it
+              upright), u8 0, u32 capture time (us, wraps), payload = part of the frame (phone camera, since 16.11.)
+   VideoInfo: u32 stream id, u16 width, u16 height, u8 fps, u8 state (0 ready / paused, 1 sending), str stream, str sender
+              (phone -> Hydra, once a second while the phone's camera is switched on)
+   VideoCtl:  u32 stream id, u8 want (0 nobody watches: stop, 1 send), u8 key frame request, u16 max height,
+              u32 frames received, u32 frames lost (deltas)   (Hydra -> phone, once a second + on loss)
+   CamCaps:   u32 stream id, u32 applied (the newest CamSet revision the phone took), u16 list revision, u8 part,
+              u8 parts, then part of the control list (phone -> Hydra, every 2 s and on a change, since 18.11.).
+              Control list (parts put together): u8 count, per control u8 id, u8 kind (0 toggle, 1 range, 2 choice,
+              3 button, 4 point on the picture), u8 flags (bit 0 usable now, 1 logarithmic, 2 a time in seconds,
+              3 a focus distance in diopters, 4 the value is measured live), u8 group (0 camera, 1 exposure, 2 focus,
+              3 colour, 4 image), str label, f32 min, f32 max, f32 step, f32 value, str unit, u8 options, str each.
+              The phone describes what it can; Hydra only draws it (engine/PhoneCamera.h, cam::Control).
+   CamSet:    u32 stream id, u32 revision (counts up per Hydra instance), u8 count, per entry u8 id, u8 values,
+              f32 each (Hydra -> phone: every setting changed in Hydra and not yet in an applied CamCaps; repeated
+              every 0.3 s until then. A button's value counts its presses, a point is x, y in 0..1 of the upright
+              picture.)
    str = u8 length + UTF-8 bytes (at most 63). */
 constexpr uint8_t kVersion = 1;
-enum PacketType : uint8_t { tAudio = 1, tInfo = 2, tAnnounce = 3, tFeedback = 4, tBye = 5, tPair = 6 };
+enum PacketType : uint8_t { tAudio = 1, tInfo = 2, tAnnounce = 3, tFeedback = 4, tBye = 5, tPair = 6, tVideo = 7, tVideoInfo = 8, tVideoCtl = 9, tCamCaps = 10, tCamSet = 11 };
 enum PairOp : uint8_t { opRequest = 1, opAnswer = 2, opUnpair = 3 };
 enum PairResult : uint8_t { resDenied = 0, resAllowed = 1, resWaiting = 2 };
 constexpr int kHeader = 24;
@@ -486,7 +504,7 @@ struct Hub::Impl
         BOOL yes = TRUE, no = FALSE;
         setsockopt (sock, SOL_SOCKET, SO_BROADCAST, (const char*) &yes, sizeof (yes));
         setsockopt (sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char*) &yes, sizeof (yes));
-        int bufBytes = 1 << 20;
+        int bufBytes = 4 << 20;   // 4 MB: a 4K key frame of a phone camera (over USB) arrives in a burst
         setsockopt (sock, SOL_SOCKET, SO_RCVBUF, (const char*) &bufBytes, sizeof (bufBytes));
         setsockopt (sock, SOL_SOCKET, SO_SNDBUF, (const char*) &bufBytes, sizeof (bufBytes));
         // UDP on Windows: an ICMP "port unreachable" (nobody listens at a destination) would make the next
@@ -660,7 +678,7 @@ struct Hub::Impl
 
     void announce (double now)
     {
-        if (now - lastIfScan > 30000.0) { scanInterfaces(); lastIfScan = now; }
+        if (now - lastIfScan > 10000.0) { scanInterfaces(); lastIfScan = now; }   // 10 s: a USB cable (tethering) is found soon
         // Since 9.11. a third field: Hydra Remote's port (0 = off). Older receivers stop reading after the name.
         // Since 10.11.: device id + kind (pairing).
         auto fill = [this] (Writer& w) { w.u16 ((uint32_t) cfg.port); w.str (name); w.u16 ((uint32_t) cfg.remotePort); w.u64 (myDevice); w.u8 (0); };
@@ -739,6 +757,11 @@ struct Hub::Impl
         auto& f = owner.faults;
         const int drop = f.dropPercent.load (std::memory_order_relaxed), swap = f.swapEvery.load (std::memory_order_relaxed);
         const int replay = f.replayEvery.load (std::memory_order_relaxed), corrupt = f.corruptEvery.load (std::memory_order_relaxed);
+        if (const int vdrop = f.videoDropPercent.load (std::memory_order_relaxed); vdrop > 0 && n >= kHeader && buf[5] == tVideo)
+        {
+            faultRng = faultRng * 1664525u + 1013904223u;
+            return (int) ((faultRng >> 8) % 100) < vdrop;
+        }
         if ((drop | swap | replay | corrupt) == 0 || n < kHeader || buf[5] != tAudio) return false;
         ++faultCount;
         if (drop > 0)
@@ -823,8 +846,27 @@ struct Hub::Impl
             case tFeedback: onFeedback (b); break;
             case tBye:      onBye (*r, b); break;
             case tPair:     onPair (*r, b, now); break;
+            case tVideo:
+            case tVideoInfo:
+            case tCamCaps:
+                // Phone cameras: only from paired devices; the handler copies and returns (engine/PhoneCamera.cpp).
+                if (videoHandler != nullptr && trusts (*r) && r->name.isNotEmpty())
+                    videoHandler->videoPacket (r->device, r->name,
+                                               type == tVideoInfo ? VideoPacket::info : type == tCamCaps ? VideoPacket::caps : VideoPacket::frame,
+                                               b.rest(), b.restBytes(), now);
+                break;
             default: break;
         }
+    }
+
+    /** VideoCtl to a paired device: to where it was heard last. */
+    bool sendVideoControl (uint64_t device, const uint8_t* body, int bytes, bool settings)
+    {
+        Remote* best = nullptr;
+        for (auto& [inst, r] : remotes)
+            if (r->device == device && (best == nullptr || r->lastSeen > best->lastSeen)) best = r.get();
+        if (best == nullptr) return false;
+        return send (settings ? tCamSet : tVideoCtl, best->from, [&] (Writer& w) { for (int i = 0; i < bytes; ++i) w.u8 (body[i]); });
     }
 
     Remote* remoteFor (uint64_t inst, const sockaddr_in& from, double now)
@@ -1459,6 +1501,7 @@ struct Hub::Impl
     double rejectAt = -1.0e9;
     uint32_t faultCount = 0, faultRng = 12345;
     std::vector<uint8_t> swapped;
+    Hub::VideoHandler* videoHandler = nullptr;
 };
 
 //==============================================================================
@@ -1588,6 +1631,18 @@ Hub& Hub::get()
 {
     static Hub hub;
     return hub;
+}
+
+void Hub::setVideoHandler (VideoHandler* h)
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    impl->videoHandler = h;
+}
+
+bool Hub::sendVideoControl (uint64_t device, const uint8_t* body, int bytes, bool settings)
+{
+    std::lock_guard<std::mutex> l (impl->lock);
+    return impl->running && impl->sendVideoControl (device, body, bytes, settings);
 }
 
 bool Hub::start (const Config& c, juce::String& error) { return impl->start (c, error); }

@@ -1210,7 +1210,7 @@ void Tour::paintPaths (juce::Graphics& g, float t)
             // Not routed yet: a dashed hint where it would go.
             juce::Path dashed;
             const float dashes[] = { 5.0f, 6.0f };
-            juce::PathStrokeType (1.5f).createDashedStroke (dashed, p, dashes, 2);
+            if (theme::dashable (p)) juce::PathStrokeType (1.5f).createDashedStroke (dashed, p, dashes, 2);
             g.setColour (c.withAlpha (0.35f + 0.25f * std::sin (t * 4.0f)));
             g.fillPath (dashed);
         }

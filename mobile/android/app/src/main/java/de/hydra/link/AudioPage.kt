@@ -37,6 +37,22 @@ class AudioPage(private val act: MainActivity) {
     private val playTile: Tile
     private val micTile: Tile
 
+    // Camera card (the phone as Hydra's webcam)
+    private val cameraCard: Card
+    private val cameraTile: Tile
+    private val camFront: LinearLayout
+    private val camBack: LinearLayout
+    private val camHd: Switch
+    private val camUsb: LinearLayout
+    private val hdListener = android.widget.CompoundButton.OnCheckedChangeListener { _, on ->
+        // Full HD on: at least 1080p (a higher choice from Hydra stays); off: 720p.
+        val h = prefs.getInt("camHeight", if (prefs.getBoolean("camHd", false)) 1080 else 720)
+        prefs.edit().putBoolean("camHd", on).putInt("camHeight", if (on) maxOf(1080, h) else 720).apply()
+        CameraSender.qualityChanged()
+    }
+    private var camSettingsSeen = 0
+
+
     // Settings
     private val phoneName: TextView
     private val phoneAddr: TextView
@@ -104,6 +120,38 @@ class AudioPage(private val act: MainActivity) {
             prefs.edit().putFloat("mic", g).apply(); act.applyGains()
         }, 4)
         content.addView(audioCard, lp(bottom = act.dpi(12)))
+
+        // ---- Camera: the phone as webcam for Hydra (only films while an app on the PC shows it)
+        cameraCard = Card(act, act.getString(R.string.camera_card), Hc.virt)
+        cameraTile = Tile(act.getString(R.string.camera), R.drawable.ic_camera, Hc.virt) { toggleCamera() }
+        cameraCard.add(cameraTile.view, 0)
+        val facing = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
+        camFront = segment(act.getString(R.string.camera_front), "")
+        camBack = segment(act.getString(R.string.camera_back), "")
+        facing.addView(camFront, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = act.dpi(6) })
+        facing.addView(camBack, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        camFront.setOnClickListener { setFacing(true) }
+        camBack.setOnClickListener { setFacing(false) }
+        camHd = Switch(act).apply {
+            text = act.getString(R.string.camera_hd)
+            setTextColor(Hc.text)
+            textSize = 13f
+            isChecked = prefs.getBoolean("camHd", false)
+            thumbTintList = android.content.res.ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(Hc.virt, Hc.dim))
+            trackTintList = android.content.res.ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(blend(Hc.virt, Hc.panel2, 0.45f), Hc.raised))
+            setOnCheckedChangeListener(hdListener)
+        }
+        cameraCard.add(facing, 14)
+        cameraCard.add(camHd, 10)
+        // USB: Hydra Link over the cable (USB tethering): no Wi-Fi limit, much higher bit rate.
+        camUsb = segment(act.getString(R.string.camera_usb), act.getString(R.string.camera_usb_hint)).apply {
+            background = act.rounded(Hc.panel2, Hc.outline, 6f)
+            setOnClickListener { openTethering() }
+        }
+        cameraCard.add(camUsb, 12)
+        cameraCard.add(act.label(act.getString(R.string.camera_hint), 12f, Hc.dim).apply { setLineSpacing(0f, 1.2f) }, 10)
+        content.addView(cameraCard, lp(bottom = act.dpi(12)))
+        setFacing(prefs.getBoolean("camFront", true), apply = false)
 
         // ---- Settings: this phone, quality
         val settings = Card(act, act.getString(R.string.settings_card), Hc.faint)
@@ -209,6 +257,58 @@ class AudioPage(private val act: MainActivity) {
 
     private fun applyMutes() = NativeLink.setMuted(prefs.getBoolean("playMuted", false), prefs.getBoolean("micMuted", false))
 
+    // ---- camera ----------------------------------------------------------------------------------------------
+    private fun hasCamera() = act.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+
+    /** Works without a connection too: the camera then starts once this phone is connected to a Hydra. */
+    private fun toggleCamera() {
+        val on = !prefs.getBoolean("camera", false)
+        if (on && !hasCamera()) { act.requestPermissions(arrayOf(Manifest.permission.CAMERA), MainActivity.REQ_CAMERA); return }
+        prefs.edit().putBoolean("camera", on).apply()
+        applyCamera()
+    }
+
+    fun onCameraPermission(granted: Boolean) {
+        if (!granted) { act.toast(act.getString(R.string.camera_denied)); return }
+        prefs.edit().putBoolean("camera", true).apply()
+        applyCamera()
+    }
+
+    private fun setFacing(front: Boolean, apply: Boolean = true) {
+        if (apply) CameraSender.chooseFacing(act, front) else prefs.edit().putBoolean("camFront", front).apply()
+        showFacing(front)
+        if (apply) applyCamera()
+    }
+
+    /** USB tethering is switched on in the system settings (apps may not do it themselves). */
+    private fun openTethering() {
+        val tries = listOf(
+            android.content.Intent().setClassName("com.android.settings", "com.android.settings.TetherSettings"),
+            android.content.Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS),
+            android.content.Intent(android.provider.Settings.ACTION_SETTINGS))
+        for (i in tries) {
+            try { act.startActivity(i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)); act.toast(act.getString(R.string.camera_usb_toast)); return }
+            catch (_: Exception) {}
+        }
+    }
+
+    private fun showFacing(front: Boolean) {
+        for ((seg, on) in listOf(camFront to front, camBack to !front))
+            seg.background = act.rounded(if (on) blend(Hc.virt, Hc.panel2, 0.18f) else Hc.panel2, if (on) Hc.virt else Hc.outline, 6f)
+    }
+
+    /** Camera on (switched on, allowed, connected to a paired Hydra) or off. The service first: Android lets the
+        camera open in the background only for a foreground service of type camera, started while the app is open. */
+    private fun applyCamera() {
+        val name = hydra()
+        val paired = hydraPeer(last)?.optBoolean("trusted") == true
+        if (prefs.getBoolean("camera", false) && hasCamera() && name.isNotEmpty() && paired) {
+            val err = CameraSender.enable(act, name)
+            if (err.isNotEmpty()) act.toast(err)
+        } else CameraSender.disable()
+        act.updateService()
+    }
+
     private fun togglePlay() {
         if (hydra().isEmpty()) return
         prefs.edit().putBoolean("playMuted", !prefs.getBoolean("playMuted", false)).apply()
@@ -274,6 +374,7 @@ class AudioPage(private val act: MainActivity) {
         prefs.edit().putString("hydra", "").apply()
         NativeLink.listen("", "")
         NativeLink.stopSending()
+        CameraSender.disable()
         act.updateService()
         shownKey = -1
     }
@@ -316,6 +417,8 @@ class AudioPage(private val act: MainActivity) {
             lastCodeAsk = System.currentTimeMillis()
             NativeLink.connect(name)
         }
+        // The camera follows the connection (after a restart of the app: on again once paired).
+        if (prefs.getBoolean("camera", false) && hasCamera() && !CameraSender.enabled) { applyCamera(); changed = true }
         if (changed) act.handlerPostDelayed(300) { act.updateService() }
     }
 
@@ -412,6 +515,7 @@ class AudioPage(private val act: MainActivity) {
 
         // Audio card
         audioCard.visibility = if (connected) View.VISIBLE else View.GONE
+        refreshCamera(s, name, connected)
         if (!connected) return
         if (System.currentTimeMillis() - deviceTextAt > 1000) {
             deviceTextAt = System.currentTimeMillis()
@@ -432,6 +536,38 @@ class AudioPage(private val act: MainActivity) {
             else -> String.format(act.getString(R.string.tx_stats), tx.optString("codec"), tx.optDouble("buffer"), tx.optDouble("loss"))
         }
         micTile.set(micMuted, tx.optBoolean("sending"), if (hasMic()) inDeviceText else act.getString(R.string.mic_tap_allow), micDetail, tx.optDouble("peak").toFloat())
+    }
+
+    /** Camera card: always shown; it says what is missing (permission, connection to a Hydra). */
+    private fun refreshCamera(s: JSONObject, name: String, connected: Boolean) {
+        val wanted = prefs.getBoolean("camera", false)
+        val video = s.optJSONObject("video")
+        // Hydra changed the camera or the quality: show it here too.
+        if (CameraSender.settingsVersion != camSettingsSeen) {
+            camSettingsSeen = CameraSender.settingsVersion
+            showFacing(prefs.getBoolean("camFront", true))
+            camHd.setOnCheckedChangeListener(null)
+            camHd.isChecked = prefs.getBoolean("camHd", false)
+            camHd.setOnCheckedChangeListener(hdListener)
+        }
+        val camOn = prefs.getBoolean("camera", false) && CameraSender.enabled
+        val camDevice = when {
+            !hasCamera() -> act.getString(R.string.camera_permission)
+            CameraSender.sending -> act.getString(if (CameraSender.facingFront) R.string.camera_front else R.string.camera_back)
+            else -> act.getString(if (prefs.getBoolean("camFront", true)) R.string.camera_front else R.string.camera_back)
+        }
+        val kbps = video?.optDouble("kbps") ?: 0.0
+        val camDetail = when {
+            !connected && wanted -> act.getString(R.string.camera_wait_connect)
+            !connected -> act.getString(R.string.camera_connect_first)
+            !camOn -> act.getString(R.string.camera_off)
+            CameraSender.lastError.isNotEmpty() -> CameraSender.lastError
+            CameraSender.sending -> String.format(act.getString(R.string.camera_sending), CameraSender.size.width, CameraSender.size.height, kbps / 1000.0) +
+                                    (if (CameraSender.overUsb) act.getString(R.string.camera_via_usb) else "")
+            else -> act.getString(R.string.camera_ready, name)
+        }
+        camUsb.background = act.rounded(if (CameraSender.overUsb) blend(Hc.virt, Hc.panel2, 0.18f) else Hc.panel2, if (CameraSender.overUsb) Hc.virt else Hc.outline, 6f)
+        cameraTile.set(false, camOn || (wanted && !connected), camDevice, camDetail, if (CameraSender.sending) (kbps / 8000.0).toFloat().coerceIn(0f, 1f) else 0f)
     }
 
     /** Not connected: the Hydras in the Wi-Fi (tap = connect). Connected: nothing. */

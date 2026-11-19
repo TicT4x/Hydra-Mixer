@@ -88,6 +88,8 @@ public:
         juce::StringArray netPeers;    // other computers to announce to directly: "host[:port]" (VPN, internet)
         juce::String netDeviceId;      // this Hydra's persistent device id for pairing (hex; made at the first start)
         juce::StringArray netTrusted;  // paired devices: "id|kind|name" (kind 0 computer, 1 phone); in the file <NETTRUST>
+        bool cameraEnabled = false;    // Hydra Camera: a phone's camera as webcam for all apps (engine/PhoneCamera.h, needs Hydra Link)
+        juce::String cameraPhone;      // whose camera (phone name), empty = any paired phone that offers its camera
         bool remoteEnabled = false;    // Hydra Remote: phones / tablets control Hydra in the browser (remote/RemoteControl.h)
         int remotePort = 6981;         // TCP port of the web app (remote::kDefaultPort)
         juce::String remoteCode;       // access code (in the file only encrypted for this Windows user, DPAPI); empty = new one when switched on

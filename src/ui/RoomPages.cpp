@@ -150,7 +150,7 @@ void dashedLine (juce::Graphics& g, juce::Point<float> a, juce::Point<float> b, 
     p.startNewSubPath (a);
     p.lineTo (b);
     const float dashes[] = { 5.0f, 4.0f };
-    juce::PathStrokeType (width).createDashedStroke (d, p, dashes, 2);
+    if (theme::dashable (p)) juce::PathStrokeType (width).createDashedStroke (d, p, dashes, 2);
     g.fillPath (d);
 }
 
@@ -2059,7 +2059,7 @@ public:
                 else           p.lineTo (pt);
             }
             const float dashes[] = { 4.0f, 3.0f };
-            juce::PathStrokeType (1.4f).createDashedStroke (dashed, p, dashes, 2);
+            if (theme::dashable (p)) juce::PathStrokeType (1.4f).createDashedStroke (dashed, p, dashes, 2);
             g.setColour (theme::accentVirt.withAlpha (0.9f));
             g.fillPath (dashed);
         }
@@ -2801,7 +2801,7 @@ public:
                 pre.startNewSubPath (plot.getX(), fy (s.preampDb));
                 pre.lineTo (plot.getRight(), fy (s.preampDb));
                 const float dashes[] = { 5.0f, 4.0f };
-                juce::PathStrokeType (1.0f).createDashedStroke (dashed, pre, dashes, 2);
+                if (theme::dashable (pre)) juce::PathStrokeType (1.0f).createDashedStroke (dashed, pre, dashes, 2);
                 g.setColour ((channels > 1 ? c : theme::text).withAlpha (0.45f));
                 g.fillPath (dashed);
                 g.setFont (theme::font (11.0f));

@@ -40,7 +40,9 @@ private:
     std::unique_ptr<juce::dsp::FFT> fft;
     long long samples = 0;
     size_t maxFrames = 2000;
+    float levelAt (double fraction) const;   // frame level below which this fraction of the frames lie
     float noiseDb() const;
+    float gateDb() const;
 };
 
 /** How far a fit may go. The defaults are for voices (Studio Voice): below 250 Hz at most +-4 dB, boosts at most
@@ -134,6 +136,7 @@ private:
     std::vector<float> binPos, bandBins;         // centre in bins, band width in bins
     long long samples = 0;
     bool all = true;
+    float levelAt (double fraction) const;
     float noiseDb() const;
     int gateStep() const;
     void bandPowers (const float* x, double* out);   // FFT of one windowed frame -> kFinePoints band powers

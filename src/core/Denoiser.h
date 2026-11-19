@@ -10,6 +10,9 @@ struct DenoiserSettings
 {
     int mode = 1;              // see Denoiser::Mode
     float amount = 1.0f;       // 0..1 dry/wet (dry is latency aligned)
+    /** On the audio thread: RNNoise's frame runs on the shared worker thread (see Denoiser). Offline (export,
+        tests) it runs right where the frame is complete. */
+    bool realtime = false;
 };
 
 /** RNNoise (xiph.org) neural noise suppression, stereo, block-size independent.
@@ -22,6 +25,17 @@ struct DenoiserSettings
       Aligned  20 ms  gains exactly aligned with the audio
       Native   30 ms  original RNNoise synthesis incl. pitch filter (highest quality)
     Disabled = no processing and no latency.
+
+    Worker thread (realtime, 18.11.): a whole frame of RNNoise (FFT, pitch search, network) is far more work than
+    the audio between two frames; at small buffers all of it landed in every 7th-8th block (peaks of 15-40 % of a
+    64-sample block, user 18.11.). On the audio thread the complete frame is handed to one shared worker thread
+    (WorkerPool in Denoiser.cpp), the result is used one engine block later:
+      UltraLow / Low   the gains simply start one block later (they are late by design; no extra latency)
+      Aligned / Native one block of extra latency (`extraDelay` = the engine block), so the timing / sound stays
+                       exactly as before.
+    Is the worker not done when the result is due (Aligned / Native) or when the next frame is complete, the audio
+    thread takes the job back and computes it itself (or waits the moment the worker needs to finish it): no frame
+    is ever skipped. With prepare (rate, 0) or offline everything is computed in place, as before.
 
     Other sample rates: the model only knows 48 kHz, so it listens to a resampled copy of the input.
     In the gain modes the audio itself is never resampled (the filterbank runs at the real rate), so
@@ -37,15 +51,16 @@ public:
     static constexpr int kFrame = 480;
     static constexpr int kBands = 32;
 
-    /** Latency of a mode at 48 kHz, in samples. */
+    /** Latency of a mode at 48 kHz without the worker's extra block, in samples. */
     static int latencyForMode (int mode) noexcept { return mode >= Native ? 3 * kFrame : juce::jlimit (0, 2, mode) * kFrame; }
     static juce::StringArray modeNames() { return { "Ultra Low (0 ms)", "Low (10 ms)", "Aligned (20 ms)", "Native HQ (30 ms)" }; }
 
     Denoiser();
     ~Denoiser();
 
-    /** Not on the audio thread (allocates when the sample rate is not 48 kHz). */
-    void prepare (double sampleRate);
+    /** Not on the audio thread (allocates when the sample rate is not 48 kHz). engineBlock: the engine's block size,
+        the time the worker has for a frame (0 = no worker, every frame computed in place). */
+    void prepare (double sampleRate, int engineBlock = 0);
     void reset() noexcept;
 
     /** stereo=false processes L only and copies it to R. */
@@ -57,6 +72,10 @@ public:
     /** RNNoise voice probability (0..1) of the most recent frame. */
     float getVad() const noexcept                { return vad.load (std::memory_order_relaxed); }
 
+    /** Worker thread: computes the queued frame if it can claim it. */
+    bool claimJob() noexcept;
+    void runJob() noexcept;
+
 private:
     static constexpr int kXover = kBands - 1;
     static constexpr int kPad = 32;      // kXover rounded up to whole SIMD vectors (the extra band stays silent)
@@ -66,7 +85,10 @@ private:
     {
         DenoiseState* st = nullptr;
         float fifo[kFrame] {};
-        float nativeOut[kFrame] {};
+        float jobIn[kFrame] {};          // the complete frame for RNNoise (16-bit scale)
+        float jobGains[kBands] {};       // RNNoise's result: band gains ...
+        float jobOut[kFrame] {};         // ... or (Native) its audio
+        float nativeOut[kFrame] {};      // Native: the frame being played
         std::vector<float> delay;
         // The filterbank in double precision (its low crossovers are biquads with poles close to 1, see BiquadCoeffs).
         alignas (32) double z1[kPad] {}, z2[kPad] {};
@@ -76,10 +98,17 @@ private:
         void clear() noexcept;
     };
 
+    enum JobState { idle = 0, queued, running, done };
+
     void configure (double sampleRate);
-    void startFrame (Channel& c) noexcept;
-    void process48k (float** io, int n, float wet, float dry, int chans) noexcept;
-    void processResampled (float** io, int n, float wet, float dry, int chans) noexcept;
+    /** A frame is complete (fifo of every channel): hands it to the worker or computes it. */
+    void submitFrame (int chans, bool realtime) noexcept;
+    /** The result is due: makes sure it is there (takes the job back / waits for the worker) and uses it. */
+    void applyFrame (bool force) noexcept;
+    /** Cancels / waits for a job in flight (reset, mode change). */
+    void settleJob() noexcept;
+    void process48k (float** io, int n, float wet, float dry, int chans, bool realtime) noexcept;
+    void processResampled (float** io, int n, float wet, float dry, int chans, bool realtime) noexcept;
     /** The next sample of the gain filterbank (delayed input d). */
     float filterbank (Channel& c, float d) noexcept;
 
@@ -89,8 +118,16 @@ private:
     int latency[NumModes] {};
     int pos = 0, writePos = 0, mode = Low, delayMask = 0, ramp = 96;
     double rampInv = 1.0 / 96.0;
-    float frameVad = 0.0f;
     std::atomic<float> vad { 0.0f };
+
+    // The frame in flight (one at a time).
+    std::atomic<int> jobState { idle };
+    int jobChans = 1, jobMode = Low;
+    float jobVad = 0.0f;
+    bool pending = false;        // audio thread: a submitted frame whose result has not been used yet
+    int applyIn = 0;             // audio thread: samples until it is due (Aligned / Native: the extra block)
+    int nativePos = kFrame;      // Native: read position in nativeOut (since its frame was applied)
+    int engineBlock = 0, extraDelay = 0;   // extraDelay: added to Aligned / Native while the worker is used
 
     // Only used when the sample rate is not 48 kHz.
     bool resampled = false;

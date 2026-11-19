@@ -7,6 +7,8 @@
 #include "state/Updater.h"
 #include "state/VacCables.h"
 #include "engine/NetLink.h"
+#include "engine/PhoneCamera.h"
+#include <thread>
 #include "remote/RemoteControl.h"
 #include "remote/QrCode.h"
 
@@ -1878,15 +1880,224 @@ private:
     int hover = -1;
 };
 
-/** Network: audio between computers (Hydra Link) and control from phones / tablets (Remote) on one page. */
+/** Hydra Camera: a phone's camera as webcam for every app (engine/PhoneCamera.h). */
+class CameraTab final : public SettingsPage, private juce::Timer
+{
+public:
+    explicit CameraTab (UiContext& c) : ctx (c)
+    {
+        addHeading (camH, "Phone as webcam (beta)",
+                    "The camera of a phone with the Hydra Link app becomes \"Hydra Camera\" on this computer: Teams, Zoom, "
+                    "Discord, OBS, the browser and the Windows Camera app can use it like any webcam.\n\n"
+                    "The phone only films and sends while an app actually shows the camera (or the preview below is on), "
+                    "so otherwise it costs no battery, Wi-Fi or CPU. The video comes over Hydra Link (H.264, about 4 Mbit/s at "
+                    "720p) and is a little later than the sound: if lips and voice drift apart, delay the microphone a little "
+                    "(Tools > Sync Delay).\n\n"
+                    "Beta: not tested with every app and phone yet. Needs Windows 11. No driver: Windows itself offers the camera; it only has to be set up once with "
+                    "administrator rights.");
+        addHeading (phoneH, "On the phone");
+        addAndMakeVisible (enabled);
+        enabled.setButtonText ("Offer \"Hydra Camera\" to apps (beta; picture from the Hydra Link app)");
+        enabled.setToggleState (prefs().cameraEnabled, juce::dontSendNotification);
+        enabled.onClick = [this]
+        {
+            prefs().cameraEnabled = enabled.getToggleState();
+            if (prefs().cameraEnabled) prefs().netEnabled = true;   // the picture comes over Hydra Link
+            changed();
+        };
+        for (auto* l : { &status, &phoneHint }) { addAndMakeVisible (l); styleLabel (*l, false); l->setJustificationType (juce::Justification::topLeft); }
+        phoneHint.setText ("In the Hydra Link app (Audio page) switch on the Camera tile. Hold the phone as you like: "
+                           "Hydra turns the picture upright and fits it into the format the app chose. Camera controls: "
+                           "choose the camera, zoom, exposure, focus, white balance and modes from here.", juce::dontSendNotification);
+        addAndMakeVisible (phoneL);
+        styleLabel (phoneL);
+        addAndMakeVisible (phone);
+        phone.onChange = [this]
+        {
+            const auto v = phone.getSelectedId() <= 1 ? juce::String() : phone.getText();
+            if (v != prefs().cameraPhone) { prefs().cameraPhone = v; changed(); }
+        };
+        addChildComponent (setup);
+        setup.onClick = [this] { runSetup (true); };
+        addChildComponent (remove);
+        remove.setButtonText ("Remove from Windows");
+        remove.setTooltip ("Unregisters Hydra Camera for all users (administrator)");
+        remove.onClick = [this] { runSetup (false); };
+        addAndMakeVisible (preview);
+        preview.setButtonText ("Preview");
+        preview.setTooltip ("Shows the picture here (the phone sends while this is on)");
+        preview.onClick = [this] { cam::PhoneCamera::get().setPreview (preview.getToggleState()); screen.repaint(); };
+        addAndMakeVisible (screen);
+        addAndMakeVisible (controls);
+        controls.setButtonText ("Camera controls...");
+        controls.setTooltip ("Large picture and the phone's camera settings: camera, zoom, light, exposure, ISO, shutter, focus, white balance, scene modes");
+        controls.onClick = [this] { if (ctx.openCamera) ctx.openCamera(); };
+        refresh();
+    }
+
+    ~CameraTab() override { cam::PhoneCamera::get().setPreview (false); }
+
+    void visibilityChanged() override
+    {
+        if (isShowing()) { refresh(); startTimerHz (10); }
+        else
+        {
+            stopTimer();
+            if (preview.getToggleState()) { preview.setToggleState (false, juce::dontSendNotification); cam::PhoneCamera::get().setPreview (false); }
+        }
+    }
+
+    void resized() override
+    {
+        auto r = beginLayout();
+        section (r, camH);
+        option (r, enabled);
+        status.setBounds (r.removeFromTop (58).withWidth (juce::jmin (kMaxWidth, r.getWidth())));
+        auto row = r.removeFromTop (30);
+        if (setup.isVisible()) setup.setBounds (row.removeFromLeft (270));
+        if (remove.isVisible()) remove.setBounds (row.removeFromLeft (170));
+        r.removeFromTop (8);
+        labelled (r, phoneL, phone, 260);
+        section (r, phoneH);
+        phoneHint.setBounds (r.removeFromTop (58).withWidth (juce::jmin (kMaxWidth, r.getWidth())));
+        {
+            auto line = r.removeFromTop (28);
+            controls.setBounds (line.getX() + juce::jmin (kMaxWidth, line.getWidth()) - 190, line.getY() + 1, 190, 26);
+            preview.setBounds (line.withWidth (juce::jmin (kMaxWidth - 200, line.getWidth())));
+        }
+        r.removeFromTop (6);
+        screen.setBounds (r.removeFromTop (juce::jmin (r.getHeight(), 216)).withWidth (juce::jmin (384, r.getWidth())));
+    }
+
+private:
+    Session::AppPrefs& prefs() { return ctx.session->prefs; }
+
+    void changed()
+    {
+        ctx.session->prefsVersion.fetch_add (1);
+        if (ctx.prefsChanged) ctx.prefsChanged();
+        refresh();
+    }
+
+    void timerCallback() override
+    {
+        UiActivity busyMark ("settings: camera page refresh");
+        if (++ticks % 5 == 0) refresh();   // the texts twice a second, the preview 10x
+        if (preview.getToggleState()) screen.repaint();
+    }
+
+    void runSetup (bool install)
+    {
+        busy = true;
+        refresh();
+        juce::Component::SafePointer<CameraTab> safe (this);
+        std::thread ([safe, install]
+        {
+            cam::PhoneCamera::requestSetup (install);   // UAC prompt, waits
+            juce::MessageManager::callAsync ([safe] { if (safe != nullptr) { safe->busy = false; safe->refresh(); } });
+        }).detach();
+    }
+
+    void refresh()
+    {
+        const auto s = cam::PhoneCamera::get().getStatus();
+        juce::String t;
+        bool bad = false;
+        if (! s.supported) { t = "Needs Windows 11 (Windows 10 has no virtual cameras without a driver)."; bad = true; }
+        else if (busy) t = "Waiting for the administrator prompt...";
+        else if (! s.setUp) { t = "Not set up yet: \"Set up\" registers Hydra Camera with Windows (administrator, once)."; bad = prefs().cameraEnabled; }
+        else if (! prefs().cameraEnabled) t = "Off: apps do not see Hydra Camera.";
+        else if (! prefs().netEnabled) { t = "Hydra Link is off (Audio over the network): the picture comes over it."; bad = true; }
+        else
+        {
+            t << (s.cameraOn ? "Hydra Camera is available in your apps." : "Starting Hydra Camera...");
+            if (s.error.isNotEmpty()) { t << "\n" << s.error; bad = true; }
+            if (s.phones.isEmpty()) t << "\nNo phone offers its camera: switch on the Camera tile in the Hydra Link app.";
+            else if (! s.inUse) t << "\n" << (s.phone.isNotEmpty() ? s.phone : s.phones[0]) << " is ready. Nobody watches: the phone does not send.";
+            else if (! s.receiving) t << "\nAn app shows the camera: waiting for the picture from " << s.phone << "...";
+            else
+            {
+                t << "\n" << s.phone << ": " << s.width << " x " << s.height << ", " << juce::String (s.fps, 0) << " fps, "
+                  << juce::String (s.kbps / 1000.0, 1) << " Mbit/s";
+                if (s.outWidth > 0) t << "  ->  " << s.outWidth << " x " << s.outHeight;
+                if (s.lostFrames > 0) t << ", " << (int) s.lostFrames << " frames lost";
+            }
+        }
+        status.setText (t, juce::dontSendNotification);
+        status.setColour (juce::Label::textColourId, bad ? theme::mute : theme::text);
+
+        const bool showSetup = s.supported && ! s.setUp && ! busy;
+        const bool showRemove = s.supported && s.setUp && ! prefs().cameraEnabled && ! busy;
+        setup.setButtonText (s.setUpOld ? "Update Hydra Camera (administrator)..." : "Set up Hydra Camera (administrator)...");
+        const bool relayout = setup.isVisible() != showSetup || remove.isVisible() != showRemove;
+        setup.setVisible (showSetup);
+        remove.setVisible (showRemove);
+
+        juce::StringArray items { "Any connected phone" };
+        for (auto& p : s.phones) items.addIfNotAlreadyThere (p);
+        if (prefs().cameraPhone.isNotEmpty()) items.addIfNotAlreadyThere (prefs().cameraPhone);
+        if (items != phoneItems)
+        {
+            phoneItems = items;
+            phone.clear (juce::dontSendNotification);
+            for (int i = 0; i < items.size(); ++i) phone.addItem (items[i], i + 1);
+        }
+        const int sel = prefs().cameraPhone.isEmpty() ? 1 : items.indexOf (prefs().cameraPhone) + 1;
+        if (phone.getSelectedId() != sel) phone.setSelectedId (sel, juce::dontSendNotification);
+        for (auto* c : { (juce::Component*) &phone, (juce::Component*) &preview, (juce::Component*) &controls })
+            c->setEnabled (prefs().cameraEnabled && s.supported);
+        if (relayout) resized();
+    }
+
+    /** The newest picture (preview), or a hint. */
+    struct Screen final : public juce::Component
+    {
+        void paint (juce::Graphics& g) override
+        {
+            auto r = getLocalBounds().toFloat();
+            g.setColour (juce::Colours::black);
+            g.fillRoundedRectangle (r, 6.0f);
+            uint32_t v = 0;
+            const auto img = cam::PhoneCamera::get().getPreview (v);
+            if (img.isValid())
+            {
+                juce::Graphics::ScopedSaveState keep (g);
+                juce::Path clip;
+                clip.addRoundedRectangle (r, 6.0f);
+                g.reduceClipRegion (clip);
+                g.drawImage (img, r, juce::RectanglePlacement::centred);
+            }
+            else
+            {
+                g.setColour (juce::Colours::white.withAlpha (0.45f));
+                g.setFont (theme::font (13.0f));
+                g.drawText ("No picture", getLocalBounds(), juce::Justification::centred);
+            }
+        }
+    };
+
+    UiContext& ctx;
+    Heading camH, phoneH;
+    juce::ToggleButton enabled, preview;
+    juce::Label status, phoneHint, phoneL { {}, "Phone" };
+    juce::ComboBox phone;
+    juce::TextButton setup, remove, controls;
+    juce::StringArray phoneItems;
+    Screen screen;
+    bool busy = false;
+    int ticks = 0;
+};
+
+/** Network: audio between computers (Hydra Link), control from phones / tablets (Remote) and the phone's camera. */
 class NetworkPage final : public juce::Component
 {
 public:
-    explicit NetworkPage (UiContext& c) : link (c), remote (c)
+    explicit NetworkPage (UiContext& c) : link (c), remote (c), camera (c)
     {
         addAndMakeVisible (segments);
         addChildComponent (link);
         addChildComponent (remote);
+        addChildComponent (camera);
         segments.onChange = [this] (int k) { show (k); };
         show (0);
     }
@@ -1896,19 +2107,22 @@ public:
         segments.repaint();
         link.setVisible (k == 0);
         remote.setVisible (k == 1);
+        camera.setVisible (k == 2);
     }
     void resized() override
     {
         auto r = getLocalBounds();
-        segments.setBounds (r.removeFromTop (40).reduced (24, 4).withWidth (juce::jmin (440, r.getWidth() - 48)));
+        segments.setBounds (r.removeFromTop (40).reduced (24, 4).withWidth (juce::jmin (600, r.getWidth() - 48)));
         link.setBounds (r);
         remote.setBounds (r);
+        camera.setBounds (r);
     }
 
 private:
-    Segments segments { { "Audio over the network", "Phone & Tablet" } };
+    Segments segments { { "Audio over the network", "Phone & Tablet", "Phone camera (beta)" } };
     NetworkTab link;
     RemoteTab remote;
+    CameraTab camera;
 };
 } // namespace
 

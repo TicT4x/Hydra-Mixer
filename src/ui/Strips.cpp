@@ -509,6 +509,8 @@ void InputStripView::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (2.0f);
     const bool sel = ctx.selected == index;
+    // What lies behind the meter (the card's fill; the selection glow ends far above it).
+    meter.setBackdrop (theme::deep() && sel ? theme::panel2 : theme::panel);
     if (theme::deep())
     {
         paintDeepStrip (g, *this, theme::accentIn, sel, juce::Colours::transparentBlack, rows);
@@ -733,25 +735,31 @@ void BusStripView::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (2.0f);
     const bool sel = ctx.selected == busSelectIndex (index);
+    const bool lit = bus.sel->isOn() || monitorShown;
+    const auto hoverTint = theme::busColour (index).withAlpha (0.12f);
+    const auto litTint = theme::learn.withAlpha (monitorShown ? 0.08f : 0.05f);
     if (theme::deep())
     {
-        const bool lit = bus.sel->isOn() || monitorShown;
-        paintDeepStrip (g, *this, theme::busColour (index), sel,
-                        hoverLit ? theme::busColour (index).withAlpha (0.12f)
-                                 : lit ? theme::learn.withAlpha (monitorShown ? 0.08f : 0.05f) : juce::Colours::transparentBlack, rows);
+        const auto tint = hoverLit ? hoverTint : lit ? litTint : juce::Colours::transparentBlack;
+        meter.setBackdrop ((sel ? theme::panel2 : theme::panel).overlaidWith (tint));   // what lies behind the meter
+        paintDeepStrip (g, *this, theme::busColour (index), sel, tint, rows);
         return;
     }
+    auto behind = theme::panel;
+    if (hoverLit) behind = behind.overlaidWith (hoverTint);
+    if (lit)      behind = behind.overlaidWith (litTint);
+    meter.setBackdrop (behind);
     if (rows) r = r.reduced (0.0f, 1.0f);
     g.setColour (theme::panel);
     g.fillRoundedRectangle (r, 10.0f);
     if (hoverLit)
     {
-        g.setColour (theme::busColour (index).withAlpha (0.12f));
+        g.setColour (hoverTint);
         g.fillRoundedRectangle (r, 10.0f);
     }
-    if (bus.sel->isOn() || monitorShown)
+    if (lit)
     {
-        g.setColour (theme::learn.withAlpha (monitorShown ? 0.08f : 0.05f));
+        g.setColour (litTint);
         g.fillRoundedRectangle (r, 10.0f);
     }
     g.setColour (sel ? theme::busColour (index).withAlpha (0.7f) : theme::outline.withAlpha (0.6f));

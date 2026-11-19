@@ -6,6 +6,7 @@
 #include "state/VacCables.h"
 #include "engine/VacStream.h"
 #include "engine/NetLink.h"
+#include "engine/PhoneCamera.h"
 #include "remote/RemoteControl.h"
 #include "ui/Dialog.h"
 #include "ui/UiWatch.h"
@@ -241,7 +242,7 @@ public:
     bool moreThanOneInstanceAllowed() override
     {
         const auto c = getCommandLineParameters();
-        if (isDeviceNameJob (c) || isVacJob (c) || isFirewallJob (c) || c.contains (install::kUninstallArgument)) return true;
+        if (isDeviceNameJob (c) || isVacJob (c) || isFirewallJob (c) || cam::PhoneCamera::isSetupJob (c) || c.contains (install::kUninstallArgument)) return true;
         if (install::shouldOfferInstall (c)) return true;
         install::waitForPreviousInstance (c);
         return false;
@@ -265,6 +266,13 @@ public:
             return;
         }
 
+        if (cam::PhoneCamera::isSetupJob (commandLine))
+        {
+            // Started elevated by PhoneCamera::requestSetup: register / remove the camera source and quit.
+            setApplicationReturnValue (cam::PhoneCamera::runSetupJob (commandLine));
+            quit();
+            return;
+        }
         if (isFirewallJob (commandLine))
         {
             // Started elevated by install::requestFirewall: add / remove the rule and quit.
@@ -420,6 +428,7 @@ public:
         session.reset();
         engine.reset();
         stems::Service::shutdown();   // the separation worker and its GPU model (no channel uses it any more)
+        if (cameraStarted) cam::PhoneCamera::get().setEnabled (false, {});   // tells the phone to stop, removes Hydra Camera
         net::Hub::get().stop();   // closes Hydra Link's port (its streams are gone with the engine)
         poller.reset();
         juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
@@ -543,6 +552,12 @@ private:
         }
         applyRemote();    // first: a new access code goes into Hydra Link's config (phones get it when they pair)
         applyNetwork();
+        // Hydra Camera rides on Hydra Link (the phone's video comes over it).
+        if (p.cameraEnabled || cameraStarted)
+        {
+            cam::PhoneCamera::get().setEnabled (p.cameraEnabled && p.netEnabled, p.cameraPhone);
+            cameraStarted = true;
+        }
         if (auto* mc = window->getMain())
         {
             mc->setUiScale (p.uiScale);
@@ -829,7 +844,7 @@ private:
     int pendingChanges = -1, quietTicks = 0;
     bool startedWithWindows = false;
     int masterRetryTicks = 0;
-    bool trustLoaded = false, pairDialogOpen = false;
+    bool trustLoaded = false, pairDialogOpen = false, cameraStarted = false;
     uint32_t shownTrust = 0;
     static constexpr int kMasterRetrySeconds = 90;
 };

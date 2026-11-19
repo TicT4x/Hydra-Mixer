@@ -311,7 +311,7 @@ void DspView::measure()
         const int ch = i;
         stage (r, denoiser, used (ch, Fx::denoiser), st (DspTimes::denoiser), other);
         stage (r, voice, used (ch, Fx::voice), st (DspTimes::voice), other);
-        stage (r, eq, used (ch, Fx::eq), st (DspTimes::eq), other);
+        stage (r, eq, used (ch, Fx::eq) || used (ch, Fx::sidechain), st (DspTimes::eq), other);   // Sidechain EQ counts as EQ
         stage (r, gate, used (ch, Fx::gate), st (DspTimes::gate), other);
         stage (r, comp, used (ch, Fx::comp), st (DspTimes::comp), other);
         stage (r, saturation, used (ch, Fx::saturation), st (DspTimes::saturation), other);
@@ -341,7 +341,7 @@ void DspView::measure()
         stage (r, correction, used (ch, Fx::correction) || used (ch, Fx::headphone), st (DspTimes::correction), other);
         stage (r, utility, used (ch, Fx::utility), st (DspTimes::utility), other);
         stage (r, voice, used (ch, Fx::voice), st (DspTimes::voice), other);
-        stage (r, eq, used (ch, Fx::eq), st (DspTimes::eq), other);
+        stage (r, eq, used (ch, Fx::eq) || used (ch, Fx::sidechain), st (DspTimes::eq), other);   // Sidechain EQ counts as EQ
         stage (r, comp, used (ch, Fx::comp), st (DspTimes::comp), other);
         stage (r, saturation, used (ch, Fx::saturation), st (DspTimes::saturation), other);
         other += pluginsOf (r, bus.plugins, st (DspTimes::plugins), *bus.fxBypass);

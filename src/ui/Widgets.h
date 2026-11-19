@@ -52,6 +52,8 @@ struct UiContext
 
     /** Opens the recorder window (multitrack recording and editing). */
     std::function<void()> openRecorder;
+    /** Opens the phone camera window (live picture + the phone's camera settings, ui/CameraView.h). */
+    std::function<void()> openCamera;
 
     /** Opens the device selection window of a channel (same index scheme): input source / bus output. */
     std::function<void (int)> openDevicePicker;
@@ -362,6 +364,18 @@ public:
     /** Bars from left to right (one above the other) instead of bottom to top. */
     bool horizontal = false;
 
+    /** The solid colour that lies behind the meter (the strip's card). With one the meter is opaque and fills it
+        itself, so its ~60 updates a second repaint only the meter, not the strip, pane and window underneath
+        (measured 18.11.: that was most of the UI's CPU). Transparent = see-through as before. */
+    void setBackdrop (juce::Colour c)
+    {
+        if (! c.isOpaque()) c = juce::Colours::transparentBlack;
+        if (c == backdrop) return;
+        backdrop = c;
+        setOpaque (! c.isTransparent());
+        repaint();
+    }
+
 private:
     static float toPos (float db) noexcept { return juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 66.0f); }
 
@@ -370,6 +384,7 @@ private:
     float level[2] { -100.f, -100.f }, hold[2] { -100.f, -100.f }, holdTime[2] {};
     float shown[2] { -100.f, -100.f }, shownHold[2] { -100.f, -100.f };
     bool dimmed = false; // channel muted: level drawn grey
+    juce::Colour backdrop; // see setBackdrop
 };
 
 } // namespace hydra
