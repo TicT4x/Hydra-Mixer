@@ -1733,12 +1733,14 @@ void Engine::ensureBuiltins()
 void Engine::setInputSource (int strip, const IoTarget& t)
 {
     inputs[(size_t) strip].source = t;
+    if (t.typeName == kAsioTypeName) asioRetryFailed();
     rebuildGraph();
 }
 
 void Engine::setBusOutput (int bus, const IoTarget& t)
 {
     buses[(size_t) bus].output = t;
+    if (t.typeName == kAsioTypeName) asioRetryFailed();
     rebuildGraph();
 }
 

@@ -188,6 +188,9 @@ std::shared_ptr<AsyncInput>  openAsioInput  (juce::AudioIODeviceType& type, cons
                                              int engineBlock, const std::vector<int>& channels, juce::String& error);
 std::shared_ptr<AsyncOutput> openAsioOutput (juce::AudioIODeviceType& type, const juce::String& driver, double engineRate,
                                              int engineBlock, const std::vector<int>& channels, juce::String& error);
+/** A driver that failed slowly (some take 3 s to report that their device is not plugged in, on the message thread)
+    is only loaded again after an audio / USB device was plugged in, or after this call (the user asked for it). */
+void asioRetryFailed();
 /** Channel names of an ASIO driver: live names if it is open as a secondary, otherwise probed
     once (loads the driver briefly) and cached. Empty if the driver cannot be loaded. Message thread. */
 juce::StringArray asioChannelNames (juce::AudioIODeviceType& type, const juce::String& driver, bool inputs);

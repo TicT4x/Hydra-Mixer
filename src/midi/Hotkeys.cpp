@@ -1,5 +1,8 @@
 #include "Hotkeys.h"
 #include <windows.h>
+#include <atomic>
+#include <future>
+#include <thread>
 
 namespace hydra
 {
@@ -7,11 +10,11 @@ namespace
 {
 constexpr int kFirstId = 0x4800;
 constexpr UINT kMouseMsg = WM_APP + 0x48;   // posted by the mouse hook: wParam = button (3..5), lParam = JUCE modifier flags
-HWND hookTarget = nullptr;                  // window that receives kMouseMsg (one Hotkeys instance per app)
+std::atomic<HWND> hookTarget { nullptr };                  // window that receives kMouseMsg (one Hotkeys instance per app)
 
 LRESULT CALLBACK mouseHookProc (int code, WPARAM wp, LPARAM lp)
 {
-    if (code == HC_ACTION && hookTarget != nullptr && (wp == WM_MBUTTONDOWN || wp == WM_XBUTTONDOWN))
+    if (code == HC_ACTION && (wp == WM_MBUTTONDOWN || wp == WM_XBUTTONDOWN))
     {
         int button = 3;
         if (wp == WM_XBUTTONDOWN)
@@ -21,7 +24,8 @@ LRESULT CALLBACK mouseHookProc (int code, WPARAM wp, LPARAM lp)
         if (GetAsyncKeyState (VK_MENU) & 0x8000)    mods |= juce::ModifierKeys::altModifier;
         if (GetAsyncKeyState (VK_SHIFT) & 0x8000)   mods |= juce::ModifierKeys::shiftModifier;
         // Keep the hook fast (Windows drops slow hooks): handle it later on the message thread.
-        PostMessageW (hookTarget, kMouseMsg, (WPARAM) button, (LPARAM) mods);
+        if (HWND target = hookTarget.load())
+            PostMessageW (target, kMouseMsg, (WPARAM) button, (LPARAM) mods);
     }
     return CallNextHookEx (nullptr, code, wp, lp);
 }
@@ -98,6 +102,41 @@ struct Hotkeys::Window
 };
 
 //==============================================================================
+/** The low-level mouse hook on a thread of its own. Windows calls it for every mouse movement of the whole PC and
+    waits for the installing thread: on the message thread, every hang of Hydra's UI made the mouse pointer stutter
+    everywhere (seen 25.11.: a missing ASIO driver blocked the UI for 6 of every 9 s). */
+struct Hotkeys::MouseHook
+{
+    MouseHook()
+    {
+        std::promise<void> ready;
+        auto started = ready.get_future();
+        thread = std::thread ([this, &ready]
+        {
+            SetThreadPriority (GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);   // sleeps except for a few us per mouse event
+            MSG msg;
+            PeekMessageW (&msg, nullptr, WM_USER, WM_USER, PM_NOREMOVE);   // creates the queue WM_QUIT is posted to
+            threadId = GetCurrentThreadId();
+            const HHOOK hook = SetWindowsHookExW (WH_MOUSE_LL, &mouseHookProc, GetModuleHandleW (nullptr), 0);
+            ready.set_value();
+            if (hook == nullptr) return;
+            while (GetMessageW (&msg, nullptr, 0, 0) > 0) {}
+            UnhookWindowsHookEx (hook);
+        });
+        started.wait();
+    }
+
+    ~MouseHook()
+    {
+        PostThreadMessageW (threadId, WM_QUIT, 0, 0);
+        thread.join();
+    }
+
+    std::thread thread;
+    DWORD threadId = 0;
+};
+
+//==============================================================================
 Hotkeys::Hotkeys (ParamRegistry& registry) : params (registry)
 {
     if (juce::MessageManager::getInstanceWithoutCreating() != nullptr)
@@ -138,12 +177,11 @@ void Hotkeys::updateMouseHook()
     if (needed && mouseHook == nullptr)
     {
         hookTarget = window->hwnd;
-        mouseHook = SetWindowsHookExW (WH_MOUSE_LL, &mouseHookProc, GetModuleHandleW (nullptr), 0);
+        mouseHook = std::make_unique<MouseHook>();
     }
     else if (! needed && mouseHook != nullptr)
     {
-        UnhookWindowsHookEx ((HHOOK) mouseHook);
-        mouseHook = nullptr;
+        mouseHook.reset();
         hookTarget = nullptr;
     }
 }

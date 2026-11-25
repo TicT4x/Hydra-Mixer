@@ -76,6 +76,7 @@ private:
     std::unique_ptr<Window> window;
     bool suspended = false;
     std::function<void (const juce::KeyPress&)> mouseCapture;
-    void* mouseHook = nullptr; // HHOOK
+    struct MouseHook;
+    std::unique_ptr<MouseHook> mouseHook;   // only while a mouse binding exists
 };
 } // namespace hydra

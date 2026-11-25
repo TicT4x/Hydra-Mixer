@@ -2,6 +2,9 @@
 
 #include <map>
 #include <thread>
+#include <windows.h>
+#include <cfgmgr32.h>
+#pragma comment (lib, "cfgmgr32.lib")
 
 namespace hydra
 {
@@ -303,6 +306,75 @@ std::map<juce::String, std::weak_ptr<AsioDuplex>>& openDrivers()
     return drivers;
 }
 
+//==============================================================================
+/** When Windows last reported a new audio or USB device (ms, 0 = never). Registered once, for the process. */
+std::atomic<double> lastArrival { 0.0 };
+
+DWORD CALLBACK deviceNotification (HCMNOTIFICATION, PVOID, CM_NOTIFY_ACTION action, PCM_NOTIFY_EVENT_DATA, DWORD)
+{
+    if (action == CM_NOTIFY_ACTION_DEVICEINTERFACEARRIVAL) lastArrival.store (juce::Time::getMillisecondCounterHiRes());
+    return ERROR_SUCCESS;
+}
+
+void watchArrivals()
+{
+    static const bool once = []
+    {
+        const GUID classes[] = {
+            { 0x6994ad04, 0x93ef, 0x11d0, { 0xa3, 0xcc, 0x00, 0xa0, 0xc9, 0x22, 0x31, 0x96 } },    // KSCATEGORY_AUDIO
+            { 0xa5dcbf10, 0x6530, 0x11d2, { 0x90, 0x1f, 0x00, 0xc0, 0x4f, 0xb9, 0x51, 0xed } } };  // GUID_DEVINTERFACE_USB_DEVICE
+        for (const auto& guid : classes)
+        {
+            CM_NOTIFY_FILTER filter {};
+            filter.cbSize = sizeof (filter);
+            filter.FilterType = CM_NOTIFY_FILTER_TYPE_DEVICEINTERFACE;
+            filter.u.DeviceInterface.ClassGuid = guid;
+            HCMNOTIFICATION handle = nullptr;
+            CM_Register_Notification (&filter, nullptr, &deviceNotification, &handle);
+        }
+        return true;
+    }();
+    juce::ignoreUnused (once);
+}
+
+/** Drivers that failed slowly (see asioRetryFailed). Message thread. */
+struct SlowFailure { double at = 0.0; juce::String error; };
+std::map<juce::String, SlowFailure>& slowFailures()
+{
+    static std::map<juce::String, SlowFailure> failures;
+    return failures;
+}
+
+constexpr double kSlowOpenMs = 250.0;
+
+bool openDriver (AsioDuplex& d, juce::AudioIODeviceType& type, const juce::String& driver, double engRate, juce::String& error)
+{
+    watchArrivals();
+    auto& failures = slowFailures();
+    const double start = juce::Time::getMillisecondCounterHiRes();
+    if (auto it = failures.find (driver); it != failures.end())
+    {
+        // Try again 2 s and 10 s after the last device was plugged in (drivers need a moment), not before.
+        const double arrival = lastArrival.load();
+        bool due = false;
+        for (double wait : { 2000.0, 10000.0 })
+            due = due || (arrival > 0.0 && arrival + wait > it->second.at && arrival + wait <= start);
+        if (! due) { error = it->second.error; return false; }
+    }
+
+    if (d.open (type, engRate, error)) { failures.erase (driver); return true; }
+
+    const double end = juce::Time::getMillisecondCounterHiRes();
+    if (end - start > kSlowOpenMs)
+    {
+        failures[driver] = { end, error };
+        logLine ("ASIO " + driver + ": not available (" + error + "), loading it blocked the UI for "
+                 + juce::String (juce::roundToInt (end - start)) + " ms; tried again when a device is plugged in");
+    }
+    else failures.erase (driver);
+    return false;
+}
+
 std::shared_ptr<AsioDuplex> acquireDriver (juce::AudioIODeviceType& type, const juce::String& driver,
                                            double engRate, juce::String& error)
 {
@@ -314,15 +386,17 @@ std::shared_ptr<AsioDuplex> acquireDriver (juce::AudioIODeviceType& type, const 
         // in place. Streams still attached to it are failed and replaced by the engine.
         d->failAttached();
         if (! d->mayReopen()) { error = driver + " does not respond (select it again in a few seconds to retry)"; return nullptr; }
-        return d->open (type, engRate, error) ? d : nullptr;
+        return openDriver (*d, type, driver, engRate, error) ? d : nullptr;
     }
 
     auto d = std::make_shared<AsioDuplex> (driver);
-    if (! d->open (type, engRate, error)) return nullptr;
+    if (! openDriver (*d, type, driver, engRate, error)) return nullptr;
     slot = d;
     return d;
 }
 } // namespace
+
+void asioRetryFailed() { slowFailures().clear(); }
 
 //==============================================================================
 std::shared_ptr<AsyncInput> openAsioInput (juce::AudioIODeviceType& type, const juce::String& driver, double engineRate,

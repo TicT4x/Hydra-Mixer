@@ -1277,6 +1277,7 @@ void MainComponent::restartAudioEngine()
     // Closing the master releases the graph and with it every stream; secondary drivers close when their last
     // stream goes and are opened again by the new graph.
     const auto cfg = ctx.engine.getMasterConfig();
+    asioRetryFailed();   // the user asks: also load drivers again that were not there
     const auto err = ctx.engine.setMasterConfig (cfg);
     refreshAll();
     showToast (err.isEmpty() ? juce::String ("Audio engine restarted") : "Restart failed: " + err, 3.5);
